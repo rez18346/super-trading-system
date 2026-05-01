@@ -155,24 +155,42 @@ def _detect_engulfing(o1, c1, o2, c2):
 # Feature Engineering — 25 признаков напрямую из 1H+4H свечей
 # ============================================================================
 
+def _normalize_candle_dict(d):
+    """Привести словарь свечи к формату {o,h,l,c,v,t} из любого входа."""
+    if 'o' in d:
+        return d  # уже нормализован
+    return {
+        'o': d.get('open', d.get('o', 0)),
+        'h': d.get('high', d.get('h', 0)),
+        'l': d.get('low', d.get('l', 0)),
+        'c': d.get('close', d.get('c', 0)),
+        'v': d.get('volume', d.get('v', 0)),
+        't': d.get('timestamp', d.get('t', d.get('timestamp', 0))),
+    }
+
+
 def build_features_27f(candles_1h, candles_4h):
     """
     Построить 25 признаков из 1H и 4H свечей.
 
-    candles_1h : list[dict] с {o,h,l,c,v,t}
-    candles_4h : list[dict] с {o,h,l,c,v,t}
+    candles_1h : list[dict] с {open,high,low,close,volume,timestamp} ИЛИ {o,h,l,c,v,t}
+    candles_4h : list[dict] — аналогично
 
     Возвращает np.ndarray shape (N, 25) — только для полных рядов.
     """
+    # Нормализация ключей (из to_dict('records') или Raw OHLCV)
+    candles_1h = [_normalize_candle_dict(c) for c in candles_1h]
+    candles_4h = [_normalize_candle_dict(c) for c in candles_4h]
+
     # Синхронизируем по времени: 1H должны покрывать 4H
     if candles_1h and candles_4h:
-        t4s = candles_4h[0]['t']
-        t4e = candles_4h[-1]['t']
-        candles_1h = [c for c in candles_1h if c['t'] >= t4s and c['t'] <= t4e]
+        t4s = candles_4h[0].get('t', 0)
+        t4e = candles_4h[-1].get('t', 0)
+        candles_1h = [c for c in candles_1h if c.get('t', 0) >= t4s and c.get('t', 0) <= t4e]
         # 4H обрезаем до 1H
-        t1s = candles_1h[0]['t'] if candles_1h else 0
-        t1e = candles_1h[-1]['t'] if candles_1h else 0
-        candles_4h = [c for c in candles_4h if c['t'] >= t1s and c['t'] <= t1e]
+        t1s = candles_1h[0].get('t', 0) if candles_1h else 0
+        t1e = candles_1h[-1].get('t', 0) if candles_1h else 0
+        candles_4h = [c for c in candles_4h if c.get('t', 0) >= t1s and c.get('t', 0) <= t1e]
     
     if not candles_1h or not candles_4h or len(candles_1h) < 100 or len(candles_4h) < 25:
         return np.zeros((1, 25), dtype=np.float64)

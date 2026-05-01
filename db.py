@@ -406,6 +406,45 @@ def get_position_trades(symbol: str, db_path=None) -> List[Dict]:
 
 # === ORDERS ===
 
+def sync_orders_from_exchange(exchange, db_path=None):
+    """
+    Синхронизирует открытые ордера с биржи в локальную БД.
+    Используется в main.py каждые 5 минут.
+    """
+    conn = _get_connection(db_path)
+    now = datetime.now(timezone.utc).isoformat()
+    count = 0
+    try:
+        open_orders = exchange.fetch_open_orders()
+        for order in open_orders:
+            order_id = str(order.get('id', ''))
+            if not order_id:
+                continue
+            symbol = order.get('symbol', '')
+            side = order.get('side', 'buy')
+            price = float(order.get('price', 0) or 0)
+            amount = float(order.get('amount', 0) or 0)
+            filled = float(order.get('filled', 0) or 0)
+            status = order.get('status', 'open')
+            upsert_order(order_id, symbol, side, price, amount, filled, status, db_path)
+            count += 1
+        logger = None
+        try:
+            import logging
+            logger = logging.getLogger('db')
+        except:
+            pass
+        if logger and count > 0:
+            logger.info(f"[DB] Синхронизировано {count} ордеров с биржи")
+    except Exception as e:
+        try:
+            import logging
+            logging.getLogger('db').warning(f"[DB] Ошибка синхронизации ордеров: {e}")
+        except:
+            pass
+    return count
+
+
 def upsert_order(order_id: str, symbol: str, side: str, price: float,
                  quantity: float, filled_qty: float = 0.0,
                  status: str = 'open', db_path=None):

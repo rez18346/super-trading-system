@@ -8,6 +8,7 @@ HTTP API + SSE (Server-Sent Events) для real-time обновлений.
   GET  /                    — HTML dashboard (single page)
   GET  /api/status          — JSON snapshot состояния
   GET  /api/capital-history  — История капитала (JSON)
+  GET  /api/changelog        — История изменений системы (JSON)
   SSE  /api/events          — Real-time поток (цены, позиции, логи)
 
 При старте:
@@ -183,7 +184,7 @@ def get_status_snapshot() -> dict:
         conn = sqlite3.connect(CAPITAL_DB)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            'SELECT * FROM trades ORDER BY id DESC LIMIT 50'
+            'SELECT id, symbol, side, price, quantity, value, pnl, pnl_pct, timestamp, created_at FROM trade_history ORDER BY id DESC LIMIT 50'
         ).fetchall()
         trades_history = [
             {'id': r['id'], 'symbol': r['symbol'], 'side': r['side'],
@@ -216,6 +217,48 @@ def get_status_snapshot() -> dict:
 @app.get("/api/status")
 async def api_status():
     return get_status_snapshot()
+
+
+@app.get("/api/trade-history")
+async def api_trade_history():
+    """История всех сделок с PnL, отсортированная по времени."""
+    try:
+        conn = sqlite3.connect(CAPITAL_DB)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            'SELECT id, symbol, side, price, quantity, value, pnl, pnl_pct, timestamp, created_at FROM trade_history ORDER BY id DESC LIMIT 500'
+        ).fetchall()
+        conn.close()
+        return {'trades': [
+            {'id': r['id'], 'symbol': r['symbol'], 'side': r['side'],
+             'price': r['price'], 'qty': r['quantity'], 'value': r['value'],
+             'pnl': r['pnl'], 'pnl_pct': r['pnl_pct'], 'ts': r['timestamp']}
+            for r in rows
+        ]}
+    except Exception as e:
+        return {'trades': [], 'error': str(e)}
+
+
+CHANGELOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'workspace', 'memory', '2026-05-01.md')
+if not os.path.exists(CHANGELOG_FILE):
+    CHANGELOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'CHANGELOG.md')
+
+
+@app.get("/api/changelog")
+async def api_changelog():
+    """Последние 50 строк истории изменений."""
+    try:
+        with open(CHANGELOG_FILE, 'r') as f:
+            lines = f.readlines()
+        # Последние 50 строк
+        tail = lines[-50:] if len(lines) > 50 else lines
+        return {
+            'file': os.path.basename(CHANGELOG_FILE),
+            'total_lines': len(lines),
+            'lines': ''.join(tail)
+        }
+    except Exception as e:
+        return {'file': None, 'lines': f'Файл изменений не найден: {e}', 'total_lines': 0}
 
 
 @app.get("/api/capital-history")
@@ -315,13 +358,35 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
 </div>
 
 <div class="section">
-  <h2>📜 История сделок</h2>
+  <h2>📜 История сделок <span style="font-size:12px;cursor:pointer;color:#58a6ff" onclick="toggleTradeLog()">[полная история]</span></h2>
   <table><thead><tr><th>Символ</th><th>Тип</th><th>Цена</th><th>Кол-во</th><th>PnL</th><th>Время</th></tr></thead>
   <tbody id="tbTrades"><tr><td colspan="6" style="text-align:center;color:#8b949e;font-size:13px;padding:20px">Нет сделок</td></tr></tbody></table>
 </div>
 
+<div id="tradeLogModal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000;overflow-y:auto;padding:20px">
+  <div style="background:var(--bg-card);max-width:1000px;margin:20px auto;border-radius:12px;padding:20px;border:1px solid var(--border)">
+    <div style="display:flex;justify-content:space-between;margin-bottom:15px">
+      <h2 style="margin:0">📊 Полная история сделок</h2>
+      <span style="cursor:pointer;font-size:24px" onclick="document.getElementById('tradeLogModal').style.display='none'">✕</span>
+    </div>
+    <div id="tradeLogSummary" style="margin-bottom:15px;color:#8b949e;font-size:14px"></div>
+    <div style="max-height:600px;overflow-y:auto">
+      <table style="width:100%;font-size:13px"><thead><tr><th>Символ</th><th>Тип</th><th>Цена</th><th>Кол-во</th><th>Стоимость</th><th>PnL</th><th>%</th><th>Время</th></tr></thead>
+      <tbody id="tbTradeLog"><tr><td colspan="8" style="text-align:center;padding:30px;color:#8b949e">Загрузка...</td></tr></tbody></table>
+    </div>
+  </div>
+</div>
+
+<div class="section" id="changelogSection" style="display:none">
+  <h2>📋 История изменений</h2>
+  <div style="font-family:'SF Mono','Consolas',monospace;font-size:12px;line-height:1.6;max-height:400px;overflow-y:auto;white-space:pre-wrap" id="changelogContent">Загрузка...</div>
+</div>
+
 <div class="section">
   <h2>📋 Логи</h2>
+  <div style="margin-bottom:8px;display:flex;gap:8px">
+    <button onclick="toggleSection('changelogSection');loadChangelog()" style="background:#21262d;color:#58a6ff;border:1px solid #30363d;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px">📋 Изменения</button>
+  </div>
   <div class="logs" id="logContainer"><div class="log-line" style="color:#8b949e">Ожидание...</div></div>
 </div>
 </div>
@@ -355,7 +420,7 @@ async function drawCapChart(){
 
 // ─── ОБНОВЛЕНИЯ ───
 function updPos(pos){
-  const e=Object.entries(pos);
+  const e=Object.entries(pos).sort(([,a],[,b])=>(b.qty*b.entry)-(a.qty*a.entry));
   document.getElementById('tbPos').innerHTML=e.length
     ?e.map(([s,p])=>'<tr><td>'+em(s)+' '+s+'</td><td>'+fmtQ(p.qty)+'</td><td>'+fmtP(p.entry)+'</td><td>'+fmtP(p.qty*p.entry)+'</td></tr>').join('')
     :'<tr><td colspan="4" style="text-align:center;color:#8b949e;font-size:13px;padding:20px">Нет позиций</td></tr>';
@@ -367,6 +432,30 @@ function updTrades(tr){
     const pnlColor=t.pnl>0?'#3fb950':t.pnl<0?'#f85149':'#8b949e';
     return '<tr><td>'+em(t.symbol)+' '+t.symbol+'</td><td>'+(t.side==='buy'?'🟢 BUY':'🔴 SELL')+'</td><td>'+fmtP(t.price)+'</td><td>'+fmtQ(t.qty)+'</td><td style="color:'+pnlColor+'">'+(t.pnl?fmtP(t.pnl):'—')+'</td><td style="font-size:11px;color:#8b949e">'+(t.ts||'').split('T')[0]+'</td></tr>';
   }).join('');
+}
+
+function toggleSection(id){const el=document.getElementById(id);el.style.display=el.style.display==='none'?'block':'none';}
+
+function loadChangelog(){fetch('/api/changelog').then(r=>r.json()).then(d=>{document.getElementById('changelogContent').textContent=d.lines||'Нет записей';}).catch(()=>{document.getElementById('changelogContent').textContent='Ошибка загрузки';})}
+
+function toggleTradeLog(){
+  const m=document.getElementById('tradeLogModal');
+  if(m.style.display==='block'){m.style.display='none';return;}
+  m.style.display='block';
+  fetch('/api/trade-history').then(r=>r.json()).then(d=>{
+    const tr=d.trades||[];
+    const buys=tr.filter(t=>t.side==='buy').reduce((s,t)=>s+(t.value||0),0);
+    const sells=tr.filter(t=>t.side==='sell').reduce((s,t)=>s+(t.value||0),0);
+    const pnlTrades=tr.filter(t=>t.side==='sell'&&t.pnl);
+    const totalPnl=pnlTrades.reduce((s,t)=>s+(t.pnl||0),0);
+    const wins=pnlTrades.filter(t=>t.pnl>0).length;
+    document.getElementById('tradeLogSummary').innerHTML='Куплено: <b>'+fmtP(buys)+'</b> | Продано: <b>'+fmtP(sells)+'</b> | PnL: <b style="color:'+(totalPnl>=0?'#3fb950':'#f85149')+'">'+fmtP(totalPnl)+'</b> | Сделок: '+tr.length+' | Успешных: '+wins+'/'+pnlTrades.length;
+    document.getElementById('tbTradeLog').innerHTML=tr.map(t=>{
+      const pnlColor=t.pnl>0?'#3fb950':t.pnl<0?'#f85149':'#8b949e';
+      const sideColor=t.side==='buy'?'#3fb950':'#f85149';
+      return '<tr><td>'+em(t.symbol)+' '+t.symbol+'</td><td style="color:'+sideColor+'">'+t.side+'</td><td>'+fmtP(t.price)+'</td><td>'+fmtQ(t.qty)+'</td><td>'+fmtP(t.value||t.qty*t.price)+'</td><td style="color:'+pnlColor+'">'+(t.pnl!=null?fmtP(t.pnl):'—')+'</td><td style="color:'+pnlColor+'">'+(t.pnl_pct?(t.pnl_pct>=0?'+':'')+Number(t.pnl_pct).toFixed(2)+'%':'')+'</td><td style="color:#8b949e;font-size:11px">'+(t.ts||'').slice(0,19)+'</td></tr>';
+    }).join('')||'<tr><td colspan="8" style="text-align:center;padding:30px;color:#8b949e">Нет сделок</td></tr>';
+  }).catch(()=>{document.getElementById('tbTradeLog').innerHTML='<tr><td colspan="8" style="text-align:center;padding:30px;color:#f85149">Ошибка загрузки</td></tr>'});
 }
 
 function updBar(d){

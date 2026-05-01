@@ -191,7 +191,6 @@ class TradingSystem:
             enabled_pairs = self.config.get('trading', {}).get('enabled_pairs', [])
             changes = db.sync_positions_from_exchange(self.exchange, enabled_pairs)
             db.sync_orders_from_exchange(self.exchange)
-            
             pos_count = len(db.get_all_positions())
             logger.info(f"🔄 Начальная синхронизация: {pos_count} позиций, {changes} изменений")
             

@@ -253,61 +253,6 @@ class IndustrialTrader:
             logger.error(f"Ошибка получения данных для {symbol}: {e}")
             return pd.DataFrame()
     
-    def _confirm_15m_reversal(self, symbol: str) -> bool:
-        """
-        Профессиональная проверка: не входить на падающем 15М графике.
-        Ждём подтверждение разворота — минимум 2 последовательные зелёные свечи
-        или чёткий отскок от минимума.
-        """
-        try:
-            df_15m = self.get_market_data(symbol, '15m', limit=5)
-            if df_15m.empty or len(df_15m) < 4:
-                return True  # Нет данных — пропускаем проверку
-            
-            closes = df_15m['close'].values
-            opens = df_15m['open'].values
-            
-            last_3_candles = list(zip(opens[-3:], closes[-3:]))
-            
-            # Считаем: все красные (close < open) или нет
-            red_count = sum(1 for o, c in last_3_candles if c < o)
-            # Падение в процентах от первой к последней
-            drop_pct = (closes[-4] - closes[-1]) / closes[-4] * 100 if len(closes) >= 4 else 0
-            
-            # Проверка 1: последняя свеча зелёная и выше предпоследней?
-            last_green = closes[-1] > opens[-1]
-            last_higher = len(closes) >= 2 and closes[-1] > closes[-2]
-            
-            # Проверка 2: две подряд зелёные?
-            two_green = len(closes) >= 2 and closes[-1] > opens[-1] and closes[-2] > opens[-2]
-            
-            # Проверка 3: падение > 1.5% за 3 свечи?
-            sharp_drop = drop_pct > 1.5
-            
-            # 🎯 ЛОГИКА РЕШЕНИЯ:
-            # - Если падение резкое (>1.5%) — ждём две зелёные свечи
-            # - Если падение слабое — достаточно одной зелёной и роста
-            # - Если все свечи красные — не входим
-            
-            if red_count >= 2 and not last_green:
-                # Две и более красных, последняя тоже красная — падающий нож
-                logger.info(f"📉 {symbol}: 15М падающий нож ({red_count} красных, падение {drop_pct:.1f}%)")
-                return False
-            
-            if sharp_drop and not two_green:
-                # Резкое падение, но ещё нет двух зелёных — ждём
-                logger.info(f"📉 {symbol}: 15М резкое падение ({drop_pct:.1f}%), жду 2 зелёные")
-                return False
-            
-            if last_green and last_higher:
-                logger.debug(f"✅ {symbol}: 15М разворот подтверждён ({drop_pct:.1f}% падения, зелёная)")
-            
-            return True
-            
-        except Exception as e:
-            logger.warning(f"15М проверка {symbol}: ошибка ({e}), пропускаю")
-            return True
-    
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Расчет технических индикаторов"""
         if df.empty:
@@ -441,7 +386,13 @@ class IndustrialTrader:
                         'quantity': quantity,
                         'entry_price': price,
                         'entry_time': timestamp,
-                        'side': 'long'
+                        'side': 'long',
+                        # SL/TP уровни от DecisionEngine (заполнит caller)
+                        '_sl_price': sl_price if 'sl_price' in dir() else None,
+                        '_tp_price': tp_price if 'tp_price' in dir() else None,
+                        '_trail_act': trail_act if 'trail_act' in dir() else None,
+                        '_trail_dist': trail_dist if 'trail_dist' in dir() else None,
+                        '_max_hold_h': max_hold_h if 'max_hold_h' in dir() else None,
                     }
                     self.available_capital -= quantity * price
                     db.add_trade(symbol, 'buy', price, quantity, timestamp=timestamp)
@@ -664,45 +615,57 @@ class IndustrialTrader:
                 except Exception as e:
                     logger.warning(f"Ошибка синхронизации: {e}")
                 
+                # 📊 Загрузка multi-timeframe данных для DecisionEngine
+                # (1H, 4H, BTC цена — для ML-голосов: MLProfessionalV2, MLAdvisor, BTC-корреляция)
+                # Используем CachedDataFetcher — данные уже кэшируются WebSocket-клиентом
+                mtf_candles_1h = {}
+                mtf_candles_4h = {}
+                btc_price = None
+                
+                try:
+                    from data_cache import get_fetcher, get_price
+                    fetcher = get_fetcher()
+                    if fetcher:
+                        # BTC цена из кеша (или API с троттлингом 3с)
+                        btc_price = fetcher.get_ticker('BTC/USDT')
+                        
+                        # Загружаем 1H/4H для каждой пары — через кеш (60с троттлинг)
+                        for sym in symbols:
+                            raw_1h = fetcher.get_ohlcv(sym, '1h', 100)
+                            raw_4h = fetcher.get_ohlcv(sym, '4h', 50)
+                            if raw_1h:
+                                # Конвертируем [ts,o,h,l,c,v] → {o,h,l,c,v,t}
+                                mtf_candles_1h[sym] = [
+                                    {'o':c[1],'h':c[2],'l':c[3],'c':c[4],'v':c[5],'t':c[0]}
+                                    for c in raw_1h
+                                ]
+                            if raw_4h:
+                                mtf_candles_4h[sym] = [
+                                    {'o':c[1],'h':c[2],'l':c[3],'c':c[4],'v':c[5],'t':c[0]}
+                                    for c in raw_4h
+                                ]
+                except Exception as e:
+                    logger.debug(f"[MTF] Загрузка через кеш: fallback ({e})")
+                    # Fallback: через прямой fetch (без кеша)
+                    try:
+                        btc_ticker = self.exchange.fetch_ticker('BTC/USDT')
+                        btc_price = btc_ticker['last']
+                    except:
+                        pass
+                
+                # Инициализация DecisionEngine (синглтон)
+                from decision_engine import DecisionEngine
+                de = DecisionEngine()
+                
+                # BTC-корреляция для DE
+                if btc_price is not None:
+                    de.set_multi_tf_data(btc_price=btc_price)
+                    de.update_btc_reference(btc_price)
+                
                 # Анализ каждого символа
                 for symbol in symbols:
                     if not self.running:
                         break
-                    
-                    # ⚡ ПРОВЕРКА DecisionEngine (раз в 5 циклов на символ)
-                    # Если DE одобрил — устанавливаем _de_force_entry для исполнения
-                    if symbol not in self.positions:
-                        de_check_key = f'_de_last_check_{symbol}'
-                        de_interval = getattr(self, '_de_check_interval', 5)
-                        if not hasattr(self, de_check_key):
-                            setattr(self, de_check_key, 0)
-                        setattr(self, de_check_key, getattr(self, de_check_key) + 1)
-                        
-                        if getattr(self, de_check_key) >= de_interval:
-                            setattr(self, de_check_key, 0)
-                            try:
-                                from decision_engine import DecisionEngine
-                                de = DecisionEngine()
-                                # Берём цену из кеша
-                                try:
-                                    from data_cache import get_fetcher
-                                    fetcher = get_fetcher()
-                                    de_price = fetcher.get_ticker(symbol) if fetcher else None
-                                except:
-                                    de_price = None
-                                if de_price:
-                                    decision = de.decide_entry(symbol, de_price)
-                                    if decision.get('approved', False):
-                                        if not hasattr(self, '_de_force_entry'):
-                                            self._de_force_entry = {}
-                                        self._de_force_entry[symbol] = {
-                                            'price': de_price,
-                                            'score': decision.get('score', 0),
-                                            'ts': time.time(),
-                                        }
-                                        logger.info(f"🎯 [DE] ВХОД {symbol}: {decision.get('score', 0):.0f}/100")
-                            except Exception as e_de:
-                                logger.debug(f"[DE] ошибка: {e_de}")
                     
                     # Получение и анализ данных
                     # Загрузка мультитаймфреймовых данных для ML-PRO v2
@@ -715,176 +678,61 @@ class IndustrialTrader:
                     
                     current_price = df['close'].iloc[-1]
                     
-                    # Свечи старших таймфреймов для ML-PRO v2
-                    try:
-                        df_1h = self.get_market_data(symbol, '1h', 100)
-                        df_4h = self.get_market_data(symbol, '4h', 50)
-                        if not df_1h.empty:
-                            candles_1h = [{'o':r['open'],'h':r['high'],'l':r['low'],'c':r['close'],'v':r['volume'],'t':r.name.timestamp()*1000 if hasattr(r.name,'timestamp') else int(r.name)} for _,r in df_1h.iterrows()]
-                        else:
-                            candles_1h = []
-                        if not df_4h.empty:
-                            candles_4h = [{'o':r['open'],'h':r['high'],'l':r['low'],'c':r['close'],'v':r['volume'],'t':r.name.timestamp()*1000 if hasattr(r.name,'timestamp') else int(r.name)} for _,r in df_4h.iterrows()]
-                        else:
-                            candles_4h = []
-                    except Exception as e:
-                        logger.warning(f"Не загрузились 1H/4H для {symbol}: {e}")
-                        candles_1h = []
-                        candles_4h = []
-                    
                     # Логирование анализа
                     logger.info(f"{symbol}: Цена=${current_price:.2f}, Тренд={analysis['trend']}, "
                               f"Уверенность={analysis['confidence']:.2%}, RSI={analysis['rsi']:.1f}")
                     
                     # ─── ТОРГОВАЯ ЛОГИКА ──────────────────────────────────────
                     
-                    # ⚡ ПРИОРИТЕТ 1: DecisionEngine (ML-ансамбль)
-                    # Если DE одобрил вход — входим сразу, без старых фильтров
+                    # ⚡ DecisionEngine: ЕДИНСТВЕННЫЙ источник решений о входе
+                    # DE оценивает рынок ML-ансамблем. Если одобрил — входим.
                     if symbol not in self.positions:
-                        de_force = getattr(self, '_de_force_entry', None)
-                        if de_force and symbol in de_force:
-                            entry = de_force.pop(symbol)  # забираем и удаляем
-                            force_price = entry.get('price', current_price)
-                            force_score = entry.get('score', 0)
-                            
-                            # Лимиты позиций всё равно проверяем (безопасность)
-                            max_positions = self.config['risk_management'].get('max_open_positions', 3)
-                            if len(self.positions) >= max_positions:
-                                logger.info(f"⚠️  [DE] {symbol}: лимит позиций {len(self.positions)}/{max_positions}")
-                                continue
-                            
-                            # Проверка лимита по паре (макс 30% портфеля)
-                            try:
-                                bal = self.exchange.fetch_balance()
-                                total_port = 0
-                                for asset, amt in bal['total'].items():
-                                    if asset != 'USDT' and amt > 0:
-                                        try:
-                                            t = self.exchange.fetch_ticker(f"{asset}/USDT")
-                                            total_port += amt * t['last']
-                                        except:
-                                            pass
-                                total_port += bal['total'].get('USDT', 0)
-                                if total_port > 0:
-                                    pair_pct = (100 * self.config['risk_management'].get('max_order_value', 2.0)) / total_port
-                                else:
-                                    pair_pct = 0
-                            except:
-                                pair_pct = 0
-                            
-                            logger.info(f"⚡ [DE→EXEC] {symbol}: score={force_score:.0f}/100 | цена={force_price:.4f}")
-                            
-                            quantity = self.calculate_position_size(symbol, force_price)
-                            if quantity * force_price <= self.available_capital:
-                                self.execute_trade(symbol, 'buy', quantity, force_price)
-                            else:
-                                logger.warning(f"⏭️ [DE] {symbol}: недостаточно капитала")
-                            continue  # пропускаем старую логику для этого символа
-                    
-                    # ⚠️  ПРИОРИТЕТ 2: старая логика трейдера (fallback, если DE молчит)
-                    if symbol not in self.positions:
-                        # ПРОВЕРКА ЛИМИТОВ ПОЗИЦИЙ ПЕРЕД ПОКУПКОЙ
-                        # 1. Проверка максимального количества открытых позиций
-                        max_positions = self.config['risk_management'].get('max_open_positions', 3)
-                        if len(self.positions) >= max_positions:
-                            logger.info(f"⚠️  Достигнут лимит открытых позиций: {len(self.positions)}/{max_positions}")
-                            continue
-                        
-                        # 2. Проверка диверсификации (не более 30% в одну пару)
                         try:
-                            balance = self.exchange.fetch_balance()
-                            total_portfolio = 0
-                            for asset, amount in balance['total'].items():
-                                if asset != 'USDT' and amount > 0:
-                                    try:
-                                        ticker = self.exchange.fetch_ticker(f"{asset}/USDT")
-                                        total_portfolio += amount * ticker['last']
-                                    except:
-                                        pass
-                            total_portfolio += balance['total'].get('USDT', 0)
+                            de_price = current_price
+                            de_confidence = analysis['confidence']
+                            de_trend = analysis['trend']
+                            de_rsi = analysis['rsi']
+                            de_positions = len(self.positions)
+                            max_pos = self.config['risk_management'].get('max_open_positions', 3)
+                            # Multi-timeframe данные для ML-голосов (своя 1H/4H для каждой пары)
+                            c5m = df.to_dict('records') if hasattr(df, 'to_dict') else None
+                            c1h = mtf_candles_1h.get(symbol, None)
+                            c4h = mtf_candles_4h.get(symbol, None)
+                            decision = de.decide_entry(symbol, de_confidence, de_trend, de_rsi,
+                                                       de_price, de_positions, max_pos,
+                                                       candles_5m=c5m, candles_1h=c1h, candles_4h=c4h)
                             
-                            # Проверяем текущую позицию в этой паре (если есть)
-                            current_pair_value = 0
-                            for pos_symbol, position in self.positions.items():
-                                if pos_symbol == symbol:
-                                    current_pair_value = position['quantity'] * current_price
-                                    break
-                            
-                            max_pair_percent = 30  # Макс 30% в одну пару
-                            if total_portfolio > 0:
-                                pair_percent = (current_pair_value / total_portfolio) * 100
-                                if pair_percent >= max_pair_percent:
-                                    logger.info(f"⚠️  Превышен лимит по паре {symbol}: {pair_percent:.1f}% > {max_pair_percent}%")
+                            if decision.action == 'enter':
+                                score = decision.score or 50
+                                # Адаптивный размер позиции: от DE или стандартный
+                                size_mult = decision.position_size or 0.5
+                                
+                                # Лимиты безопасности
+                                max_positions = self.config['risk_management'].get('max_open_positions', 3)
+                                if len(self.positions) >= max_positions:
+                                    logger.info(f"⚠️ [DE] {symbol}: лимит {len(self.positions)}/{max_positions}")
                                     continue
-                        except Exception as e:
-                            logger.warning(f"Не удалось проверить диверсификацию: {e}")
-                        
-                        # Сигнал на покупку
-                        if (analysis['trend'] == 'bullish' and 
-                            analysis['confidence'] > 0.6 and  # СНИЖЕНО С 70% ДО 60%
-                            analysis['rsi'] < 70):
-                            
-                            # ПРОВЕРКА: Уже есть открытая позиция?
-                            if symbol in self.positions:
-                                logger.info(f"⚠️  Пропускаем покупку {symbol}: позиция уже открыта")
-                                continue
-                            
-                            # 🔍 ЗАЩИТА ОТ ПОКУПКИ НА ХАЕ: не покупаем если цена выросла >2% за последние 4ч
-                            try:
-                                df_15m = self.get_market_data(symbol, '15m', 16)  # 4 часа по 15 мин
-                                if not df_15m.empty:
-                                    closes_15m = df_15m['close'].values
-                                    price_change_4h = (closes_15m[-1] - closes_15m[0]) / closes_15m[0] * 100
-                                    if price_change_4h > 2.0:
-                                        logger.info(f"⏸️ {symbol}: пропускаем — цена выросла +{price_change_4h:.1f}% за 4ч (лимит 2%)")
-                                        continue
-                                    if price_change_4h > 1.5:
-                                        logger.info(f"⚠️ {symbol}: цена выросла +{price_change_4h:.1f}% за 4ч, близко к хаю")
-                            except Exception as e:
-                                logger.warning(f"Не удалось проверить 15M разогрев {symbol}: {e}")
-                            
-                            # 🧠 ML-PRO v2 СОВЕТНИК: мультитаймфреймовый анализ
-                            ml_decision = {'decision': 'GOOD'}  # дефолт, если ML недоступен
-                            try:
-                                from ml_professional_v2 import ml_pro_v2_evaluate
-                                ml_decision, ml_prob, ml_features = ml_pro_v2_evaluate(
-                                    symbol,
-                                    df if hasattr(df, '__iter__') else [],
-                                    candles_1h if len(candles_1h) > 0 else [],
-                                    candles_4h if len(candles_4h) > 0 else [],
-                                    analysis['confidence'],
-                                    analysis['trend'],
-                                    analysis['rsi']
-                                )
-                                if ml_decision == 'SKIP':
-                                    logger.info(f"⏭️ {symbol}: ML-PRO v2 отклонил сигнал (prob={ml_prob:.3f})")
-                                    continue
-                                elif ml_decision == 'WEAK_BUY':
-                                    logger.info(f"⚠️ {symbol}: ML-PRO v2 осторожно (prob={ml_prob:.3f})")
-                                    continue
+                                
+                                logger.info(f"⚡ [DE→BUY] {symbol}: score={score:.0f}/100 size={size_mult:.2f} | ${de_price:.4f}")
+                                # Размер позиции = стандартный * size_mult от DE
+                                base_qty = self.calculate_position_size(symbol, de_price)
+                                quantity = base_qty * size_mult
+                                if quantity * de_price <= self.available_capital:
+                                    # ✅ ЗАПОМИНАЕМ SL/TP УРОВНИ ОТ DE в позиции
+                                    sl_price = decision.sl_price
+                                    tp_price = decision.tp_price
+                                    trail_act = decision.trail_act
+                                    trail_dist = decision.trail_dist
+                                    max_hold_h = decision.max_hold_h
+                                    self.execute_trade(symbol, 'buy', quantity, de_price)
                                 else:
-                                    logger.info(f"✅ {symbol}: ML-PRO v2 одобрил (prob={ml_prob:.3f})")
-                            except Exception as e:
-                                logger.warning(f"ML-PRO v2 недоступен ({e}), использую old ML")
-                                try:
-                                    from ml_advisor import ml_evaluate
-                                    ml_result = ml_evaluate(symbol, current_price, analysis['rsi'],
-                                                            analysis['trend'], analysis['confidence'],
-                                                            df)
-                                    if ml_result['decision'] == 'SKIP':
-                                        logger.info(f"⏭️ {symbol}: old ML отклонил сигнал ({ml_result['reason']})")
-                                        continue
-                                except Exception as e2:
-                                    logger.warning(f"old ML тоже не сработал: {e2}")
-                            
-                            # 🎯 ПРОВЕРКА: не покупаем на падающем 15М графике
-                            if not self._confirm_15m_reversal(symbol):
-                                logger.info(f"⏭️ {symbol}: 15М-подтверждение не получено (падающий нож)")
-                                continue
-                            
-                            quantity = self.calculate_position_size(symbol, current_price)
-                            if quantity * current_price <= self.available_capital:
-                                self.execute_trade(symbol, 'buy', quantity, current_price)
+                                    logger.warning(f"⏭️ [DE] {symbol}: недостаточно капитала")
+                            else:
+                                reason = decision.reason or ''
+                                # Всегда логируем отклонённые решения — надо видеть почему DE не входит
+                                logger.info(f"⏳ [DE→HOLD] {symbol}: {reason}")
+                        except Exception as e_de:
+                            logger.warning(f"[DE] {symbol}: ошибка: {e_de}")
                     
                     else:
                         # Управление открытой позицией
@@ -893,86 +741,45 @@ class IndustrialTrader:
                         if pos_time.tzinfo is not None:
                             pos_time = pos_time.replace(tzinfo=None)
                         hold_time = (datetime.now() - pos_time).total_seconds() / 3600
+                        hold_hours = hold_time
                         
-                        # Проверка стоп-лосса и тейк-профита
-                        risk_config = self.config['risk_management']
+                        # ✅ ЕДИНЫЙ ЦЕНТР РЕШЕНИЙ: DE решает когда выходить
                         entry_price = position['entry_price']
                         pnl_percent = (current_price - entry_price) / entry_price * 100
                         
-                        stop_loss = -risk_config['stop_loss_percent']
-                        take_profit = risk_config['take_profit_percent']
+                        # Параметры HMM-адаптивного риска
+                        rp = de.get_sl_tp_params(side='long')
                         
-                        # ✅ ПРОФЕССИОНАЛЬНЫЙ ВЫХОД: только по объективным причинам
-                        # 1. Стоп-лосс: рынок против
-                        # 2. Фиксированный тейк-профит: цель достигнута
-                        # 3. Трейлинг: защита прибыли
-                        # 4. Только при 48 часах — принудительный выход (чтобы не блокировать слоты вечно)
-                        trailing_config = risk_config.get('trailing_take_profit', {})
-                        trailing_activation = trailing_config.get('activation_percent', 3.0)
-                        trailing_step = trailing_config.get('trailing_percent', 2.5)
+                        # Берём ценовые уровни из position (установлены при входе) или из конфига
+                        sl_price = position.get('_sl_price', entry_price * (1 - rp['sl_pct'] / 100))
+                        tp_price = position.get('_tp_price', entry_price * (1 + rp['tp_pct'] / 100))
+                        trail_act = position.get('_trail_act', rp['trail_act'])
+                        trail_dist = position.get('_trail_dist', rp['trail_dist'])
+                        max_hold = position.get('_max_hold_h', rp['max_hold_h'])
                         
-                        should_sell = False
-                        sell_reason = ""
-                        
-                        if pnl_percent <= stop_loss:
-                            should_sell = True
-                            sell_reason = "стоп-лосс"
-                        elif pnl_percent >= take_profit:
-                            # Достигли цели — фиксируем прибыль
-                            should_sell = True
-                            sell_reason = "тейк-профит"
-                        elif hold_time > 48:
-                            # 48 часов — единственный таймер. Освобождаем слот.
-                            should_sell = True
-                            sell_reason = "лимит удержания (48ч)"
+                        # Апдейт максимума для трейлинга
+                        if 'max_profit' not in position:
+                            position['max_profit'] = pnl_percent
                         else:
-                            # Трейлинг-стоп (всегда активен)
-                            if 'max_profit' not in position:
-                                position['max_profit'] = pnl_percent
-                            else:
-                                position['max_profit'] = max(position['max_profit'], pnl_percent)
-                            
-                            if position['max_profit'] >= trailing_activation:
-                                trailing_trigger = position['max_profit'] - trailing_step
-                                if pnl_percent <= trailing_trigger:
-                                    should_sell = True
-                                    sell_reason = f"трейлинг (пик: {position['max_profit']:.1f}%, откат: {pnl_percent:.1f}%)"
-                                elif pnl_percent >= trailing_activation * 0.5:
-                                    # Логируем трекинг только когда есть смысл
-                                    logger.info(f"   🔄 Трейлинг {symbol}: пик={position['max_profit']:.1f}%, тек={pnl_percent:.1f}%, триггер={trailing_trigger:.1f}%")
+                            position['max_profit'] = max(position['max_profit'], pnl_percent)
                         
-                        # Если не продали — просто логируем статус (раз в N циклов)
-                        if not should_sell and abs(pnl_percent) > 1:
-                            logger.info(f"📊 {symbol}: PnL={pnl_percent:+.2f}%, время={hold_time:.0f}ч, трейд={position.get('max_profit', 0):.1f}% пик")
-                            activation_percent = trailing_config['activation_percent']
-                            trailing_percent = trailing_config['trailing_percent']
-                            
-                            # Инициализируем максимум прибыли если нужно
-                            if 'max_profit' not in position:
-                                position['max_profit'] = pnl_percent
-                            else:
-                                position['max_profit'] = max(position['max_profit'], pnl_percent)
-                            
-                            # Проверяем активацию скользящего тейк-профита
-                            if position['max_profit'] >= activation_percent:
-                                trailing_take_profit = position['max_profit'] - trailing_percent
-                                
-                                if pnl_percent <= trailing_take_profit:
-                                    should_sell = True
-                                    sell_reason = f"скользящий тейк-профит (макс: {position['max_profit']:.2f}%, текущий: {pnl_percent:.2f}%)"
-                                else:
-                                    # Логируем отслеживание
-                                    logger.info(f"   📈 Отслеживание прибыли {symbol}: макс={position['max_profit']:.2f}%, текущий={pnl_percent:.2f}%, тейк-профит={trailing_take_profit:.2f}%")
-                            else:
-                                # Используем фиксированный тейк-профит до активации
-                                if pnl_percent >= take_profit:
-                                    should_sell = True
-                                    sell_reason = "фиксированный тейк-профит"
-                        else:
-                            # Используем фиксированный тейк-профит если скользящий отключен
-                            if pnl_percent >= take_profit:
-                                should_sell = True
-                                sell_reason = "фиксированный тейк-профит"
+                        exit_decision = de.decide_exit(
+                            symbol, entry_price, current_price,
+                            highest_price=current_price * (1 + position['max_profit'] / 100),
+                            lowest_price=current_price * (1 + min(0, pnl_percent) / 100),
+                            entry_time=pos_time, pnl_pct=pnl_percent,
+                            sl_pct=rp['sl_pct'], tp_pct=rp['tp_pct'],
+                            trail_act=rp['trail_act'], trail_dist=rp['trail_dist'],
+                            max_hold_hours=max_hold, side='long'
+                        )
+                        
+                        should_sell = (exit_decision is not None)
+                        sell_reason = exit_decision.reason if exit_decision else ""
+                        
+                        if not should_sell:
+                            # Статусный лог (раз в цикл для видимых PnL)
+                            if abs(pnl_percent) > 1:
+                                logger.info(f"📊 {symbol}: PnL={pnl_percent:+.2f}%, время={hold_hours:.0f}ч, трейд={position.get('max_profit', 0):.1f}% пик")
                         
                         if should_sell:
                             logger.info(f"🎯 ВЫХОД ИЗ ПОЗИЦИИ {symbol}: {sell_reason}")

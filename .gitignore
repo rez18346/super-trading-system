@@ -22,3 +22,8 @@ tests.py
 train_ml_v2_historical.py
 ML_PRO_PLAN.md
 PLAN_27_APRIL.md
+backups/
+scripts/
+*.wip
+*_bak
+ml_professional.py
