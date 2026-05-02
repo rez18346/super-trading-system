@@ -184,6 +184,7 @@ class DecisionEngine:
         # Инициализация ML-модулей (ленивая)
         self._ml_pro_v2 = None
         self._ml_advisor = None
+        self._liquidity = None
         
         # Кэшированные данные multi-timeframe
         self._candles_1h: Optional[list] = None
@@ -210,6 +211,7 @@ class DecisionEngine:
             'advisor_goods': 0,
             'veto_btc_drop': 0,
             'veto_mtf_conflict': 0,
+            'liquidity_scores': 0,
         }
     
     def _lazy_init_ml(self):
@@ -231,6 +233,15 @@ class DecisionEngine:
             except Exception as e:
                 logger.warning(f"[DE] MLAdvisor не загрузился: {e}")
                 self._ml_advisor = None
+        
+        if self._liquidity is None:
+            try:
+                from liquidity_cluster import get_liquidity_cluster
+                self._liquidity = get_liquidity_cluster()
+                logger.info("[DE] LiquidityCluster готов")
+            except Exception as e:
+                logger.warning(f"[DE] LiquidityCluster не загрузился: {e}")
+                self._liquidity = None
     
     def set_multi_tf_data(self, candles_1h: Optional[list] = None,
                           candles_4h: Optional[list] = None,
@@ -515,11 +526,17 @@ class DecisionEngine:
             )
     
     def _calc_trend_from_candles(self, candles: list) -> str:
-        """Определить тренд по списку свечей (быстро по EMAs)."""
+        """Определить тренд по списку свечей (быстро по EMAs).
+        Поддерживает список списков [ts,o,h,l,c,v] и список словарей {o,h,l,c,v,t}."""
         if not candles or len(candles) < 20:
             return 'neutral'
         
-        closes = [c[4] for c in candles[-20:]]
+        # Определяем формат: список или словарь
+        first = candles[0]
+        if isinstance(first, dict):
+            closes = [c['c'] for c in candles[-20:]]
+        else:
+            closes = [c[4] for c in candles[-20:]]
         
         # EMA 7 vs EMA 20
         ema7 = sum(closes[-7:]) / 7
@@ -579,10 +596,11 @@ class DecisionEngine:
         
         # Инициализируем результаты голосов
         scores = {
-            'ml_v2': {'score': 50, 'weight': 0.35, 'detail': 'N/A'},
-            'advisor': {'score': 50, 'weight': 0.20, 'detail': 'N/A'},
+            'ml_v2': {'score': 50, 'weight': 0.30, 'detail': 'N/A'},
+            'advisor': {'score': 50, 'weight': 0.15, 'detail': 'N/A'},
             'mtf': {'score': 50, 'weight': 0.25, 'detail': 'N/A'},
-            'rsi_vol_btc': {'score': 50, 'weight': 0.20, 'detail': 'N/A'},
+            'rsi_vol_btc': {'score': 50, 'weight': 0.15, 'detail': 'N/A'},
+            'liquidity': {'score': 50, 'weight': 0.15, 'detail': 'N/A'},
         }
         
         # ═══ ГОЛОС 1: MLProfessionalV2 (35%) ═══════════════════════════════
@@ -618,9 +636,17 @@ class DecisionEngine:
         # ═══ ГОЛОС 2: MLAdvisor (20%) ═══════════════════════════════════════
         try:
             if self._ml_advisor and self._ml_advisor.is_trained:
+                # Конвертируем список свечей в pandas DataFrame для MLAdvisor
+                adv_df = None
+                if candles_5m and len(candles_5m) > 10:
+                    try:
+                        import pandas as _pd
+                        adv_df = _pd.DataFrame(candles_5m)
+                    except:
+                        adv_df = None
                 adv = self._ml_advisor.evaluate(
                     symbol, current_price, rsi, trend, confidence,
-                    df=candles_5m
+                    df=adv_df
                 )
                 if adv['decision'] == 'GOOD':
                     adv_score = 70 + (adv['confidence'] * 30)
@@ -750,23 +776,47 @@ class DecisionEngine:
             scores['rsi_vol_btc']['score'] = 50
             scores['rsi_vol_btc']['detail'] = f"error({e})"
         
+        # ═══ ГОЛОС 5: LiquidityCluster (15%) ════════════════════════════════
+        try:
+            if self._liquidity:
+                liq = self._liquidity.evaluate(candles_5m, current_price,
+                                                candles_1h, candles_4h)
+                scores['liquidity']['score'] = liq['score']
+                scores['liquidity']['detail'] = liq['detail']
+                self.stats['liquidity_scores'] += 1
+            else:
+                scores['liquidity']['score'] = 50
+                scores['liquidity']['detail'] = 'not_loaded'
+        except Exception as e:
+            scores['liquidity']['score'] = 50
+            scores['liquidity']['detail'] = f"error({e})"
+        
         # ═══ ИТОГОВЫЙ СКОР ═════════════════════════════════════════════════
         final_score = sum(v['score'] * v['weight'] for v in scores.values())
         
         threshold = self._get_entry_threshold()
         
-        details = (
-            f"ML-Pro={scores['ml_v2']['score']:.0f}({scores['ml_v2']['detail']}) "
-            f"Advisor={scores['advisor']['score']:.0f}({scores['advisor']['detail']}) "
-            f"MTF={scores['mtf']['score']:.0f}({scores['mtf']['detail']}) "
-            f"RVB={scores['rsi_vol_btc']['score']:.0f}({scores['rsi_vol_btc']['detail']}) "
-            f"→ SCORE={final_score:.1f} (thr={threshold})"
+        # Разбивка голосов для логов/дашборда
+        votes_str = (
+            f"ML-Pro:{scores['ml_v2']['score']:.0f}({scores['ml_v2']['detail']}) "
+            f"Adv:{scores['advisor']['score']:.0f}({scores['advisor']['detail']}) "
+            f"MTF:{scores['mtf']['score']:.0f}({scores['mtf']['detail']}) "
+            f"RVB:{scores['rsi_vol_btc']['score']:.0f}({scores['rsi_vol_btc']['detail']}) "
+            f"Liq:{scores['liquidity']['score']:.0f}({scores['liquidity']['detail']})"
         )
+        
+        votes = {
+            'ml_v2': {'score': scores['ml_v2']['score'], 'detail': scores['ml_v2']['detail']},
+            'advisor': {'score': scores['advisor']['score'], 'detail': scores['advisor']['detail']},
+            'mtf': {'score': scores['mtf']['score'], 'detail': scores['mtf']['detail']},
+            'rsi_vol_btc': {'score': scores['rsi_vol_btc']['score'], 'detail': scores['rsi_vol_btc']['detail']},
+            'liquidity': {'score': scores['liquidity']['score'], 'detail': scores['liquidity']['detail']},
+        }
         
         if final_score >= threshold:
             return {
                 'approved': True,
-                'reason': f"ВХОД (score={final_score:.0f})",
+                'reason': f"ВХОД {votes_str}",
                 'final_score': final_score,
                 'threshold': threshold,
                 'price': current_price,
@@ -774,13 +824,16 @@ class DecisionEngine:
                 'advisor_score': scores['advisor']['score'],
                 'mtf_score': scores['mtf']['score'],
                 'rsi_vol_btc_score': scores['rsi_vol_btc']['score'],
+                'liquidity_score': scores['liquidity']['score'],
+                'votes': votes,
             }
         else:
             return {
                 'approved': False,
-                'reason': f"⏭️ Score={final_score:.0f} < {threshold}",
+                'reason': f"⏭️ Score={final_score:.0f} < {threshold} {votes_str}",
                 'final_score': final_score,
                 'threshold': threshold,
+                'votes': votes,
             }
     
     def _trend_to_score(self, trend: str) -> float:
