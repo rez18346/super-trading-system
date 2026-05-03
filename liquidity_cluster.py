@@ -1,56 +1,84 @@
 """
-LiquidityCluster - анализ микроструктуры рынка.
+LiquidityCluster v2 — анализ микроструктуры + Order Flow / Order Block (Smart Money)
 
 Определяет зоны ликвидности на основе:
-  1. Rolling Volume Profile - кластеризация объёма за N свечей
-  2. POC (Point of Control) - точка максимального объёма
-  3. Value Area High/Low - границы 70% объёма
-  4. Fair Value Gaps (FVG) - дисбалансы (гэпы) между свечами
-  5. VWAP 1H / 4H - позиция цены относительно VWAP
+  1. Rolling Volume Profile — POC, VAH, VAL (70% объёма)
+  2. Fair Value Gaps (FVG) — незакрытые дисбалансы
+  3. VWAP 1H / 4H — позиция цены относительно VWAP
+  4. Order Flow (OF) — импульсное движение от институциональных входов
+  5. Order Block (OB) — зона перед импульсом
+  6. IDM → IDM OB → EXT OB — 3 ключевые зоны POI
+  7. Mitigation — тест зон (до перекрытия телом)
+  8. Liquidity Sweep — захват ликвидности через манипуляцию
 
 Лицензия: MIT
 """
 
 import numpy as np
 from typing import List, Dict, Tuple, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ДАННЫЕ
 # ──────────────────────────────────────────────────────────────────────────────
 
 @dataclass
+class OrderBlockInfo:
+    """Информация об ордерблоке."""
+    price_high: float
+    price_low: float
+    kind: str               # 'idm' | 'idm_ob' | 'ext_ob'
+    direction: str          # 'bullish' | 'bearish'
+    mitigated: bool = False # перекрыто телом свечи?
+    strength: float = 0.5   # 0-1
+
+@dataclass
+class OrderFlowInfo:
+    """Информация о потоке ордеров."""
+    price_start: float      # начало импульса
+    price_end: float        # конец импульса
+    direction: str          # 'bullish' | 'bearish'
+    volume_ratio: float     # объём импульса / средний объём
+    candle_count: int       # сколько свечей занял импульс
+    sweep: bool = False     # был ли захват ликвидности перед импульсом
+
+@dataclass
 class LiquidityState:
     """Текущее состояние ликвидности для символа."""
-    poc: float               # Point of Control
-    vah: float               # Value Area High
-    val: float               # Value Area Low
-    fvg_below: List[Tuple[float, float]]  # незакрытые гэпы снизу (price_low, price_high)
-    fvg_above: List[Tuple[float, float]]  # незакрытые гэпы сверху
+    poc: float                  # Point of Control
+    vah: float                  # Value Area High
+    val: float                  # Value Area Low
+    fvg_below: List[Tuple[float, float]]   # незакрытые гэпы снизу
+    fvg_above: List[Tuple[float, float]]   # незакрытые гэпы сверху
     vwap_1h: Optional[float] = None
     vwap_4h: Optional[float] = None
-    cluster_quality: float = 0.0   # 0-1 - насколько чёткие кластеры
+    cluster_quality: float = 0.0    # 0-1
+    # Новое
+    order_blocks: List[OrderBlockInfo] = field(default_factory=list)
+    order_flows: List[OrderFlowInfo] = field(default_factory=list)
+    poi_idm: Optional[float] = None     # IDM уровень
+    poi_idm_ob: Optional[Tuple[float, float]] = None  # IDM OB (low, high)
+    poi_ext_ob: Optional[Tuple[float, float]] = None  # EXT OB (low, high)
 
     @property
     def in_value_area(self) -> bool:
         """Цена внутри Value Area?"""
-        return self.val <= self.poc <= self.vah  # заглушка, обновится при evaluate
+        return self.val <= self.poc <= self.vah
 
 
 class LiquidityCluster:
     """
-    Анализатор ликвидности по свечам.
+    Анализатор ликвидности + Order Flow / Order Block (Smart Money).
 
     Потребляет список свечей (список словарей {o,h,l,c,v,t} или
     список списков [ts,o,h,l,c,v]).
     """
 
     def __init__(self, window: int = 48):
-        """
-        Args:
-            window: размер окна для Volume Profile (число свечей 5M)
-        """
         self.window = window
+        # Кэш для обнаруженных зон (сбрасывается при каждом evaluate)
+        self._cached_of: List[OrderFlowInfo] = []
+        self._cached_ob: List[OrderBlockInfo] = []
 
     # ──────────────────────────────────────────────────────────────────────────
     # ПУБЛИЧНЫЙ МЕТОД
@@ -60,7 +88,7 @@ class LiquidityCluster:
                  candles_1h: Optional[List] = None,
                  candles_4h: Optional[List] = None) -> Dict:
         """
-        Получить оценку ликвидности.
+        Получить оценку ликвидности + Order Flow / Order Block.
 
         Returns:
             dict с полями:
@@ -82,7 +110,7 @@ class LiquidityCluster:
             return {'score': 50, 'detail': 'нет цен', 'signal': 'neutral',
                     'state': None}
 
-        # 1. Volume Profile
+        # 1. Volume Profile (старый добрый)
         poc, vah, val, vol_clusters = self._volume_profile(closes, highs, lows,
                                                             volumes)
         cluster_quality = self._cluster_quality(vol_clusters)
@@ -90,94 +118,491 @@ class LiquidityCluster:
         # 2. FVG
         fvg_below, fvg_above = self._detect_fvg(candles_5m)
 
-        # 3. VWAP из 1H / 4H
+        # 3. VWAP
         vwap_1h = self._calc_vwap(candles_1h) if candles_1h else None
         vwap_4h = self._calc_vwap(candles_4h) if candles_4h else None
+
+        # ─── НОВОЕ: Order Flow / Order Block ────────────────────────────────
+        order_flows = self._detect_order_flows(closes, highs, lows, volumes)
+        order_blocks = self._detect_order_blocks(closes, highs, lows, volumes,
+                                                  order_flows)
+        poi_idm, poi_idm_ob, poi_ext_ob = self._classify_poi(order_blocks)
 
         state = LiquidityState(
             poc=poc, vah=vah, val=val,
             fvg_below=fvg_below, fvg_above=fvg_above,
             vwap_1h=vwap_1h, vwap_4h=vwap_4h,
             cluster_quality=cluster_quality,
+            order_blocks=order_blocks,
+            order_flows=order_flows,
+            poi_idm=poi_idm,
+            poi_idm_ob=poi_idm_ob,
+            poi_ext_ob=poi_ext_ob,
         )
 
-        # 4. Итоговая оценка (score 0-100)
-        in_val = val <= current_price <= vah
-        near_poc = abs(current_price - poc) / (poc + 1e-8) < 0.005  # 0.5%
-        near_vah = abs(current_price - vah) / (vah + 1e-8) < 0.005
-        near_val = abs(current_price - val) / (val + 1e-8) < 0.005
+        # 4. Итоговая оценка (score 0-100) — ТЕПЕРЬ с учётом OF/OB
+        score = self._calc_score(closes, highs, lows, volumes,
+                                  current_price, vah, val, poc,
+                                  cluster_quality, fvg_above, fvg_below,
+                                  vwap_1h, order_flows, order_blocks,
+                                  poi_idm, poi_idm_ob, poi_ext_ob)
 
-        score = 50  # нейтрально
+        signal = 'bullish' if score > 60 else ('bearish' if score < 40 else 'neutral')
 
-        # Если цена внутри Value Area - нейтрально, лёгкий бонус если у POC
-        if in_val:
-            score = 55
-            if near_poc:
-                score = 60
-            # Если объём растёт у POC - рынок засасывает
-            if near_poc and cluster_quality > 0.6:
-                score = 65
-        else:
-            # Цена ВЫШЕ VAH
-            if current_price > vah:
-                # Если есть незакрытые FVG сверху - цена может вернуться
-                if fvg_above:
-                    score = 40  # не входим, ждём заполнения гэпа
-                elif cluster_quality > 0.5:
-                    score = 70  # пробой на объёме - продолжаем
-                else:
-                    score = 60  # слабый пробой
-            # Цена НИЖЕ VAL
-            else:
-                if fvg_below:
-                    score = 40
-                elif cluster_quality > 0.5:
-                    score = 70
-                else:
-                    score = 60
-
-        # Бонус от VWAP: если цена у VWAP 1H - значимый уровень
-        if vwap_1h and abs(current_price - vwap_1h) / (vwap_1h + 1e-8) < 0.003:
-            score = min(90, score + 20)
-
-        # FVG бонус: цена возвращается к гэпу
-        if near_vah and fvg_above:
-            score = min(80, score + 15)  # сбор ликвидности у VAH
-        if near_val and fvg_below:
-            score = min(80, score + 15)  # сбор ликвидности у VAL
-        
-        # ═══ Breakout Trap: ложный пробой VAH/VAL с возвратом ═══════════════
+        # Деталь для логов: добавляем OF/OB статус
         trap = self._detect_breakout_trap(highs[-20:], lows[-20:], closes[-20:],
                                            volumes[-20:] if len(volumes) >= 20 else [],
                                            vah, val)
-        if trap == 'bullish':
-            # Цена пробила VAH и вернулась → это сбор ликвидности шортов
-            score = min(90, score + 20)
-        elif trap == 'bearish':
-            # Цена пробила VAL и вернулась → сбор лонгов
-            score = min(90, score + 20)
-        elif trap == 'fake_breakout':
-            # Цена пробила и закрепилась, потом резкий разворот
-            score = min(85, score + 15)
-        
-        signal = 'bullish' if score > 60 else ('bearish' if score < 40 else 'neutral')
+        ob_details = []
+        if order_blocks:
+            alive = [ob for ob in order_blocks if not ob.mitigated]
+            if alive:
+                ob_details.append(f"OB{len(alive)}")
+                for ob in alive[:2]:
+                    ob_details.append(ob.kind[:3])
         detail = (
             f"POC={poc:.4f} VAH={vah:.4f} VAL={val:.4f} "
             f"q={cluster_quality:.2f} fvg↑={len(fvg_above)} fvg↓={len(fvg_below)} "
+            f"{' '.join(ob_details)} "
             f"{trap or ''}"
         )
+
+        # Кэшируем для следующих вызовов
+        self._cached_of = order_flows
+        self._cached_ob = order_blocks
 
         return {'score': int(score), 'detail': detail, 'signal': signal, 'state': state}
 
     # ──────────────────────────────────────────────────────────────────────────
-    # VOLUME PROFILE
+    # ORDER FLOW — ДЕТЕКЦИЯ ИМПУЛЬСОВ
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _detect_order_flows(self, closes: List[float], highs: List[float],
+                             lows: List[float], volumes: List[float]
+                             ) -> List[OrderFlowInfo]:
+        """
+        Ищем Order Flow — импульсные движения, вызванные институциональными
+        входами.
+
+        Критерии импульса:
+          - 3+ последовательных свечи в одном направлении
+          - Общий ход > 0.3% от средней цены
+          - Объём > 1.5x среднего за 20 свечей
+          - (опционально) свечи с малыми тенями — агрессивный вход
+
+        Returns:
+            список OrderFlowInfo (только значимые импульсы, не старше 24 свечей)
+        """
+        if len(closes) < 30:
+            return []
+
+        n = min(24, len(closes))
+        avg_vol = np.mean(volumes[-20:]) if len(volumes) >= 20 else 1
+        avg_price = np.mean(closes[-n:])
+
+        flows: List[OrderFlowInfo] = []
+        i = len(closes) - n
+
+        while i < len(closes) - 3:
+            # Ищем 3+ бычьих свечи подряд
+            bull_count = 0
+            bear_count = 0
+            j = i
+            while j < len(closes):
+                if closes[j] > closes[j-1] if j > 0 else False:
+                    bull_count += 1
+                    bear_count = 0
+                elif closes[j] < closes[j-1] if j > 0 else False:
+                    bear_count += 1
+                    bull_count = 0
+                else:
+                    bull_count = 0
+                    bear_count = 0
+
+                if bull_count >= 3:
+                    break
+                if bear_count >= 3:
+                    break
+                j += 1
+
+            if bull_count >= 3:
+                # Запомнили импульс
+                start = max(0, j - bull_count)
+                end = j
+                move_pct = abs(closes[end] - closes[start]) / avg_price * 100
+                vol_sum = sum(volumes[start:end+1]) if len(volumes) > end else 0
+                vol_ratio = vol_sum / (avg_vol * (end - start + 1) + 1e-8)
+
+                if move_pct > 0.3 and vol_ratio > 1.2:
+                    # Проверяем был ли sweep перед импульсом
+                    sweep = self._check_sweep_before(highs, lows, closes,
+                                                      volumes, start, avg_vol,
+                                                      direction='bullish')
+                    flows.append(OrderFlowInfo(
+                        price_start=closes[start],
+                        price_end=closes[end],
+                        direction='bullish',
+                        volume_ratio=vol_ratio,
+                        candle_count=end - start + 1,
+                        sweep=sweep,
+                    ))
+                i = end + 1
+                continue
+
+            if bear_count >= 3:
+                start = max(0, j - bear_count)
+                end = j
+                move_pct = abs(closes[end] - closes[start]) / avg_price * 100
+                vol_sum = sum(volumes[start:end+1]) if len(volumes) > end else 0
+                vol_ratio = vol_sum / (avg_vol * (end - start + 1) + 1e-8)
+
+                if move_pct > 0.3 and vol_ratio > 1.2:
+                    sweep = self._check_sweep_before(highs, lows, closes,
+                                                      volumes, start, avg_vol,
+                                                      direction='bearish')
+                    flows.append(OrderFlowInfo(
+                        price_start=closes[start],
+                        price_end=closes[end],
+                        direction='bearish',
+                        volume_ratio=vol_ratio,
+                        candle_count=end - start + 1,
+                        sweep=sweep,
+                    ))
+                i = end + 1
+                continue
+
+            i += 1
+
+        # Оставляем только последние 24 свечи
+        flows = [f for f in flows if f.candle_count <= 24]
+        return flows[:6]  # не болEE 6 потоков
+
+    def _check_sweep_before(self, highs: List[float], lows: List[float],
+                              closes: List[float], volumes: List[float],
+                              start_idx: int, avg_vol: float,
+                              direction: str) -> bool:
+        """
+        Проверяем, был ли захват ликвидности (sweep) ПЕРЕД импульсом.
+
+        Для bullish: перед импульсом цена должна сходить ниже последнего
+                      минимума (sweep стоп-лоссов лонгов).
+        Для bearish: перед импульсом цена должна сходить выше последнего
+                      максимума (sweep стоп-лоссов шортов).
+
+        Returns:
+            True если sweep обнаружен
+        """
+        if start_idx < 5:
+            return False
+
+        lookback = min(10, start_idx)
+        before_highs = highs[start_idx - lookback:start_idx]
+        before_lows = lows[start_idx - lookback:start_idx]
+
+        if direction == 'bullish':
+            min_before = min(before_lows[:-1]) if len(before_lows) > 1 else before_lows[0]
+            current_low = before_lows[-1]
+            # Бычий sweep: цена ушла ниже недавнего минимума перед ростом
+            if current_low < min_before * 0.998:
+                # Проверяем что объём на sweep был (сбор ликвидности)
+                sweep_vol = volumes[start_idx - 1] if len(volumes) > start_idx - 1 else 0
+                if sweep_vol > avg_vol * 0.8:
+                    return True
+
+        elif direction == 'bearish':
+            max_before = max(before_highs[:-1]) if len(before_highs) > 1 else before_highs[0]
+            current_high = before_highs[-1]
+            # Медвежий sweep: цена ушла выше недавнего максимума перед падением
+            if current_high > max_before * 1.002:
+                sweep_vol = volumes[start_idx - 1] if len(volumes) > start_idx - 1 else 0
+                if sweep_vol > avg_vol * 0.8:
+                    return True
+
+        return False
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # ORDER BLOCK — ДЕТЕКЦИЯ БЛОКОВ
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _detect_order_blocks(self, closes: List[float], highs: List[float],
+                              lows: List[float], volumes: List[float],
+                              order_flows: List[OrderFlowInfo]
+                              ) -> List[OrderBlockInfo]:
+        """
+        Находим Order Blocks — зоны, откуда начался импульс (Order Flow).
+
+        OB = последняя свеча ПЕРЕД началом импульса (или группа свечей).
+        Для бычьего OF: OB — свеча с минимальным low перед импульсом
+        Для медвежьего OF: OB — свеча с максимальным high перед импульсом
+
+        Классификация:
+          - IDM: побуждение (первая значимая зона)
+          - IDM OB: ордер блок за IDM
+          - EXT OB: экстремальный блок (максимальная ликвидность)
+        """
+        blocks: List[OrderBlockInfo] = []
+
+        for of in order_flows:
+            if of.direction == 'bullish':
+                # Ищем свечу перед импульсом с наибольшим низом
+                # (институциональный вход)
+                ob_start = of.price_start
+                ob_idx = self._find_ob_index(closes, lows, ob_start, direction='bullish')
+
+                if ob_idx is not None and ob_idx > 0:
+                    ob_low = lows[ob_idx]
+                    ob_high = highs[ob_idx]
+
+                    # Плюс одна свеча до (контекст)
+                    if ob_idx > 1:
+                        ob_low = min(ob_low, lows[ob_idx - 1])
+                        ob_high = max(ob_high, highs[ob_idx - 1])
+
+                    # Проверяем mitigation
+                    mitigated = self._is_mitigated(closes, highs, lows,
+                                                    ob_low, ob_high, ob_idx)
+                    blocks.append(OrderBlockInfo(
+                        price_high=ob_high,
+                        price_low=ob_low,
+                        kind='ext_ob' if of.sweep else 'idm_ob',
+                        direction='bullish',
+                        mitigated=mitigated,
+                        strength=min(1.0, of.volume_ratio * 0.4),
+                    ))
+            else:
+                ob_start = of.price_start
+                ob_idx = self._find_ob_index(closes, highs, ob_start,
+                                              direction='bearish')
+
+                if ob_idx is not None and ob_idx > 0:
+                    ob_low = lows[ob_idx]
+                    ob_high = highs[ob_idx]
+
+                    if ob_idx > 1:
+                        ob_low = min(ob_low, lows[ob_idx - 1])
+                        ob_high = max(ob_high, highs[ob_idx - 1])
+
+                    mitigated = self._is_mitigated(closes, highs, lows,
+                                                    ob_low, ob_high, ob_idx)
+
+                    blocks.append(OrderBlockInfo(
+                        price_high=ob_high,
+                        price_low=ob_low,
+                        kind='ext_ob' if of.sweep else 'idm_ob',
+                        direction='bearish',
+                        mitigated=mitigated,
+                        strength=min(1.0, of.volume_ratio * 0.4),
+                    ))
+
+        # Сортируем по силе
+        blocks.sort(key=lambda b: b.strength, reverse=True)
+        return blocks[:6]  # не болEE 6 блоков
+
+    def _find_ob_index(self, closes: List[float], prices: List[float],
+                        target_price: float, direction: str) -> Optional[int]:
+        """
+        Найти индекс свечи, которая является ордер блоком.
+
+        Для bullish: ищем локальный минимум ПЕРЕД началом импульса
+        Для bearish: ищем локальный максимум ПЕРЕД началом импульса
+        """
+        # Ищем target_price в closes
+        try:
+            idx = list(closes).index(target_price)
+        except ValueError:
+            # Не нашли точную цену — ищем ближайшую
+            diffs = [abs(c - target_price) for c in closes]
+            idx = diffs.index(min(diffs))
+
+        if idx < 2:
+            return None
+
+        if direction == 'bullish':
+            # Ищем минимум за 5 свечей ДО импульса
+            lookback = min(5, idx)
+            segment = closes[idx - lookback:idx + 1]
+            min_val = min(segment)
+            min_idx = closes.index(min_val) if min_val in closes else idx - lookback
+            return max(0, min_idx - 1)
+        else:
+            lookback = min(5, idx)
+            segment = closes[idx - lookback:idx + 1]
+            max_val = max(segment)
+            max_idx = closes.index(max_val) if max_val in closes else idx - lookback
+            return max(0, max_idx - 1)
+
+    def _is_mitigated(self, closes: List[float], highs: List[float],
+                       lows: List[float], ob_low: float, ob_high: float,
+                       ob_idx: int) -> bool:
+        """
+        Проверяем, перекрыта ли зона OB телом свечи после её формирования.
+
+        По методологии Ханна: зона считается немитигированной, пока тело
+        свечи не перекрыло её. После перекрытия — зона не валидна.
+        Однако мы считаем зону валидной ДО полного перекрытия телом.
+        """
+        # Смотрим свечи ПОСЛЕ OB
+        for i in range(ob_idx + 1, len(closes)):
+            c = closes[i]
+            o = closes[i - 1] if i > 0 else c
+            body_high = max(o, c)
+            body_low = min(o, c)
+
+            # Тело полностью перекрыло зону OB
+            if body_high >= ob_high and body_low <= ob_low:
+                return True
+
+        return False
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # POI — ЗОНЫ ИНТЕРЕСА (IDM → IDM OB → EXT OB)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _classify_poi(self, order_blocks: List[OrderBlockInfo]
+                       ) -> Tuple[Optional[float],
+                                  Optional[Tuple[float, float]],
+                                  Optional[Tuple[float, float]]]:
+        """
+        Классифицируем 3 ключевые зоны POI.
+
+        Returns:
+            (idm_level, idm_ob_zone, ext_ob_zone)
+        """
+        idm_level = None
+        idm_ob_zone = None
+        ext_ob_zone = None
+
+        alive = [ob for ob in order_blocks if not ob.mitigated]
+        if not alive:
+            return None, None, None
+
+        # IDM: первая значимая зона (самая слабая)
+        if len(alive) >= 1:
+            idm_block = alive[-1]  # самая слабая/старая
+            idm_level = (idm_block.price_low + idm_block.price_high) / 2
+            idm_ob_zone = (idm_block.price_low, idm_block.price_high)
+
+        # EXT OB: сильнейший блок (высокая ликвидность)
+        if alive:
+            ext_block = max(alive, key=lambda b: b.strength)
+            ext_ob_zone = (ext_block.price_low, ext_block.price_high)
+
+        return idm_level, idm_ob_zone, ext_ob_zone
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # ИТОГОВАЯ ОЦЕНКА (С УЧЁТОМ OF/OB)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _calc_score(self, closes, highs, lows, volumes,
+                     current_price, vah, val, poc,
+                     cluster_quality, fvg_above, fvg_below,
+                     vwap_1h, order_flows, order_blocks,
+                     poi_idm, poi_idm_ob, poi_ext_ob) -> int:
+        """Расчёт итогового score с учётом новых метрик."""
+        score = 50
+
+        # ── 1. Volume Profile (как было) ──────────────────────────────────
+        in_val = val <= current_price <= vah
+        near_poc = abs(current_price - poc) / (poc + 1e-8) < 0.005
+        near_vah = abs(current_price - vah) / (vah + 1e-8) < 0.005
+        near_val = abs(current_price - val) / (val + 1e-8) < 0.005
+
+        if in_val:
+            score = 55
+            if near_poc:
+                score = 60
+            if near_poc and cluster_quality > 0.6:
+                score = 65
+        else:
+            if current_price > vah:
+                score = 40 if fvg_above else (70 if cluster_quality > 0.5 else 60)
+            else:
+                score = 40 if fvg_below else (70 if cluster_quality > 0.5 else 60)
+
+        # ── 2. VWAP бонус ────────────────────────────────────────────────
+        if vwap_1h and abs(current_price - vwap_1h) / (vwap_1h + 1e-8) < 0.003:
+            score = min(90, score + 20)
+
+        # ── 3. FVG возврат ────────────────────────────────────────────────
+        if near_vah and fvg_above:
+            score = min(80, score + 15)
+        if near_val and fvg_below:
+            score = min(80, score + 15)
+
+        # ── 4. Breakout Trap ─────────────────────────────────────────────
+        trap = self._detect_breakout_trap(highs[-20:], lows[-20:], closes[-20:],
+                                           volumes[-20:] if len(volumes) >= 20 else [],
+                                           vah, val)
+        if trap == 'bullish':
+            score = min(90, score + 20)
+        elif trap == 'bearish':
+            score = min(90, score + 20)
+        elif trap == 'fake_breakout':
+            score = min(85, score + 15)
+
+        # ── НОВОЕ: Order Flow бонус ──────────────────────────────────────
+        for of in order_flows:
+            # Цена рядом с началом OF — потенциальный вход
+            dist_to_of_start = abs(current_price - of.price_start) / (of.price_start + 1e-8)
+            if dist_to_of_start < 0.005:  # 0.5%
+                if of.sweep:
+                    # OF со sweep → EXT OB (очень сильный сигнал)
+                    score = min(95, score + 25)
+                elif of.volume_ratio > 2.0:
+                    score = min(90, score + 20)
+                else:
+                    score = min(80, score + 15)
+
+            # Цена внутри OF (импульс в нашу сторону) — продолжение
+            if of.direction == 'bullish' and current_price > of.price_start:
+                if of.price_start <= current_price <= of.price_end:
+                    score = min(85, score + 10)
+            elif of.direction == 'bearish' and current_price < of.price_start:
+                if of.price_end <= current_price <= of.price_start:
+                    score = min(85, score + 10)
+
+        # ── НОВОЕ: Order Block бонус ──────────────────────────────────────
+        for ob in order_blocks:
+            if ob.mitigated:
+                continue  # не используем mitigated блоки
+
+            in_ob = ob.price_low <= current_price <= ob.price_high
+            near_ob = (abs(current_price - ob.price_low) / (ob.price_low + 1e-8) < 0.003 or
+                       abs(current_price - ob.price_high) / (ob.price_high + 1e-8) < 0.003)
+
+            if in_ob:
+                if ob.kind == 'ext_ob':
+                    score = min(95, score + 25)
+                elif ob.kind == 'idm_ob':
+                    score = min(85, score + 15)
+                else:
+                    score = min(75, score + 10)
+            elif near_ob:
+                if ob.kind == 'ext_ob':
+                    score = min(90, score + 20)
+                elif ob.kind == 'idm_ob':
+                    score = min(80, score + 12)
+
+        # ── НОВОЕ: POI зоны ──────────────────────────────────────────────
+        if poi_idm_ob:
+            lo, hi = poi_idm_ob
+            if lo <= current_price <= hi:
+                score = min(85, score + 15)
+        if poi_ext_ob:
+            lo, hi = poi_ext_ob
+            if lo <= current_price <= hi:
+                score = min(95, score + 20)
+
+        return int(score)
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # VOLUME PROFILE (БЕЗ ИЗМЕНЕНИЙ)
     # ──────────────────────────────────────────────────────────────────────────
 
     def _extract_closes(self, candles: List) -> List[float]:
         if not candles:
             return []
         if isinstance(candles[0], dict):
-            # Поддерживаем 'c' (сокращённый) и 'close' (полный) формат
             first = candles[0]
             if 'c' in first:
                 return [c['c'] for c in candles]
@@ -213,27 +638,17 @@ class LiquidityCluster:
             return []
         return [c[5] for c in candles]
 
-    def _volume_profile(self, closes: List[float], highs: List[float],
-                        lows: List[float], volumes: List[float]
-                        ) -> Tuple[float, float, float, Dict]:
-        """
-        Биннинг по цене: группируем объём по ценовым уровней.
-
-        Returns:
-            poc, vah, val, clusters
-        """
+    def _volume_profile(self, closes, highs, lows, volumes):
         if not closes or not volumes:
             return 0, 0, 0, {}
 
-        # Нормализация шага
         price_range = max(highs[-self.window:]) - min(lows[-self.window:])
         if price_range == 0:
             return closes[-1], closes[-1], closes[-1], {}
-        tick_size = max(price_range * 0.002, 0.0001)  # 0.2% от диапазона
+        tick_size = max(price_range * 0.002, 0.0001)
 
         n = min(self.window, len(closes))
         clusters: Dict[float, float] = {}
-
         for i in range(-n, 0):
             price_bin = round(closes[i] / tick_size) * tick_size
             clusters[price_bin] = clusters.get(price_bin, 0) + volumes[i]
@@ -241,11 +656,8 @@ class LiquidityCluster:
         if not clusters:
             return closes[-1], closes[-1], closes[-1], {}
 
-        # POC - бин с макс объёмом
         poc = max(clusters, key=clusters.get)
         total_vol = sum(clusters.values())
-
-        # Value Area - 70% объёма вокруг POC
         sorted_bins = sorted(clusters.keys())
         poc_idx = sorted_bins.index(poc) if poc in sorted_bins else len(sorted_bins)//2
 
@@ -257,7 +669,6 @@ class LiquidityCluster:
         while cum_vol < total_vol * 0.7:
             left_val = clusters.get(sorted_bins[low_idx - 1], 0) if low_idx > 0 else 0
             right_val = clusters.get(sorted_bins[high_idx + 1], 0) if high_idx < len(sorted_bins)-1 else 0
-
             if left_val >= right_val and low_idx > 0:
                 low_idx -= 1
                 cum_vol += left_val
@@ -271,14 +682,9 @@ class LiquidityCluster:
 
         val = sorted_bins[max(0, low_idx)]
         vah = sorted_bins[min(len(sorted_bins)-1, high_idx)]
-
         return poc, vah, val, clusters
 
     def _cluster_quality(self, clusters: Dict) -> float:
-        """
-        Насколько чётко выделен POC.
-        0 - плохо (объём размазан), 1 - отлично (один явный пик).
-        """
         if not clusters or len(clusters) < 3:
             return 0.3
         max_vol = max(clusters.values())
@@ -288,50 +694,27 @@ class LiquidityCluster:
         return min(1.0, (max_vol / mean_vol) * 0.15)
 
     # ──────────────────────────────────────────────────────────────────────────
-    # BREAKOUT TRAP
+    # BREAKOUT TRAP (БЕЗ ИЗМЕНЕНИЙ)
     # ──────────────────────────────────────────────────────────────────────────
 
-    def _detect_breakout_trap(self, highs: List[float], lows: List[float],
-                               closes: List[float], volumes: List[float],
-                               vah: float, val: float) -> str:
-        """
-        Детектор ложного пробоя (breakout trap).
-        
-        Проверяет последние 6 свечей на наличие:
-          - Пробой VAH вверх → возврат под VAH (сбор ликвидности шортов)
-          - Пробой VAL вниз → возврат над VAL (сбор лонгов)
-          - Fake breakout: цена пробила уровень, закрепилась на 2+ свечах,
-            потом резкий разворот с увеличенным объёмом
-        
-        Returns:
-            'bullish' — цена сходила выше VAH и вернулась (скоро вверх)
-            'bearish' — цена сходила ниже VAL и вернулась (скоро вниз)
-            'fake_breakout' — ложный пробой с закреплением и разворотом
-            '' — ничего не обнаружено
-        """
+    def _detect_breakout_trap(self, highs, lows, closes, volumes, vah, val):
         if len(highs) < 10 or len(lows) < 10 or not volumes:
             return ''
-        
-        # Последние 6 свечей для анализа
         n = min(6, len(highs))
         recent_highs = highs[-n:]
         recent_lows = lows[-n:]
         recent_closes = closes[-n:]
         recent_vols = volumes[-n:] if len(volumes) >= n else []
-        
         avg_vol = sum(recent_vols[:-1]) / max(len(recent_vols[:-1]), 1)
-        
-        # 1. Цена сходила ВЫШЕ VAH и вернулась
+
         broke_vah = any(h > vah * 1.001 for h in recent_highs)
         back_below_vah = recent_closes[-1] < vah
         back_below_vah_2 = recent_closes[-2] < vah if n >= 2 else True
         if broke_vah and back_below_vah and back_below_vah_2:
-            # Проверяем что возврат на низком объёме (сбор завершён)
             last_vol_low = len(recent_vols) >= 3 and recent_vols[-1] < avg_vol * 0.8
             if last_vol_low:
                 return 'bullish'
-        
-        # 2. Цена сходила НИЖЕ VAL и вернулась
+
         broke_val = any(l < val * 0.999 for l in recent_lows)
         back_above_val = recent_closes[-1] > val
         back_above_val_2 = recent_closes[-2] > val if n >= 2 else True
@@ -339,17 +722,12 @@ class LiquidityCluster:
             last_vol_low = len(recent_vols) >= 3 and recent_vols[-1] < avg_vol * 0.8
             if last_vol_low:
                 return 'bearish'
-        
-        # 3. Fake breakout: пробой + закрепление выше VAH на 2 свечи + резкий
-        #    разворот вниз с объёмом
+
         if n >= 5 and len(recent_vols) >= 5:
             two_above = all(h > vah * 1.001 for h in recent_highs[-4:-2])
-            last_two_below = all(
-                recent_closes[-i] < vah * 1.001 for i in range(1, 3)
-            ) if n >= 2 else False
+            last_two_below = all(recent_closes[-i] < vah * 1.001 for i in range(1, 3)) if n >= 2 else False
             if two_above and last_two_below and recent_vols[-1] > avg_vol * 1.3:
                 return 'fake_breakout'
-        
         return ''
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -375,14 +753,11 @@ class LiquidityCluster:
 
         n = min(24, len(highs))
         for i in range(-n + 1, 0):
-            # Гэп вверх: low[i] > high[i-1]
             if lows[i] > highs[i - 1]:
                 fvg_above.append((highs[i - 1], lows[i]))
-            # Гэп вниз: high[i] < low[i-1]
             if highs[i] < lows[i - 1]:
                 fvg_below.append((highs[i], lows[i - 1]))
 
-        # Убираем уже заполненные (цена вернулась в диапазон)
         current_high = highs[-1]
         current_low = lows[-1]
         fvg_above = [(lo, hi) for lo, hi in fvg_above if current_high < hi]
