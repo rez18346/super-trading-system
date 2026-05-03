@@ -71,6 +71,18 @@ FEATURE_NAMES_25 = [
     'hour_of_day'
 ]
 
+# НОВЫЕ признаки (8 шт., индексы 25-32)
+FEATURE_NAMES_33 = FEATURE_NAMES_25 + [
+    'tf_aligned',        # 25: 1H и 4H тренды совпадают
+    'volatility_ratio',  # 26: 4H / 1H волатильность
+    'force_index',       # 27: Force Index (объём × Δцены)
+    'eom',               # 28: Ease of Movement
+    'rsi_div_5',         # 29: RSI дивергенция за 5 свечей
+    'vol_spread',        # 30: разброс объёма (max/mean)
+    'wick_body_ratio',   # 31: тени / тело
+    'ema_slope_6h',      # 32: наклон EMA12 за 6 часов
+]
+
 
 # ============================================================================
 # Вспомогательные функции (vectorised для производительности)
@@ -193,7 +205,7 @@ def build_features_27f(candles_1h, candles_4h):
         candles_4h = [c for c in candles_4h if c.get('t', 0) >= t1s and c.get('t', 0) <= t1e]
     
     if not candles_1h or not candles_4h or len(candles_1h) < 100 or len(candles_4h) < 25:
-        return np.zeros((1, 25), dtype=np.float64)
+        return np.zeros((1, 33), dtype=np.float64)
 
     # Парсинг
     o1 = np.array([c['o'] for c in candles_1h], dtype=float)
@@ -243,7 +255,7 @@ def build_features_27f(candles_1h, candles_4h):
     idx4 = np.clip(np.searchsorted(t4, t1, side='right') - 1, 0, len(cl4) - 1)
 
     n = len(cl1)
-    X = np.zeros((n, 25), dtype=np.float64)
+    X = np.zeros((n, 33), dtype=np.float64)
 
     for i in range(50, n):
         j4 = idx4[i]
@@ -318,6 +330,63 @@ def build_features_27f(candles_1h, candles_4h):
         # 24: Час дня (UTC)
         X[i, 24] = datetime.fromtimestamp(t1[i] / 1000).hour
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # НОВЫЕ ПРИЗНАКИ (индексы 25-32, напрямую в X)
+    # ═══════════════════════════════════════════════════════════════════════
+    
+    for i in range(50, n):
+        j4 = idx4[i]
+        if j4 < 5:
+            continue
+        
+        # 25: Корреляция 1H → 4H (тренд совпадает?)
+        X[i, 25] = 1.0 if (tr1[i] > 0 and tr4[j4] > 0) or (tr1[i] < 0 and tr4[j4] < 0) else 0.0
+        
+        # 26: Волатильность 4H / волатильность 1H
+        if i >= 54:
+            v1h = atr1[i-5:i].std()
+            v4h = atr4[j4-1:j4+1].std() if j4 >= 1 else 0
+            X[i, 26] = v4h / (v1h + 1e-8)
+        
+        # 27: Force Index (объём × изменение цены)
+        if i >= 13:
+            fi_list = [(cl1[k] - cl1[k-1]) * v1[k] for k in range(i-12, i+1) if k >= 1]
+            if fi_list:
+                fi_ma13 = np.mean(fi_list)
+                X[i, 27] = fi_ma13 / (cl1[i] + 1e-8) * 100
+        
+        # 28: EOM (Ease of Movement)
+        if i >= 1:
+            mid_move = (h1[i] + l1[i]) / 2 - (h1[i-1] + l1[i-1]) / 2
+            tr0 = h1[i] - l1[i]
+            box_ratio = v1[i] / (tr0 * 1e6 + 1e-8) if tr0 > 0 else 0
+            X[i, 28] = mid_move * box_ratio * 1000
+        
+        # 29: RSI дивергенция за 5 свечей
+        if i >= 19:
+            if cl1[i] < cl1[i-5] and rsi1[i] > rsi1[i-5]:
+                X[i, 29] = 1.0
+            elif cl1[i] > cl1[i-5] and rsi1[i] < rsi1[i-5]:
+                X[i, 29] = -1.0
+        
+        # 30: Volume spread (max/mean за 12ч)
+        if i >= 12:
+            vol_last_12 = v1[max(0,i-11):i+1]
+            vol_spread = vol_last_12.max() / (vol_last_12.mean() + 1e-8)
+            X[i, 30] = min(vol_spread, 5.0)
+            
+        # 31: wick-to-body ratio
+        body_i = abs(cl1[i] - o1[i])
+        tt_i = h1[i] - l1[i]
+        if body_i > 0 and tt_i > 0:
+            upper_wick = h1[i] - max(o1[i], cl1[i])
+            lower_wick = min(o1[i], cl1[i]) - l1[i]
+            X[i, 31] = (upper_wick + lower_wick) / body_i
+        
+        # 32: Наклон EMA12 за 6 часов
+        if i >= 6 and em12[i] > 0:
+            X[i, 32] = (em12[i] - em12[i-6]) / em12[i-6] * 100
+    
     return X
 
 
