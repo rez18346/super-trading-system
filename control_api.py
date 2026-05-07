@@ -206,30 +206,31 @@ def _parse_votes_from_log() -> dict:
 
     # Собираем последнее состояние каждой пары
     for line in reversed(lines):
-        m = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*Score=(\d+).*ML-Pro:(\d+)\(([^)]+)\).*Adv:(\d+)\(([^)]+)\).*MTF:(\d+).*RVB:(\d+).*Liq:(\d+)\(', line)
+        m = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*Score=(\d+).*ML-Pro:(\d+)\(([^)]+)\).*Adv:(\d+)\(([^)]+)\).*MTF:(\d+).*RVB:(\d+).*Liq:(\d+)\([^)]*\)[^V]*VV:(\d+)\(', line)
         if m:
             sym = m.group(2)
-            if sym not in result:
-                # Ищем bonus/rev/btc в конце строки
-                bonus_match = re.search(r'bonus=([-\d]+) rev=([-\d]+) btc=([-+]\d+)', line)
-                result[sym] = {
-                    'score': int(m.group(3)),
-                    'signal': m.group(1),
-                    'mlpro': f"{m.group(4)}({m.group(5)})",
-                    'adv': f"{m.group(6)}({m.group(7)})",
-                    'mtf': int(m.group(8)),
-                    'rvb': int(m.group(9)),
-                    'liq': int(m.group(10)),
+            # Всегда перезаписываем — лог может содержать старые строки без VV
+            # Ищем bonus/rev/btc в конце строки
+            bonus_match = re.search(r'bonus=([-\d]+) rev=([-\d]+) btc=([-+]\d+)', line)
+            result[sym] = {
+                'score': int(m.group(3)),
+                'signal': m.group(1),
+                'mlpro': f"{m.group(4)}({m.group(5)})",
+                'adv': f"{m.group(6)}({m.group(7)})",
+                'mtf': int(m.group(8)),
+                'rvb': int(m.group(9)),
+                'liq': int(m.group(10)),
+                    'vv': int(m.group(11)),
                     'bonus': int(bonus_match.group(1)) if bonus_match else 0,
                     'rev': int(bonus_match.group(2)) if bonus_match else 0,
                     'btc': int(bonus_match.group(3)) if bonus_match else 0,
                     'price': prices.get(sym, 0),
                 }
-        # VETO — но только если нет нормальной записи
+        # VETO — только если не перезаписана основной строкой
         vm = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*VETO: (.+)', line)
         if vm:
             sym = vm.group(2)
-            if sym not in result:
+            if sym not in result or result[sym].get('score') == 0 or 'veto' not in result[sym]:
                 result[sym] = {
                     'score': 0,
                     'signal': vm.group(1),
@@ -524,6 +525,7 @@ function updPos(pos){
           '<span style="color:'+vc(v.mtf,90,75)+'">🟡'+v.mtf+'</span> '+
           '<span style="color:'+vc(v.rvb,90,75)+'">🟣'+v.rvb+'</span> '+
           '<span style="color:'+vc(v.liq,90,75)+'">🟠'+v.liq+'</span> '+
+          '<span style="color:'+vc(v.vv,90,75)+'">🔴'+v.vv+'</span> '+
           '<span style="font-size:10px;color:'+(v.bonus>0?'#3fb950':v.bonus<0?'#f85149':'#555')+'">B'+(v.bonus||0)+'</span> '+
           '<span style="font-size:10px;color:'+(v.rev>0?'#d2d268':v.rev<0?'#f85149':'#555')+'">R'+(v.rev||0)+'</span> '+
           '<span style="font-size:10px;color:'+(v.btc>0?'#3fb950':v.btc<0?'#f85149':'#555')+'">₿'+(v.btc||0)+'</span>'
