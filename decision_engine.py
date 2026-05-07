@@ -11,11 +11,13 @@ decision_engine.py — Единый центр принятия торговых
   Решение принимается в одном месте → выполняется в trader.
 
 Голоса на вход (DecisionEngine._evaluate_entry_ensemble):
-  1. MLProfessionalV2 (LightGBM, 27/16 признаков, 5M+1H+4H)  — 35%
-  2. MLAdvisor (RandomForest, 9 признаков, паттерны+VWAP+D1) — 20%
+  1. MLProfessionalV2 (LightGBM, 27/16 признаков, 5M+1H+4H)  — 20%
+  2. MLAdvisor (RandomForest, 9 признаков, паттерны+VWAP+D1) — 10%
   3. HMM Режим + Cогласованность трендов (5M/1H/4H)         — 25%
-  4. RSI + Объём + BTC-корреляция                            — 20%
+  4. LiquidityCluster v2 (Order Flow/Block/Sweep)            — 25%
+  5. Volume/VWAP (VWAP реверсия + Volume Spike)              — 20%
   ──────────────────────────────────────────────────────────
+  RSI/Vol/BTC — 0% (отключён, зарезервирован)
   Порог входа: 65 (адаптивный: CALM=57, NORMAL=65, VOLATILE=70)
   Жёсткое вето: 1H или 4H bearish + BTC падает → блокировка
 
@@ -185,6 +187,7 @@ class DecisionEngine:
         self._ml_pro_v2 = None
         self._ml_advisor = None
         self._liquidity = None
+        self._volume_vwap = None
         
         # Кэшированные данные multi-timeframe
         self._candles_1h: Optional[list] = None
@@ -192,6 +195,9 @@ class DecisionEngine:
         self._btc_price: Optional[float] = None
         self._candle_cache_time = 0
         self._candle_cache_ttl = 120  # обновлять раз в 2 мин
+        
+        # BTC Direction Predictor
+        self._btc_predictor = None  # Ленивая инициализация
         
         # Базовая цена BTC для корреляции (загружается при первом вызове)
         self._btc_reference_price: Optional[float] = None
@@ -215,11 +221,13 @@ class DecisionEngine:
         }
     
     def _lazy_init_ml(self):
-        """Ленивая инициализация ML-модулей."""
+        """Ленивая инициализация ML-модулей с reload для горячей замены."""
         if self._ml_pro_v2 is None:
             try:
-                from ml_professional_v2 import MLProfessionalV2
-                self._ml_pro_v2 = MLProfessionalV2()
+                import importlib
+                import ml_professional_v2
+                importlib.reload(ml_professional_v2)
+                self._ml_pro_v2 = ml_professional_v2.MLProfessionalV2()
                 logger.info(f"[DE] MLProfessionalV2 {'готов' if self._ml_pro_v2.trained else 'ожидает модели'}")
             except Exception as e:
                 logger.warning(f"[DE] MLProfessionalV2 не загрузился: {e}")
@@ -242,6 +250,15 @@ class DecisionEngine:
             except Exception as e:
                 logger.warning(f"[DE] LiquidityCluster не загрузился: {e}")
                 self._liquidity = None
+        
+        if self._volume_vwap is None:
+            try:
+                import volume_vwap
+                self._volume_vwap = volume_vwap
+                logger.info("[DE] Volume/VWAP модуль готов")
+            except Exception as e:
+                logger.warning(f"[DE] Volume/VWAP не загрузился: {e}")
+                self._volume_vwap = None
     
     def set_multi_tf_data(self, candles_1h: Optional[list] = None,
                           candles_4h: Optional[list] = None,
@@ -259,9 +276,9 @@ class DecisionEngine:
     # ⚡ ЗАЛОЖЕНО ПОД ШОРТ: side='short' инвертирует уровни
 
     _SL_TP_BY_REGIME = {
-        0: {'sl': 3.0, 'tp': 8.0,   'trail_act': 1.2, 'trail_dist': 0.8},  # CALM
-        1: {'sl': 5.0, 'tp': 10.0,  'trail_act': 1.5, 'trail_dist': 1.0},  # NORMAL
-        2: {'sl': 8.0, 'tp': 14.0,  'trail_act': 2.0, 'trail_dist': 1.5},  # VOLATILE
+        0: {'sl': 3.0, 'tp': 8.0,   'trail_act': 2.0, 'trail_dist': 1.2},  # CALM
+        1: {'sl': 5.0, 'tp': 10.0,  'trail_act': 2.5, 'trail_dist': 1.5},  # NORMAL
+        2: {'sl': 8.0, 'tp': 14.0,  'trail_act': 3.0, 'trail_dist': 2.0},  # VOLATILE
     }
 
     def get_sl_tp_params(self, side: str = 'long') -> dict:
@@ -500,8 +517,8 @@ class DecisionEngine:
             # Position size: пропорционально скору
             score = entry_checks.get('final_score', 65)
             # 0.5 при 65, 1.0 при 90+
-            position_size = min(1.0, (score - 50) / 45)  # 65→0.33, 80→0.67, 95→1.0
-            position_size = max(0.3, min(1.0, position_size))
+            position_size = min(1.0, (score - 50) / 30)  # 65→0.50, 80→1.0, 95→1.0
+            position_size = max(0.5, min(1.0, position_size))
             
             # SL/TP от HMM-режима
             rp = self.get_sl_tp_params(side)
@@ -584,10 +601,12 @@ class DecisionEngine:
         ML-модели пока только для long (заглушка для short).
         
         Веса:
-          1. MLProfessionalV2 (LightGBM, 27/16 признаков, multi-TF) — 35%
-          2. MLAdvisor (RandomForest, 9 признаков, паттерны+VWAP+D1) — 20%
+          1. MLProfessionalV2 (LightGBM, 27/16 признаков, multi-TF) — 20%
+          2. MLAdvisor (RandomForest, 9 признаков, паттерны+VWAP+D1) — 5%
           3. Согласованность трендов 5M/1H/4H + HMM — 25%
-          4. RSI + Объём + BTC-корреляция — 20%
+          4. RSI + Объём + BTC-корреляция — 5%
+          5. LiquidityCluster v2 (Order Flow/Block/Sweep) — 25%
+          6. Volume/VWAP (VWAP реверсия + Volume Spike) — 20%
         
         Возвращает словарь с approval, score, раскладкой.
         """
@@ -596,14 +615,15 @@ class DecisionEngine:
         
         # Инициализируем результаты голосов
         scores = {
-            'ml_v2': {'score': 50, 'weight': 0.30, 'detail': 'N/A'},
-            'advisor': {'score': 50, 'weight': 0.15, 'detail': 'N/A'},
-            'mtf': {'score': 50, 'weight': 0.25, 'detail': 'N/A'},
-            'rsi_vol_btc': {'score': 50, 'weight': 0.15, 'detail': 'N/A'},
-            'liquidity': {'score': 50, 'weight': 0.15, 'detail': 'N/A'},
+            'ml_v2': {'score': 50, 'weight': 0.20, 'detail': 'N/A'},
+            'advisor': {'score': 50, 'weight': 0.10, 'detail': 'N/A'},
+            'mtf': {'score': 50, 'weight': 0.40, 'detail': 'N/A'},
+            'rsi_vol_btc': {'score': 50, 'weight': 0.00, 'detail': 'N/A'},
+            'liquidity': {'score': 50, 'weight': 0.25, 'detail': 'N/A'},
+            'volume_vwap': {'score': 50, 'weight': 0.20, 'detail': 'N/A'},
         }
         
-        # ═══ ГОЛОС 1: MLProfessionalV2 (35%) ═══════════════════════════════
+        # ═══ ГОЛОС 1: MLProfessionalV2 (20%) ═══════════════════════════════
         try:
             if self._ml_pro_v2 and self._ml_pro_v2.trained:
                 ml_decision, ml_prob, ml_feat = self._ml_pro_v2.evaluate(
@@ -791,6 +811,88 @@ class DecisionEngine:
             scores['liquidity']['score'] = 50
             scores['liquidity']['detail'] = f"error({e})"
         
+        # ═══ ГОЛОС 6: Volume/VWAP (20%) ════════════════════════════════════
+        try:
+            if self._volume_vwap:
+                vv = self._volume_vwap.evaluate(
+                    symbol, current_price, candles_5m or [],
+                    candles_1h or [], candles_4h
+                )
+                scores['volume_vwap']['score'] = vv['score']
+                scores['volume_vwap']['detail'] = vv['detail']
+            else:
+                scores['volume_vwap']['score'] = 50
+                scores['volume_vwap']['detail'] = 'not_loaded'
+        except Exception as e:
+            scores['volume_vwap']['score'] = 50
+            scores['volume_vwap']['detail'] = f"error({e})"
+        
+        # ═══ БОНУС ЗА ПОЗИЦИЮ ЦЕНЫ И РАННИЙ РАЗВОРОТ ══════════════════
+        # Бонус +0..20 если цена в нижней половине дневного диапазона (отскок)
+        # Бонус +0..15 дополнительно если детектор разворота активен
+        price_bonus = 0
+        reversal_bonus = 0
+        try:
+            if candles_5m and len(candles_5m) >= 100:
+                h24_high = max(c['h'] for c in candles_5m[-288:] if isinstance(c, dict))
+                h24_low = min(c['l'] for c in candles_5m[-288:] if isinstance(c, dict))
+                if h24_high > h24_low:
+                    pos = (current_price - h24_low) / (h24_high - h24_low)
+                    # Бонус за позицию на дне
+                    if pos < 0.50 and rsi < 72 and trend != 'bearish':
+                        bonus_val = max(0, int((0.50 - pos) * 40))  # 0..20 баллов
+                        bonus_val = min(bonus_val, 20)  # макс 20
+                        price_bonus = bonus_val
+                    
+                    # ═══ ДЕТЕКТОР РАННЕГО РАЗВОРОТА ═══
+                    # Проверяем последние 5 свечей 5M на паттерн разворота
+                    try:
+                        recent = [c for c in candles_5m[-6:] if isinstance(c, dict)]
+                        if len(recent) >= 5:
+                            closes = [c['c'] for c in recent]
+                            volumes = [c['v'] for c in recent]
+                            
+                            # 1. Цена растёт последние 3 свечи из 4
+                            green_count = sum(1 for i in range(-4, 0) if closes[i] > closes[i-1])
+                            
+                            # 2. Объём растёт на зелёных свечах
+                            last3_vol = sum(volumes[-3:])
+                            prev3_vol = sum(volumes[-6:-3])
+                            
+                            # 3. RSI выходит из зоны (был <= 50, идёт вверх)
+                            rsi_recovering = 40 < rsi < 65
+                            
+                            # 4. Цена не на хаях (позиция < 75% чтобы не покупать топ)
+                            not_too_high = pos < 0.75
+                            
+                            if (green_count >= 2 and 
+                                last3_vol > prev3_vol * 1.2 and 
+                                rsi_recovering and 
+                                not_too_high):
+                                # Сила разворота: 0-15 баллов
+                                # Чем сильнее зелёных и объём — тем больше бонус
+                                strength = min(green_count * 3 + 
+                                              int((last3_vol / prev3_vol - 1) * 5), 15)
+                                reversal_bonus = min(strength, 15)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        scores['_reversal_bonus'] = {'score': reversal_bonus, 'weight': 1.0}
+        scores['_price_bonus'] = {'score': price_bonus, 'weight': 1.0}
+        
+        # ═══ BTC DIRECTION PREDICTOR ═══════════════════════════════════════
+        btc_bonus = 0
+        try:
+            if self._btc_predictor is None:
+                from btc_direction import BTCDirectionPredictor
+                self._btc_predictor = BTCDirectionPredictor()
+            btc_bonus = self._btc_predictor.calculate_bonus(final_score)
+            scores['_btc_bonus'] = {'score': btc_bonus, 'weight': 1.0}
+        except Exception as e:
+            scores['_btc_bonus'] = {'score': 0, 'weight': 1.0}
+            logger.debug(f"BTC Direction: ошибка: {e}")
+        
         # ═══ ИТОГОВЫЙ СКОР ═════════════════════════════════════════════════
         final_score = sum(v['score'] * v['weight'] for v in scores.values())
         
@@ -802,7 +904,8 @@ class DecisionEngine:
             f"Adv:{scores['advisor']['score']:.0f}({scores['advisor']['detail']}) "
             f"MTF:{scores['mtf']['score']:.0f}({scores['mtf']['detail']}) "
             f"RVB:{scores['rsi_vol_btc']['score']:.0f}({scores['rsi_vol_btc']['detail']}) "
-            f"Liq:{scores['liquidity']['score']:.0f}({scores['liquidity']['detail']})"
+            f"Liq:{scores['liquidity']['score']:.0f}({scores['liquidity']['detail']}) "
+            f"VV:{scores['volume_vwap']['score']:.0f}({scores['volume_vwap']['detail']})"
         )
         
         votes = {
@@ -825,12 +928,13 @@ class DecisionEngine:
                 'mtf_score': scores['mtf']['score'],
                 'rsi_vol_btc_score': scores['rsi_vol_btc']['score'],
                 'liquidity_score': scores['liquidity']['score'],
+                'volume_vwap_score': scores['volume_vwap']['score'],
                 'votes': votes,
             }
         else:
             return {
                 'approved': False,
-                'reason': f"⏭️ Score={final_score:.0f} < {threshold} {votes_str}",
+                'reason': f"⏭️ Score={final_score:.0f} < {threshold} {votes_str} bonus={price_bonus:.0f} rev={reversal_bonus:.0f} btc={btc_bonus:+.0f}",
                 'final_score': final_score,
                 'threshold': threshold,
                 'votes': votes,

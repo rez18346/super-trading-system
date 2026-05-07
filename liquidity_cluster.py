@@ -156,10 +156,13 @@ class LiquidityCluster:
         ob_details = []
         if order_blocks:
             alive = [ob for ob in order_blocks if not ob.mitigated]
+            dead = [ob for ob in order_blocks if ob.mitigated]
             if alive:
                 ob_details.append(f"OB{len(alive)}")
                 for ob in alive[:2]:
                     ob_details.append(ob.kind[:3])
+            if dead:
+                ob_details.append(f"OF{len(dead)}")
         detail = (
             f"POC={poc:.4f} VAH={vah:.4f} VAL={val:.4f} "
             f"q={cluster_quality:.2f} fvg↑={len(fvg_above)} fvg↓={len(fvg_below)} "

@@ -159,6 +159,90 @@ def get_pid() -> Optional[int]:
         return None
 
 
+def _parse_votes_from_log() -> dict:
+    """Парсит последние голоса DecisionEngine из лога для каждой пары.
+    Читает весь лог с конца, собирает последнее состояние каждой пары.
+    Возвращает {symbol: {...price, score, votes...}}
+    """
+    import re
+    # Список всех отслеживаемых пар
+    ALL_SYMBOLS = ['BTC','ETH','SOL','XRP','ADA','AVAX','DOT','DOGE','LINK','LTC','BCH',
+                   'ATOM','ALGO','EGLD','APT','ARB','ROSE','MNT','FIL','NEAR','OP','SAND']
+    result = {}
+    prices = {}
+    # Сколько строк прочитали — лимит на проход
+    MAX_LINES = 20000
+    try:
+        with open(SYSTEM_LOG_FILE, 'r') as f:
+            # Читаем с конца: taker либо tail, либо mmap
+            # Для большого лога читаем не более MAX_LINES с конца
+            f.seek(0, 2)  # в конец
+            fsize = f.tell()
+            # читаем блок с конца
+            chunk_size = min(fsize, 512 * 1024)  # макс 512KB
+            f.seek(max(0, fsize - chunk_size))
+            # если сдвинулись не на начало — пропускаем неполную строку
+            if f.tell() > 0:
+                f.readline()
+            lines = f.readlines()
+            # Если в блоке не всё — расширяем
+            if len(lines) < MAX_LINES and fsize > chunk_size:
+                # Добираем ещё блок
+                chunk_size *= 2
+                f.seek(max(0, fsize - chunk_size))
+                if f.tell() > 0:
+                    f.readline()
+                lines = f.readlines()
+    except (FileNotFoundError, IOError):
+        return result
+
+    # Сначала цены — они в каждой строке
+    for line in reversed(lines):
+        pm = re.search(r'(\w+)/USDT:? Цена=\$([\d.]+)', line)
+        if pm:
+            sym = pm.group(1)
+            if sym not in prices:
+                prices[sym] = float(pm.group(2))
+
+    # Собираем последнее состояние каждой пары
+    for line in reversed(lines):
+        m = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*Score=(\d+).*ML-Pro:(\d+)\(([^)]+)\).*Adv:(\d+)\(([^)]+)\).*MTF:(\d+).*RVB:(\d+).*Liq:(\d+)\(', line)
+        if m:
+            sym = m.group(2)
+            if sym not in result:
+                # Ищем bonus/rev/btc в конце строки
+                bonus_match = re.search(r'bonus=([-\d]+) rev=([-\d]+) btc=([-+]\d+)', line)
+                result[sym] = {
+                    'score': int(m.group(3)),
+                    'signal': m.group(1),
+                    'mlpro': f"{m.group(4)}({m.group(5)})",
+                    'adv': f"{m.group(6)}({m.group(7)})",
+                    'mtf': int(m.group(8)),
+                    'rvb': int(m.group(9)),
+                    'liq': int(m.group(10)),
+                    'bonus': int(bonus_match.group(1)) if bonus_match else 0,
+                    'rev': int(bonus_match.group(2)) if bonus_match else 0,
+                    'btc': int(bonus_match.group(3)) if bonus_match else 0,
+                    'price': prices.get(sym, 0),
+                }
+        # VETO — но только если нет нормальной записи
+        vm = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*VETO: (.+)', line)
+        if vm:
+            sym = vm.group(2)
+            if sym not in result:
+                result[sym] = {
+                    'score': 0,
+                    'signal': vm.group(1),
+                    'veto': vm.group(3),
+                    'price': prices.get(sym, 0),
+                }
+        # Если собрали все — выходим раньше
+        if len(result) >= len(ALL_SYMBOLS):
+            break
+
+    return result
+
+
 def get_status_snapshot() -> dict:
     pid = get_pid()
     running = pid is not None
@@ -196,15 +280,32 @@ def get_status_snapshot() -> dict:
     except Exception:
         pass
 
+    votes = _parse_votes_from_log()
+
+    # Обогащаем позиции голосами
+    enriched_positions = {}
+    for sym, pos in positions.items():
+        p = {'qty': pos['quantity'], 'entry': pos['entry_price'],
+             'entry_time': pos.get('entry_time', '')}
+        if sym in votes:
+            p['votes'] = votes[sym]
+        enriched_positions[sym] = p
+
+    # Добавляем голоса для всех наблюдаемых пар (из лога, даже без позиций)
+    for sym, v in votes.items():
+        if sym not in enriched_positions:
+            enriched_positions[sym] = {
+                'qty': 0, 'entry': 0,
+                'current_price': v.get('price', 0),
+                'entry_time': '',
+                'votes': v
+            }
+
     return {
         'running': running,
         'pid': pid,
         'timestamp': time.time(),
-        'positions': {
-            sym: {'qty': pos['quantity'], 'entry': pos['entry_price'],
-                  'entry_time': pos.get('entry_time', '')}
-            for sym, pos in positions.items()
-        },
+        'positions': enriched_positions,
         'pnl': pnl,
         'balance': balance_info,
         'trades': trades_history,
@@ -306,7 +407,7 @@ async def api_events(request: Request):
 async def index():
     return HTMLResponse(r"""<!DOCTYPE html>
 <html lang="ru">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0">
 <title>🏭 Супер-Система</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -345,17 +446,15 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
   <div class="status-card"><h3>Сделок</h3><div class="value" id="stTrades">0</div></div>
 </div>
 
-<div class="grid">
-  <div class="section">
-    <h2>📊 Позиции</h2>
-    <table><thead><tr><th>Символ</th><th>Кол-во</th><th>Вход</th><th>Стоимость</th></tr></thead>
-    <tbody id="tbPos"><tr><td colspan="4" style="text-align:center;color:#8b949e;font-size:13px;padding:20px">Нет позиций</td></tr></tbody></table>
+<div class="section" style="grid-column:1/-1">
+    <h2>📊 Мониторинг голосов <span style="font-size:12px;color:#8b949e;font-weight:normal">— вход при Score ≥ 65</span></h2>
+    <table style="width:100%;font-size:11px"><thead><tr>
+      <th style="width:18px"></th><th>Символ</th><th style="width:28px">Кол-во</th><th style="width:65px">Вход</th><th style="width:70px">Стоим.</th>
+      <th style="text-align:left">Голоса (5/5)</th>
+      <th style="width:70px">Score</th>
+    </tr></thead>
+    <tbody id="tbPos"><tr><td colspan="7" style="text-align:center;color:#8b949e;font-size:13px;padding:20px">Нет данных</td></tr></tbody></table>
   </div>
-  <div class="section">
-    <h2>📈 Капитал</h2>
-    <canvas id="capChart"></canvas>
-  </div>
-</div>
 
 <div class="section">
   <h2>📜 История сделок <span style="font-size:12px;cursor:pointer;color:#58a6ff" onclick="toggleTradeLog()">[полная история]</span></h2>
@@ -397,33 +496,52 @@ const fmtP=p=>'$'+Number(p).toFixed(p<0.1?4:p<1?3:2);
 const fmtQ=q=>Number(q).toFixed(q<.001?6:q<1?4:q<100?2:1);
 const em=s=>EMO[s.split('/')[0]]||'📈';
 
-// ─── КАНВАС ГРАФИК КАПИТАЛА ───
-let capChart=null;
-async function drawCapChart(){
-  const r=await fetch('/api/capital-history'); const d=await r.json();
-  if(!d.points||d.points.length<2) return;
-  const vals=d.points.map(p=>p.v); const max=Math.max(...vals); const min=Math.min(...vals);
-  const c=document.getElementById('capChart');
-  if(!c) return;
-  const ctx=c.getContext('2d'); const w=c.width=960; const h=c.height=200;
-  ctx.clearRect(0,0,w,h); const pad=10; const pw=w-pad*2; const ph=h-pad*2; const rng=Math.max(max-min,1);
-  ctx.beginPath(); ctx.strokeStyle='#3fb950'; ctx.lineWidth=2;
-  for(let i=0;i<vals.length;i++){
-    const x=pad+(i/(vals.length-1||1))*pw;
-    const y=pad+ph-((vals[i]-min)/rng)*ph;
-    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
-  } ctx.stroke();
-  ctx.fillStyle='#8b949e'; ctx.font='10px sans-serif';
-  ctx.fillText('$'+max.toFixed(0),pad,pad+10);
-  ctx.fillText('$'+min.toFixed(0),pad,h-5);
-}
-
 // ─── ОБНОВЛЕНИЯ ───
 function updPos(pos){
-  const e=Object.entries(pos).sort(([,a],[,b])=>(b.qty*b.entry)-(a.qty*a.entry));
+  const e=Object.entries(pos).sort(([,a],[,b])=>{
+    const va=(b.votes||{}).score||0, vb=(a.votes||{}).score||0;
+    return va-vb;
+  });
   document.getElementById('tbPos').innerHTML=e.length
-    ?e.map(([s,p])=>'<tr><td>'+em(s)+' '+s+'</td><td>'+fmtQ(p.qty)+'</td><td>'+fmtP(p.entry)+'</td><td>'+fmtP(p.qty*p.entry)+'</td></tr>').join('')
-    :'<tr><td colspan="4" style="text-align:center;color:#8b949e;font-size:13px;padding:20px">Нет позиций</td></tr>';
+    ?e.map(([s,p])=>{
+      const v=p.votes||{};
+      if(p.qty==0&&!v.score) return '';
+      // Score / бар
+      const barW=Math.min((v.score||0)/65*100,100);
+      const barColor=v.score>=65?'#3fb950':v.score>=50?'#d29922':'#f85149';
+      // Эмодзи и сигнал
+      const isVeto = v.veto;
+      const sigEmoji = isVeto ? '⛔' : v.score>=65?'✅':v.score>=50?'🔶':'⚪';
+      const signal = isVeto ? v.veto : (v.score||'?');
+      // Строка голосов
+      function vc(val, thr, thr2) {
+        if(val===undefined||val===null) return '#555';
+        return val>=thr?'#3fb950':val>=thr2?'#d29922':'#8b949e';
+      }
+      const votesLine = v.mlpro
+        ? '<span style="color:'+vc(parseInt(v.mlpro),0,0)+'">🔵'+v.mlpro+'</span> '+
+          '<span style="color:'+vc(parseInt(v.adv),0,0)+'">🟢'+v.adv+'</span> '+
+          '<span style="color:'+vc(v.mtf,90,75)+'">🟡'+v.mtf+'</span> '+
+          '<span style="color:'+vc(v.rvb,90,75)+'">🟣'+v.rvb+'</span> '+
+          '<span style="color:'+vc(v.liq,90,75)+'">🟠'+v.liq+'</span> '+
+          '<span style="font-size:10px;color:'+(v.bonus>0?'#3fb950':v.bonus<0?'#f85149':'#555')+'">B'+(v.bonus||0)+'</span> '+
+          '<span style="font-size:10px;color:'+(v.rev>0?'#d2d268':v.rev<0?'#f85149':'#555')+'">R'+(v.rev||0)+'</span> '+
+          '<span style="font-size:10px;color:'+(v.btc>0?'#3fb950':v.btc<0?'#f85149':'#555')+'">₿'+(v.btc||0)+'</span>'
+        : (isVeto ? '<span style="color:#f85149;font-size:11px">⛔ '+v.veto+'</span>' : '<span style="color:#555;font-size:11px">ожидание...</span>');
+      return '<tr>'+
+        '<td style="font-size:14px;padding:4px 2px">'+em(s.split('/')[0])+'</td>'+
+        '<td style="font-weight:600;font-size:13px">'+s.split('/')[0]+'</td>'+
+        '<td style="font-size:11px;color:#8b949e">'+(p.qty>0?fmtQ(p.qty):'—')+'</td>'+
+        '<td style="font-size:11px;color:#8b949e">'+(p.entry>0?fmtP(p.entry):(p.current_price>0?'<span style="color:#d29922;font-size:10px">'+fmtP(p.current_price)+'</span>':'—'))+'</td>'+
+        '<td style="font-size:11px;color:#8b949e">'+(p.qty>0?fmtP(p.qty*p.entry):(p.current_price>0?'<span style="color:#8b949e;font-size:10px">тек.</span>':'—'))+'</td>'+
+        '<td style="text-align:left;font-size:12px;white-space:nowrap">'+votesLine+'</td>'+
+        '<td style="text-align:center">'+
+          '<div style="font-weight:700;font-size:15px;color:'+barColor+'">'+sigEmoji+' '+v.score+'</div>'+
+          '<div style="width:55px;height:3px;background:#21262d;border-radius:2px;margin:2px auto 0"><div style="width:'+barW+'%;height:3px;background:'+barColor+';border-radius:2px"></div></div>'+
+        '</td>'+
+        '</tr>';
+    }).filter(Boolean).join('')
+    :'<tr><td colspan="7" style="text-align:center;color:#8b949e;font-size:13px;padding:20px">Нет данных</td></tr>';
 }
 
 function updTrades(tr){
@@ -479,8 +597,7 @@ const es=new EventSource('/api/events');
 es.onmessage=function(e){try{const m=JSON.parse(e.data);if(m.type==='status'&&m.data)updBar(m.data);if(m.type==='logs'&&m.lines)addLogs(m.lines);}catch(err){}}
 
 // ─── СТАРТ ───
-fetch('/api/status').then(r=>r.json()).then(d=>{updBar(d);drawCapChart()});
-setInterval(drawCapChart,30000);
+fetch('/api/status').then(r=>r.json()).then(d=>{updBar(d)});
 </script>
 </body></html>""")
 
