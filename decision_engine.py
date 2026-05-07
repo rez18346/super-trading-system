@@ -893,6 +893,17 @@ class DecisionEngine:
             scores['_btc_bonus'] = {'score': 0, 'weight': 1.0}
             logger.debug(f"BTC Direction: ошибка: {e}")
         
+        # ═══ БЛОКИРОВКА ОТ BTC ═══════════════════════════════════════════
+        # Если btc_bonus == -999 — жёсткое veto на лонги (BTC падает >2% за 6ч)
+        if btc_bonus <= -999:
+            return {
+                'approved': False,
+                'reason': f"VETO: BTC падает >2% за 6ч",
+                'final_score': 0,
+                'threshold': threshold,
+                'votes': {},
+            }
+        
         # ═══ ИТОГОВЫЙ СКОР ═════════════════════════════════════════════════
         final_score = sum(v['score'] * v['weight'] for v in scores.values())
         
