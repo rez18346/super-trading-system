@@ -29,10 +29,11 @@ logger = logging.getLogger(__name__)
 
 VWAP_LOOKBACK_1H = 12           # Скользящий VWAP на 12 часов
 VWAP_LOOKBACK_1D = 24           # Дневной VWAP
-SPIKE_STD_THRESHOLD = 2.0       # Аномалия: >2σ от среднего объёма
-VWAP_REVERSION_THRESHOLD = 0.015  # 1.5% от VWAP — вход в зону реверсии
-VWAP_BREAKOUT_THRESHOLD = 0.002  # 0.2% — пробой VWAP считается состоявшимся
+SPIKE_STD_THRESHOLD = 1.8       # Аномалия: >1.8σ от среднего объёма (было 2.0)
+VWAP_REVERSION_THRESHOLD = 0.012  # 1.2% от VWAP (было 1.5%) — раньше видим зону
+VWAP_BREAKOUT_THRESHOLD = 0.003  # 0.3% — пробой VWAP (было 0.2%)
 VOLUME_LOOKBACK = 20            # Окно среднего объёма
+VOLUME_LOW_MARKET_FACTOR = 0.7  # Коэффициент снижения порога на тихом рынке
 MIN_CLUSTERS = 3                # Минимум кластеров объёма для анализа
 MIN_CANDLES_5M = 30             # Минимум 5М свечей для анализа
 
@@ -118,6 +119,8 @@ def detect_volume_spike(volumes: np.ndarray, lookback: int = VOLUME_LOOKBACK,
                         std_threshold: float = SPIKE_STD_THRESHOLD) -> Tuple[bool, float, float]:
     """
     Обнаружение аномального всплеска объёма.
+    На тихом рынке (низкая базовая активность) порог снижается, чтобы
+    не пропускать начало движения.
     Возвращает: (is_spike, avg_volume, current_volume_ratio)
     """
     if len(volumes) < lookback + 1:
@@ -130,12 +133,27 @@ def detect_volume_spike(volumes: np.ndarray, lookback: int = VOLUME_LOOKBACK,
     z_score = (current - mean_vol) / std_vol
     ratio = current / (mean_vol + 1e-10)
 
+    # Определяем тихий рынок: если медианный объём за lookback ниже
+    # среднего за весь период, снижаем порог
+    # Это позволяет ловить начало движения, когда рынок просыпается
+    if len(volumes) >= lookback * 2:
+        longer_volumes = volumes[-(lookback * 2):-lookback]
+        median_recent = np.median(recent)
+        median_longer = np.median(longer_volumes)
+        
+        # Если последние 20 свечей тише, чем предыдущие 20 — рынок спит
+        # снижаем порог, чтобы проснуться
+        if median_recent < median_longer * VOLUME_LOW_MARKET_FACTOR:
+            adjusted_threshold = std_threshold * 0.7  # 1.8σ → 1.26σ
+            return z_score > adjusted_threshold, mean_vol, ratio
+
     return z_score > std_threshold, mean_vol, ratio
 
 
 def detect_volume_trend(volumes: np.ndarray, lookback: int = 10) -> str:
     """
     Тренд объёма: сравниваем первую половину окна со второй.
+    Также проверяем последовательный рост 3+ свечей.
     'rising' | 'falling' | 'flat'
     """
     if len(volumes) < lookback:
@@ -145,6 +163,20 @@ def detect_volume_trend(volumes: np.ndarray, lookback: int = 10) -> str:
     first_half = np.mean(segment[:half])
     second_half = np.mean(segment[half:])
     change = (second_half - first_half) / (first_half + 1e-10)
+    
+    # Дополнительно: последовательный рост объёма
+    # Если последние 3 свечи растущие — это ранний признак активности
+    consecutive_growth = 0
+    if len(volumes) >= 4:
+        for i in range(1, 4):
+            if volumes[-i] > volumes[-(i+1)]:
+                consecutive_growth += 1
+            else:
+                break
+    
+    if consecutive_growth >= 3:
+        return 'rising'
+    
     if change > 0.15:
         return 'rising'
     elif change < -0.15:
