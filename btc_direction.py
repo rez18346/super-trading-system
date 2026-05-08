@@ -636,11 +636,25 @@ class BTCDirectionPredictor:
             elif change_3h < -0.5:
                 bonus = -5  # лёгкое предупреждение (-0.5..-1%)
             
-            # 3. Бонус при росте
-            elif change_6h > 1.5:
-                bonus = min(10, int(change_6h * 4))  # +1.5%→+6, +3%→+10
+            # 3. Бонус при росте (усилен — чтобы отскоки давали шанс альткоинам)
             elif change_3h > 1.0:
-                bonus = min(5, int(change_3h * 3))   # +1%→+3, +2%→+5
+                # Сильный отскок за 3 часа — даём бонус
+                bonus = min(15, int(change_3h * 10))  # +1%→+10, +2%→+15
+            elif change_3h > 0.5:
+                # Умеренный отскок — небольшой бонус
+                bonus = min(8, int(change_3h * 12))   # +0.5%→+6, +1%→+8
+            elif change_6h > 1.0:
+                # Рост за 6 часов — уверенность выше
+                bonus = min(12, int(change_6h * 8))   # +1%→+8, +1.5%→+12
+            
+            # 4. Объёмный мультипликатор: если движение на высоком объёме, бонус сильнее
+            if bonus > 0 and len(closes) >= 72:
+                volumes = np.array([float(c[5]) for c in candles], dtype=float)[-36:]  # последние 3ч
+                avg_vol = np.mean(volumes)
+                vol_ratio = volumes[-1] / (avg_vol + 1e-10)
+                if vol_ratio > 1.5:
+                    bonus = int(bonus * 1.5)  # высокий объём → бонус x1.5
+                    logger.debug(f"   ↑ объёмный отскок (x{vol_ratio:.1f}): бонус усилен до {bonus:+.0f}")
             
             logger.debug(f"BTC bonus: 3h={change_3h:+.1f}% 6h={change_6h:+.1f}% → bonus={bonus:+.0f}")
             return bonus
