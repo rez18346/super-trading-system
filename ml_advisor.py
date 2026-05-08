@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-🧠 ML-СОВЕТНИК ДЛЯ ТОРГОВОЙ СИСТЕМЫ
+🧠 ML-СОВЕТНИК ДЛЯ ТОРГОВОЙ СИСТЕМЫ (v2 — XGBoost)
+
 Фаза 1: ML-as-Advisor — даёт дополнительную оценку сигналам.
-Использует XGBoost + нейросеть для фильтрации ложных входов.
+Фаза 2: Накопление примеров → эволюция в автономный сигнал.
+
+Использует XGBoost + усиленные фичи + BTC-корреляцию.
 
 Возвращает: {'decision': 'GOOD'|'WEAK'|'SKIP', 'confidence': 0.0-1.0, 'reason': str}
 """
@@ -19,7 +22,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
+import xgboost as xgb
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +75,23 @@ def _fetch_tf_data(symbol, timeframe='1h', limit=48):
         logger.warning(f"Не удалось загрузить {timeframe} для {symbol}: {e}")
         return None
 
+
+def _fetch_btc_data():
+    """Загрузить данные BTC для расчёта корреляции"""
+    try:
+        ex = _get_exchange()
+        ohlcv = ex.fetch_ohlcv('BTC/USDT', '1h', limit=24)
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        return df
+    except Exception as e:
+        logger.warning(f"BTC data fetch error: {e}")
+        return None
+
+
 # Пороги ML-советника
 MIN_TRAINING_SAMPLES = 50        # Минимум для обучения
-CONFIDENCE_HIGH = 0.70           # Выше этого — GOOD
-CONFIDENCE_LOW = 0.40            # Ниже этого — SKIP
+CONFIDENCE_HIGH = 0.65           # XGBoost калиброван лучше, порог можно ниже
+CONFIDENCE_LOW = 0.35            # Ниже этого — SKIP
 RETRAIN_INTERVAL = 3600          # Переобучение раз в час (в секундах)
 
 
@@ -98,7 +114,7 @@ class MLAdvisor:
         except:
             self.pairs = []
 
-        logger.info(f"🧠 ML-Советник инициализирован (модель: {'готова' if self.is_trained else 'ожидает обучения'})")
+        logger.info(f"🧠 ML-Советник v2 (XGBoost) инициализирован (модель: {'готова' if self.is_trained else 'ожидает обучения'})")
 
     def _load_model(self):
         """Загрузка сохранённой модели"""
@@ -109,7 +125,7 @@ class MLAdvisor:
                 with open(SCALER_PATH, 'rb') as f:
                     self.scaler = pickle.load(f)
                 self.is_trained = True
-                logger.info("✅ ML-модель загружена")
+                logger.info("✅ ML-модель (XGBoost) загружена")
         except Exception as e:
             logger.warning(f"Не удалось загрузить ML-модель: {e}")
     
@@ -121,7 +137,7 @@ class MLAdvisor:
                 pickle.dump(self.model, f)
             with open(SCALER_PATH, 'wb') as f:
                 pickle.dump(self.scaler, f)
-            logger.info("✅ ML-модель сохранена")
+            logger.info("✅ ML-модель (XGBoost) сохранена")
         except Exception as e:
             logger.warning(f"Не удалось сохранить ML-модель: {e}")
 
@@ -139,21 +155,19 @@ class MLAdvisor:
         total_range = h[last] - l[last]
         
         patterns = {
-            'doji': body < total_range * 0.1,                    # Доджи — неопределённость
-            'hammer': lower_wick > body * 2 and upper_wick < body * 0.5,  # Молот — разворот вверх
-            'shooting_star': upper_wick > body * 2 and lower_wick < body * 0.5,  # Падающая звезда — разворот вниз
-            'bullish_candle': c[last] > o[last],                   # Зелёная свеча
-            'bearish_candle': c[last] < o[last],                   # Красная свеча
-            'long_body': body > total_range * 0.7,                # Сильное движение
-            'engulfing_bull': last >= 1 and c[last] > o[last] and o[last] < c[last-1] and c[last] > o[last-1],  # Бычье поглощение
-            'engulfing_bear': last >= 1 and c[last] < o[last] and o[last] > c[last-1] and c[last] < o[last-1],  # Медвежье поглощение
-            'piercing': last >= 1 and c[last-1] < o[last-1] and c[last] > o[last] and c[last] > (o[last-1] + c[last-1]) / 2,
-            'dark_cloud': last >= 1 and c[last-1] > o[last-1] and c[last] < o[last] and c[last] < (o[last-1] + c[last-1]) / 2,
+            'doji': body < total_range * 0.1,
+            'hammer': lower_wick > body * 2 and upper_wick < body * 0.5,
+            'shooting_star': upper_wick > body * 2 and lower_wick < body * 0.5,
+            'bullish_candle': c[last] > o[last],
+            'bearish_candle': c[last] < o[last],
+            'long_body': body > total_range * 0.7,
+            'engulfing_bull': last >= 1 and c[last] > o[last] and o[last] < c[last-1] and c[last] > o[last-1],
+            'engulfing_bear': last >= 1 and c[last] < o[last] and o[last] > c[last-1] and c[last] < o[last-1],
         }
         return patterns
 
     def _calc_liquidity_zones(self, df_1h):
-        """Определение зон ликвидности (диапазоны с максимальным объёмом)"""
+        """Определение зон ликвидности"""
         if df_1h is None or len(df_1h) < 10:
             return {}
         
@@ -162,33 +176,30 @@ class MLAdvisor:
         highs = df_1h['high'].values
         lows = df_1h['low'].values
         
-        # Взвешенный по объёму центр цены (VWAP ближайшее)
         vwap = np.average((highs + lows) / 2, weights=volumes)
         
-        # Максимальные объёмы
         max_vol_idx = np.argmax(volumes[-24:]) if len(volumes) >= 24 else np.argmax(volumes)
         liq_high = highs[-(24 - max_vol_idx)] if len(volumes) >= 24 else highs[max_vol_idx]
         liq_low = lows[-(24 - max_vol_idx)] if len(volumes) >= 24 else lows[max_vol_idx]
         
-        # Расстояние до зоны ликвидности
         if current_price < liq_low:
             dist_to_liq = (liq_low - current_price) / current_price * 100
         elif current_price > liq_high:
             dist_to_liq = (current_price - liq_high) / current_price * 100
         else:
-            dist_to_liq = 0.0  # Уже в зоне
+            dist_to_liq = 0.0
         
         return {
             'vwap_distance': (current_price - vwap) / vwap * 100,
             'dist_to_big_volume': dist_to_liq,
-            'near_big_volume': 1.0 if dist_to_liq < 1.0 else 0.0,  # В пределах 1%
+            'near_big_volume': 1.0 if dist_to_liq < 1.0 else 0.0,
             'price_above_vwap': 1.0 if current_price > vwap else 0.0,
         }
 
     def _extract_features(self, symbol, current_price, rsi, trend, confidence, df=None):
         """
-        Извлечение 9 ключевых признаков для ML.
-        Обучена на 9426 исторических сделках (CV: 62.8%).
+        14 признаков для XGBoost.
+        Добавлены: BTC-корреляция, время суток, импульс объёма, H/L диапазон.
         """
         features = {
             'rsi': rsi,
@@ -200,29 +211,54 @@ class MLAdvisor:
             'candle_doji': 0.0,
             'candle_hammer': 0.0,
             'candle_engulfing': 0.0,
+            'btc_change_1h': 0.0,         # Изменение BTC за последний час
+            'hour_of_day': 0.0,           # Час дня (0-23, sin-закодировано)
+            'volume_momentum': 0.0,        # Отношение объёма последней свечи к средней за 10
+            'hl_range': 0.0,               # High-Low диапазон
+            'price_above_sma20': 1.0,      # Цена выше SMA20 на 1H
         }
 
         features['trend'] = (1.0 if trend == 'bullish' else (0.0 if trend == 'bearish' else 0.5))
+        features['hour_of_day'] = datetime.now().hour / 23.0  # 0..23 → 0..1
 
-        # Признаки из 5M DataFrame
+        # 5M DataFrame
         if df is not None and len(df) > 10:
             closes = df['close'].values
             volumes = df['volume'].values
+            highs = df['high'].values
+            lows = df['low'].values
+            
+            # Волатильность и объём
             features['volatility'] = np.std(closes[-10:] / (np.mean(closes[-10:]) + 0.0001))
             features['volume_ratio'] = volumes[-1] / (np.mean(volumes[-5:]) + 0.0001)
+            features['volume_momentum'] = np.mean(volumes[-3:]) / (np.mean(volumes[-10:-3]) + 0.0001)
+            features['hl_range'] = (highs[-1] - lows[-1]) / (closes[-1] + 0.0001)
 
+            # Паттерны свечей
             patterns = self._calc_candle_patterns(df)
             features['candle_doji'] = 1.0 if patterns.get('doji') else 0.0
             features['candle_hammer'] = 1.0 if patterns.get('hammer') else 0.0
             features['candle_engulfing'] = 1.0 if (patterns.get('engulfing_bull') or patterns.get('engulfing_bear')) else 0.0
 
-        # MultiTF из D1
+        # BTC-корреляция
+        try:
+            df_btc = _fetch_btc_data()
+            if df_btc is not None and len(df_btc) > 3:
+                btc_closes = df_btc['close'].values
+                features['btc_change_1h'] = (btc_closes[-1] - btc_closes[-2]) / btc_closes[-2]
+        except:
+            pass
+
+        # MultiTF из D1 и SMA20
         try:
             df_d1 = _fetch_tf_data(symbol, '1d', 60)
             if df_d1 is not None and len(df_d1) > 50:
                 closes_d1 = df_d1['close'].values
                 sma50 = np.mean(closes_d1[-50:])
                 features['multi_tf'] = (current_price - sma50) / (sma50 + 0.0001)
+                
+                sma20 = np.mean(closes_d1[-20:])
+                features['price_above_sma20'] = 1.0 if current_price > sma20 else 0.0
         except:
             pass
 
@@ -239,11 +275,14 @@ class MLAdvisor:
 
         return [features['rsi'], features['trend'], features['volatility'],
                 features['volume_ratio'], features['multi_tf'], features['vwap_dist'],
-                features['candle_doji'], features['candle_hammer'], features['candle_engulfing']]
+                features['candle_doji'], features['candle_hammer'], features['candle_engulfing'],
+                features['btc_change_1h'], features['hour_of_day'],
+                features['volume_momentum'], features['hl_range'], features['price_above_sma20']]
 
     def _feature_names(self):
         return ['rsi', 'trend', 'volatility', 'volume_ratio', 'multi_tf',
-                'vwap_dist', 'candle_doji', 'candle_hammer', 'candle_engulfing']
+                'vwap_dist', 'candle_doji', 'candle_hammer', 'candle_engulfing',
+                'btc_change_1h', 'hour_of_day', 'volume_momentum', 'hl_range', 'price_above_sma20']
 
     def add_trade_result(self, symbol, entry_price, exit_price, rsi, trend, confidence,
                          hold_hours, reason, volume_ratio=None):
@@ -276,34 +315,45 @@ class MLAdvisor:
 
     def train(self, force=False):
         """
-        Обучение/переобучение модели на накопленных данных.
+        Обучение/переобучение XGBoost модели на накопленных данных.
         """
         now = time.time()
 
         if not force and (now - self.last_retrain) < RETRAIN_INTERVAL:
-            return  # Ещё рано
+            return
 
         if len(self.training_data) < MIN_TRAINING_SAMPLES:
             logger.info(f"⏳ ML: ждём данные ({len(self.training_data)}/{MIN_TRAINING_SAMPLES})")
             return
 
-        # Подготавливаем данные
         X = np.array([d['features'] for d in self.training_data])
         y = np.array([d['label'] for d in self.training_data])
+
+        # Проверка: если все метки одного класса — не обучаем
+        if len(np.unique(y)) < 2:
+            logger.warning(f"⚠️ ML: все данные одного класса ({int(y[0])}), ждём разнообразия")
+            return
 
         # Масштабируем
         self.scaler = StandardScaler()
         X_scaled = self.scaler.fit_transform(X)
 
-        # Обучаем RandomForest (быстро, не требует GPU)
-        self.model = RandomForestClassifier(
-            n_estimators=100,
-            max_depth=8,
-            min_samples_leaf=5,
+        # XGBoost — лучше для табличных данных, чем RandomForest
+        self.model = xgb.XGBClassifier(
+            n_estimators=150,
+            max_depth=6,
+            learning_rate=0.1,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            min_child_weight=3,
+            reg_lambda=1.0,
+            reg_alpha=0.5,
             random_state=42,
-            n_jobs=2
+            eval_metric='logloss',
+            use_label_encoder=False,
+            verbosity=0
         )
-        self.model.fit(X_scaled, y)
+        self.model.fit(X_scaled, y, verbose=False)
 
         # Оценка точности
         train_score = self.model.score(X_scaled, y)
@@ -313,11 +363,17 @@ class MLAdvisor:
         # Сохраняем
         self._save_model()
 
-        # Статистика
         n_good = int(y.sum())
         n_bad = len(y) - n_good
-        logger.info(f"🎯 ML: модель обучена! Точность: {train_score:.1%}")
+        logger.info(f"🎯 ML (XGBoost): обучен! Точность: {train_score:.1%}")
         logger.info(f"   Данных: {len(y)} (good={n_good}, bad={n_bad})")
+        
+        # Feature importance (топ-5)
+        if hasattr(self.model, 'feature_importances_'):
+            names = self._feature_names()
+            importances = self.model.feature_importances_
+            top5 = sorted(zip(names, importances), key=lambda x: -x[1])[:5]
+            logger.info(f"   Топ-5 фич: {', '.join(f'{n}={v:.2f}' for n,v in top5)}")
 
     def evaluate(self, symbol, current_price, rsi, trend, confidence, df=None):
         """
@@ -332,10 +388,8 @@ class MLAdvisor:
         X = np.array([features])
         X_scaled = self.scaler.transform(X)
 
-        # Вероятность хорошего сигнала [0, 1]
         prob = self.model.predict_proba(X_scaled)[0]
 
-        # У модели может быть только 1 класс — защита
         if len(prob) < 2:
             return {'decision': 'GOOD', 'confidence': 0.5,
                     'reason': 'ML: недостаточно классов'}
