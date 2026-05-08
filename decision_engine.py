@@ -706,11 +706,20 @@ class DecisionEngine:
                 trend_4h_val = self._trend_to_score(t4h)
             
             # Согласованность: штраф за конфликт между таймфреймами
-            divergence = max(
-                abs(trend_5m_val - trend_1h_val),
-                abs(trend_5m_val - trend_4h_val),
-                abs(trend_1h_val - trend_4h_val)
-            )
+            # Если 5M bearish, но 1H и 4H бычьи — это нормальный откат, не штрафуем сильно
+            # Полный штраф только когда все ТФ разнонаправлены
+            d1 = abs(trend_5m_val - trend_1h_val)
+            d2 = abs(trend_5m_val - trend_4h_val)
+            d3 = abs(trend_1h_val - trend_4h_val)
+            
+            # Если старшие ТФ (1H и 4H) согласованы — штраф меньше
+            if d3 < 20:
+                # 1H и 4H смотрят в одну сторону — ослабляем штраф в 3 раза
+                # (5M может быть просто откатом, не стоим за ним стеной)
+                divergence = min(d1, d2) * 0.3
+            else:
+                divergence = max(d1, d2, d3)
+            
             # divergence 0-100 → penalty 0-30
             penalty = min(30, divergence * 0.3)
             
