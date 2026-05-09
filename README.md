@@ -221,6 +221,27 @@ MIT — используйте, модифицируйте, делитесь.
 
 ---
 
+## 💬 Комьюнити и контрибьюции
+
+Присоединяйтесь к развитию системы! Всё лучшее стекается в один репозиторий.
+
+| Канал | Назначение |
+|---|---|
+| [🐛 Issues](https://github.com/rez18346/super-trading-system/issues) | Сообщить о баге |
+| [💡 Discussions](https://github.com/rez18346/super-trading-system/discussions) | Идеи, фичи, вопросы |
+| [🔀 Pull Requests](https://github.com/rez18346/super-trading-system/pulls) | Предложить улучшение |
+| [📦 Releases](https://github.com/rez18346/super-trading-system/releases) | Следить за обновлениями |
+
+**Схема работы:**
+1. Нашёл баг → создаёшь **Issue**
+2. Придумал фичу → создаёшь **Discussion**
+3. Написал код → **Pull Request** → мы ревьюим → вмерживаем
+4. Вышел апдейт → **Releases** → `git pull`
+
+Все улучшения публикуются, все получают — экосистема растёт сама. Сливки собираем вместе 🤝
+
+---
+
 ## 🤝 Контакты
 
 По вопросам и предложениям — Issues на GitHub или Telegram.
