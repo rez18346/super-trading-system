@@ -530,13 +530,20 @@ function updPos(pos){
         if(val===undefined||val===null) return '#555';
         return val>=thr?'#3fb950':val>=thr2?'#d29922':'#8b949e';
       }
+      // Укорачиваем длинные строки голосов: "20(SKIP(prob=0.50))" → "20 SK"
+      function shortVote(s) {
+        if(!s) return '?';
+        const parts = String(s).match(/^(\d+)\((\w+)/);
+        if(parts) return parts[1]+' '+parts[2].substring(0,2);
+        return String(s).substring(0,5);
+      }
       const votesLine = v.mlpro
-        ? '<span style="color:'+vc(parseInt(v.mlpro),0,0)+'">🔵'+v.mlpro+'</span> '+
-          '<span style="color:'+vc(parseInt(v.adv),0,0)+'">🟢'+v.adv+'</span> '+
-          '<span style="color:'+vc(v.mtf,90,75)+'">🟡'+v.mtf+'</span> '+
-          '<span style="color:'+vc(v.rvb,90,75)+'">🟣'+v.rvb+'</span> '+
-          '<span style="color:'+vc(v.liq,90,75)+'">🟠'+v.liq+'</span> '+
-          '<span style="color:'+vc(v.vv,90,75)+'">🔴'+v.vv+'</span> '+
+        ? '<span title="'+v.mlpro+'" style="cursor:help;color:'+vc(parseInt(v.mlpro),0,0)+'">🔵'+shortVote(v.mlpro)+'</span> '+
+          '<span title="'+v.adv+'" style="cursor:help;color:'+vc(parseInt(v.adv),0,0)+'">🟢'+shortVote(v.adv)+'</span> '+
+          '<span title="'+v.mtf+'" style="cursor:help;color:'+vc(v.mtf,90,75)+'">🟡'+v.mtf+'</span> '+
+          '<span title="'+v.rvb+'" style="cursor:help;color:'+vc(v.rvb,90,75)+'">🟣'+v.rvb+'</span> '+
+          '<span title="'+v.liq+'" style="cursor:help;color:'+vc(v.liq,90,75)+'">🟠'+v.liq+'</span> '+
+          '<span title="'+v.vv+'" style="cursor:help;color:'+vc(v.vv,90,75)+'">🔴'+v.vv+'</span> '+
           '<span style="font-size:10px;color:'+(v.bonus>0?'#3fb950':v.bonus<0?'#f85149':'#555')+'">B'+(v.bonus||0)+'</span> '+
           '<span style="font-size:10px;color:'+(v.rev>0?'#d2d268':v.rev<0?'#f85149':'#555')+'">R'+(v.rev||0)+'</span> '+
           '<span style="font-size:10px;color:'+(v.btc>0?'#3fb950':v.btc<0?'#f85149':'#555')+'">₿'+(v.btc||0)+'</span>'
