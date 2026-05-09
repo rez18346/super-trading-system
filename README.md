@@ -65,6 +65,11 @@ pip install -r requirements.txt
 ### 4. Запустите
 
 ```bash
+./start.sh
+```
+
+Или напрямую:
+```bash
 python3 main.py
 ```
 
@@ -79,6 +84,46 @@ tail -f /tmp/system_v4.log
 # Веб-интерфейс (если запущен)
 # Откройте http://localhost:8765 в браузере
 ```
+
+---
+
+## 💻 Особенности платформ
+
+### 🟢 Linux / VPS (рекомендуется)
+Всё из коробки. Для production-запуска:
+```bash
+./start.sh
+```
+Для автостарта используйте [systemd](#-production-запуск-linux).
+
+### 🟡 macOS
+Всё работает. Для автостарта настройте launchctl.
+
+### 🔵 Windows (через WSL2)
+Если OpenClaw или Python уже работает через WSL2 (Ubuntu) — система запустится без проблем.
+
+**Установка WSL2 (один раз):**
+```powershell
+# В PowerShell (администратор):
+wsl --install -d Ubuntu
+```
+
+**После установки WSL:**
+```bash
+# Внутри WSL (Ubuntu):
+sudo apt update && sudo apt install python3 python3-pip git -y
+git clone https://github.com/rez18346/super-trading-system.git
+cd super-trading-system
+cp config.example.py config.py
+# Отредактируйте config.py (nano config.py)
+pip install -r requirements.txt
+./start.sh
+```
+
+**Важно для WSL:**
+- Ноутбук не должен уходить в сон — отключите спящий режим в Windows
+- Дашборд доступен из Windows по адресу http://<IP-WSL>:8765 (IP покажет start.sh)
+- После перезагрузки запускайте снова: `./start.sh`
 
 ---
 
