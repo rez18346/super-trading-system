@@ -212,6 +212,17 @@ def _parse_votes_from_log() -> dict:
             # Всегда перезаписываем — лог может содержать старые строки без VV
             # Ищем bonus/rev/btc в конце строки
             bonus_match = re.search(r'bonus=([-\d]+) rev=([-\d]+) btc=([-+]\d+)', line)
+            # IDM / Order Block — ищем прямо в строке лога
+            idm_match = re.search(r'OB\d+\s+(bullish|bearish|idm)', line)
+            idm_info = ''
+            if idm_match:
+                ob_type = idm_match.group(2)
+                if ob_type == 'idm':
+                    idm_info = 'IDM'
+                elif ob_type == 'bullish':
+                    idm_info = 'OB↑'
+                elif ob_type == 'bearish':
+                    idm_info = 'OB↓'
             result[sym] = {
                 'score': int(m.group(3)),
                 'signal': m.group(1),
@@ -224,6 +235,7 @@ def _parse_votes_from_log() -> dict:
                     'bonus': int(bonus_match.group(1)) if bonus_match else 0,
                     'rev': int(bonus_match.group(2)) if bonus_match else 0,
                     'btc': int(bonus_match.group(3)) if bonus_match else 0,
+                    'idm': idm_info,
                     'price': prices.get(sym, 0),
                 }
         # VETO — только если не перезаписана основной строкой
@@ -546,7 +558,8 @@ function updPos(pos){
           '<span title="'+v.vv+'" style="cursor:help;color:'+vc(v.vv,90,75)+'">🔴'+v.vv+'</span> '+
           '<span style="font-size:10px;color:'+(v.bonus>0?'#3fb950':v.bonus<0?'#f85149':'#555')+'">B'+(v.bonus||0)+'</span> '+
           '<span style="font-size:10px;color:'+(v.rev>0?'#d2d268':v.rev<0?'#f85149':'#555')+'">R'+(v.rev||0)+'</span> '+
-          '<span style="font-size:10px;color:'+(v.btc>0?'#3fb950':v.btc<0?'#f85149':'#555')+'">₿'+(v.btc||0)+'</span>'
+          '<span style="font-size:10px;color:'+(v.btc>0?'#3fb950':v.btc<0?'#f85149':'#555')+'">₿'+(v.btc||0)+'</span>'+
+          (v.idm?' <span style="font-size:11px;font-weight:600;color:'+(v.idm==='IDM'?'#d29922':v.idm==='OB↑'?'#3fb950':v.idm==='OB↓'?'#f85149':'#8b949e')+'" title="Order Block / Inducement">▫'+v.idm+'</span>':'')
         : (isVeto ? '<span style="color:#f85149;font-size:11px">⛔ '+v.veto+'</span>' : '<span style="color:#555;font-size:11px">ожидание...</span>');
       return '<tr>'+
         '<td style="font-size:14px;padding:4px 2px">'+em(s.split('/')[0])+'</td>'+
