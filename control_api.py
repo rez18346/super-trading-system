@@ -449,9 +449,20 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
 
 <div class="section" style="grid-column:1/-1">
     <h2>📊 Мониторинг голосов <span style="font-size:12px;color:#8b949e;font-weight:normal">— вход при Score ≥ 65</span></h2>
+    <!-- Легенда голосов -->
+    <div style="margin-bottom:12px;padding:8px 10px;background:#1c2128;border-radius:6px;font-size:12px;display:flex;flex-wrap:wrap;gap:6px 16px">
+      <span><span style="color:#3fb950;font-weight:700">🔵ML</span>=ML-Pro (20%)</span>
+      <span><span style="color:#3fb950;font-weight:700">🟢Ad</span>=ML-Advisor (10%)</span>
+      <span><span style="color:#3fb950;font-weight:700">🟡TF</span>=TimeFrame (25%)</span>
+      <span><span style="color:#3fb950;font-weight:700">🟣RV</span>=RSI/Vol/BTC</span>
+      <span><span style="color:#3fb950;font-weight:700">🟠LQ</span>=Liquidity (25%)</span>
+      <span><span style="color:#3fb950;font-weight:700">🔴VV</span>=Volume/VWAP (20%)</span>
+      <span><span style="color:#8b949e;font-size:11px">Цвет:</span> 🟢≥90 🟡≥75 ⚪&lt;75</span>
+      <span><span style="color:#8b949e;font-size:11px">Пороги:</span> ✅≥65 🔶50–64 ⚪&lt;50 ⛔вето</span>
+    </div>
     <table style="width:100%;font-size:11px"><thead><tr>
       <th style="width:18px"></th><th>Символ</th><th style="width:28px">Кол-во</th><th style="width:65px">Вход</th><th style="width:70px">Стоим.</th>
-      <th style="text-align:left">Голоса (5/5)</th>
+      <th style="text-align:left">Голоса (6 гол.)</th>
       <th style="width:70px">Score</th>
     </tr></thead>
     <tbody id="tbPos"><tr><td colspan="7" style="text-align:center;color:#8b949e;font-size:13px;padding:20px">Нет данных</td></tr></tbody></table>
