@@ -80,6 +80,7 @@ from data_cache import (PriceCache, OHLCVCache, CachedDataFetcher,
                          get_fetcher,
                          patch_exchange_fetch_ticker, patch_exchange_create_order)
 from ws_client import BybitWebSocketClient, set_global_client
+from btc_direction import BTCDirectionPredictor
 
 
 class TradingSystem:

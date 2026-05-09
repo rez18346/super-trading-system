@@ -87,15 +87,13 @@ class IndustrialTrader:
                         if value_usdt > 1.0:  # Позиции больше $1
                             symbol = f"{currency}/USDT"
                             
-                            # Пытаемся получить цену сначала из БД (trade_history, weighted average)
-                            db_entry_price, _ = db.calculate_weighted_entry(symbol)
-                            
-                            if db_entry_price > 0:
-                                entry_price = db_entry_price
-                                # Берём время первой покупки из trade_history
-                                trades = db.get_trade_history(symbol, limit=1, side='buy')
-                                entry_time = trades[0]['timestamp'] if trades else datetime.now().isoformat()
-                                logger.info(f"   📊 Weighted average из истории: {symbol}: ${entry_price:.4f}")
+                            # Цена входа: используем последнюю цену покупки из trade_history
+                            # (не WA — он искажает PnL из-за старых бумажных сделок)
+                            trades = db.get_trade_history(symbol, limit=1, side='buy')
+                            if trades and trades[0]['price'] > 0:
+                                entry_price = trades[0]['price']
+                                entry_time = trades[0]['timestamp']
+                                logger.info(f"   📊 Последняя цена покупки из истории: {symbol}: ${entry_price:.4f}")
                             else:
                                 # Если нет в истории — пытаемся получить с биржи
                                 avg_price, first_trade_time = self.get_average_buy_price(symbol, amount)
@@ -338,28 +336,38 @@ class IndustrialTrader:
         
         return True
     
-    def calculate_position_size(self, symbol: str, price: float) -> float:
-        """Расчет размера позиции"""
+    def calculate_position_size(self, symbol: str, price: float, score: float = 65.0) -> float:
+        """Расчет размера позиции (зависит от Score)"""
         risk_config = self.config['risk_management']
         trading_config = self.config['trading']
         
-        # Максимальный размер позиции в процентах от капитала
-        max_position_usd = min(
-            risk_config.get('max_buy_order_usd', 2.0),  # Используем max_buy_order_usd
-            self.available_capital * (trading_config['max_position_size_percent'] / 100)
-        )
+        # База от капитала
+        max_position_usd = self.available_capital * (trading_config['max_position_size_percent'] / 100)
         
-        # Минимальный размер позиции
+        # Размер от Score: чем выше уверенность, тем больше вход
+        if score >= 80:
+            size_before_cap = 90.0
+            tier = f"Score>=80"
+        elif score >= 75:
+            size_before_cap = 60.0
+            tier = f"Score>=75"
+        elif score >= 70:
+            size_before_cap = 45.0
+            tier = f"Score>=70"
+        else:
+            size_before_cap = 30.0
+            tier = f"Score<70"
+        
+        # Ограничение от капитала и конфига
+        max_order_limit = risk_config.get('max_buy_order_usd', 60.0)
+        position_size = min(max_position_usd, max_order_limit, size_before_cap)
+        
+        # Минимальный размер
         min_position_usd = risk_config['min_position_usd']
+        position_size = max(position_size, min_position_usd)
         
-        # Расчет на основе доступного капитала и риска
-        position_size = min(max_position_usd, self.available_capital * 0.2)
-        position_size = max(min_position_usd, position_size)
-        
-        # Конвертация в количество единиц актива
         quantity = position_size / price
-        
-        logger.info(f"Размер позиции для {symbol}: ${position_size:.2f} ({quantity:.6f} units)")
+        logger.info(f"Размер позиции для {symbol}: ${position_size:.2f} ({tier}, score={score:.0f}), {quantity:.6f} units")
         return quantity
     
     def execute_trade(self, symbol: str, side: str, quantity: float, price: float) -> Optional[Dict]:
@@ -469,17 +477,16 @@ class IndustrialTrader:
                 
                 order = self.exchange.create_order(
                     symbol=symbol,
-                    type='limit',
+                    type='market',
                     side=side,
-                    amount=quantity,
-                    price=price
+                    amount=quantity
                 )
                 
                 logger.info(f"✅ РЕАЛЬНАЯ СДЕЛКА ВЫПОЛНЕНА: ID {order['id']}")
                 
                 # ОБНОВЛЯЕМ ПОЗИЦИИ ПОСЛЕ УСПЕШНОЙ СДЕЛКИ
                 if side == 'buy':
-                    order_price = order.get('price', price) or price
+                    order_price = order.get('average', order.get('price', price)) or price
                     filled_qty = order.get('filled', quantity) or quantity
                     
                     # Запись точной цены в trade_history
@@ -493,25 +500,26 @@ class IndustrialTrader:
                         timestamp=datetime.now().isoformat()
                     )
                     
-                    # Пересчитываем weighted average из истории
-                    wa_price, wa_qty = db.calculate_weighted_entry(symbol)
-                    actual_price = wa_price if wa_price > 0 else order_price
-                    actual_qty = wa_qty if wa_qty > 0 else filled_qty
+                    # Берём реальное количество из order.filled или quantity
+                    actual_qty = filled_qty if filled_qty > 0 else quantity
                     
                     # Добавляем новую позицию
+                    # Используем order_price (цена BUY ордера), а не WA из БД
+                    # Баг: DB.calculate_weighted_entry хранит старые цены, искажая PnL
+                    real_entry = order_price  # берём цену, по которой реально исполнился BUY
                     if symbol not in self.positions:
                         self.positions[symbol] = {
                             'quantity': actual_qty,
-                            'entry_price': actual_price,
+                            'entry_price': real_entry,
                             'entry_time': datetime.now().isoformat(),
                             'max_profit': 0.0
                         }
-                        logger.info(f"📥 Добавлена новая позиция: {symbol} - {actual_qty:.6f} @ ${actual_price:.4f}")
+                        logger.info(f"📥 Добавлена новая позиция: {symbol} - {actual_qty:.6f} @ ${real_entry:.4f}")
                     else:
                         self.positions[symbol]['quantity'] = actual_qty
-                        self.positions[symbol]['entry_price'] = actual_price
+                        self.positions[symbol]['entry_price'] = real_entry
                         self.positions[symbol]['entry_time'] = datetime.now().isoformat()
-                        logger.info(f"📊 Обновлена позиция {symbol}: {actual_qty:.6f} @ ${actual_price:.4f}")
+                        logger.info(f"📊 Обновлена позиция {symbol}: {actual_qty:.6f} @ ${real_entry:.4f}")
                 elif side == 'sell':
                     # Запись sell в trade_history
                     pnl = 0
@@ -519,7 +527,7 @@ class IndustrialTrader:
                     if symbol in self.positions:
                         entry = self.positions[symbol]['entry_price']
                         filled = order.get('filled', quantity) or quantity
-                        filled_price = order.get('price', price) or price
+                        filled_price = order.get('average', order.get('price', price)) or price
                         pnl = (filled_price - entry) * filled
                         pnl_pct = ((filled_price - entry) / entry) * 100 if entry > 0 else 0
                         
@@ -662,6 +670,28 @@ class IndustrialTrader:
                     de.set_multi_tf_data(btc_price=btc_price)
                     de.update_btc_reference(btc_price)
                 
+                # BTC Direction Predictor: загружаем/обновляем прогноз каждую итерацию
+                if hasattr(de, '_btc_predictor'):
+                    if de._btc_predictor is None:
+                        try:
+                            from btc_direction import BTCDirectionPredictor
+                            de._btc_predictor = BTCDirectionPredictor(exchange=self.exchange)
+                            model_loaded = de._btc_predictor._load_model()
+                            if model_loaded:
+                                logger.info("🧠 BTC Direction Predictor: модель загружена с диска")
+                            else:
+                                logger.info("🧠 BTC Direction Predictor: модель не найдена, будет обучена")
+                        except Exception as e:
+                            logger.warning(f"⚠️ BTC Direction Predictor init: {e}")
+                    
+                    # Пересчитываем прогноз каждую итерацию цикла
+                    if de._btc_predictor is not None:
+                        try:
+                            signal = de._btc_predictor.predict()
+                            logger.info(f"🔮 BTC Direction: {signal['direction']} (conf={signal['confidence']:.0%}, strength={signal['strength']}, up={signal['up_probability']:.0%} down={signal['down_probability']:.0%})")
+                        except Exception as e:
+                            logger.warning(f"⚠️ BTC Direction Predictor predict: {e}")
+                
                 # Анализ каждого символа
                 for symbol in symbols:
                     if not self.running:
@@ -714,8 +744,8 @@ class IndustrialTrader:
                                     continue
                                 
                                 logger.info(f"⚡ [DE→BUY] {symbol}: score={score:.0f}/100 size={size_mult:.2f} | ${de_price:.4f}")
-                                # Размер позиции = стандартный * size_mult от DE
-                                base_qty = self.calculate_position_size(symbol, de_price)
+                                # Размер позиции = стандартный * size_mult от DE, с учётом Score
+                                base_qty = self.calculate_position_size(symbol, de_price, score)
                                 quantity = base_qty * size_mult
                                 if quantity * de_price <= self.available_capital:
                                     # ✅ ЗАПОМИНАЕМ SL/TP УРОВНИ ОТ DE в позиции

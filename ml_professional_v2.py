@@ -464,8 +464,13 @@ class MLProfessionalV2:
 
         try:
             # Выбираем путь в зависимости от типа модели
-            if self.is_27f and candles_1h and len(candles_1h) >= 100:
-                return self._evaluate_27f(symbol, candles_5m, candles_1h, candles_4h, confidence)
+            if self.is_27f:
+                if candles_1h and len(candles_1h) >= 100:
+                    return self._evaluate_27f(symbol, candles_5m, candles_1h, candles_4h, confidence)
+                else:
+                    log.info(f"[ML-v2] {symbol}: 27f не вызвана — 1H={len(candles_1h or [])}, fallback на legacy")
+            else:
+                log.info(f"[ML-v2] {symbol}: is_27f=False, legacy 16f модель")
 
             # Старая модель (16 признаков)
             return self._evaluate_legacy(symbol, candles_5m, candles_1h, candles_4h, confidence, trend, rsi)
