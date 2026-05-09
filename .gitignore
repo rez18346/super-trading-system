@@ -1,29 +1,56 @@
-config/api_config_final.json
-data/
-models/
-reference_*/
+# ==========================================
+# 🔒 Безопасность — НЕ КОММИТИТЬ
+# ==========================================
+config.py                    # API-ключи и приватные настройки
+*.key
+*.pem
+*.env
+.env.*
+.venv/
+
+# ==========================================
+# 🗄️ Данные трейдера
+# ==========================================
+data/                        # SQLite БД, PID-файлы, кеш
+*.db
+*.db-journal
+*.pid
+*.bak
+*.log
+logs/
+!*.example.py                # кроме example-файлов
+
+# ==========================================
+# 🐍 Python
+# ==========================================
 __pycache__/
-*.pyc
-.DS_Store
-*.zip
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
 venv/
-*.backup*
-auto_evolve.py
-hmm_regime.py
-etcdf.py
-analyze_trades.py
-download_historical.py
-retrain_ml.py
-run_with_fix_v4.py
-state_pre_restart.json
-stop_loss_monitor_v4.py
-stop_loss_monitor_v5.py
-tests.py
-train_ml_v2_historical.py
-ML_PRO_PLAN.md
-PLAN_27_APRIL.md
-backups/
-scripts/
-*.wip
-*_bak
-ml_professional.py
+.venv
+*.egg-info/
+dist/
+build/
+*.egg
+
+# ==========================================
+# 🛠️ Редакторы / ОС
+# ==========================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ==========================================
+# 📦 ML модели (тяжёлые, генерируются на лету)
+# ==========================================
+models/
+*.model
+*.pkl
+*.joblib
