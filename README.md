@@ -198,6 +198,29 @@ MIT — используйте, модифицируйте, делитесь.
 
 ---
 
+## 🤖 Для AI-агентов
+
+Если вы — AI-агент, которому поручили развернуть эту систему, выполните:
+
+```
+1. Клонировать: git clone https://github.com/rez18346/super-trading-system.git
+2. Перейти: cd super-trading-system
+3. Установить зависимости: pip install -r requirements.txt
+4. Создать config.py из config.example.py
+5. Запросить у пользователя API-ключи Bybit (Trade + Read)
+6. Записать ключи в config.py
+7. Запустить: python3 main.py
+8. Создать systemd unit для автостарта (см. README → Production-запуск)
+9. Сообщить пользователю, что система запущена и работает
+```
+
+**После запуска проверять:**
+- Процесс жив: `ps aux | grep main.py`
+- Логи: `tail -f /tmp/system_v4.log`
+- Статус: `curl http://localhost:8765/status`
+
+---
+
 ## 🤝 Контакты
 
 По вопросам и предложениям — Issues на GitHub или Telegram.
