@@ -306,6 +306,17 @@ def main():
     
     config_path = os.path.join(BASE_DIR, "config/api_config_final.json")
     
+    # Запуск Control API дашборда в отдельном потоке
+    try:
+        from control_api import run_server
+        dash_thread = threading.Thread(target=run_server, kwargs={'port': 8765}, daemon=True, name='dashboard')
+        dash_thread.start()
+        logger.info("📊 Control API дашборд запущен на порту 8765")
+    except ImportError:
+        logger.warning("⚠️ control_api не найден, дашборд недоступен")
+    except Exception as e:
+        logger.warning(f"⚠️ Ошибка запуска дашборда: {e}")
+    
     # Создаём систему
     system = TradingSystem(config_path)
     
