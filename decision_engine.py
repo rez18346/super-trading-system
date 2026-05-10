@@ -578,14 +578,41 @@ class DecisionEngine:
     
     _ENTRY_THRESHOLD = 65.0
     
-    def _get_entry_threshold(self) -> float:
-        """Адаптивный порог входа от HMM-режима."""
+    def _get_entry_threshold(self, strong_votes: int = 0, liq_score: float = 0,
+                              adv_score: float = 0, vsa_score: float = 0) -> float:
+        """Адаптивный порог входа.
+
+        Факторы снижения порога:
+        - HMM CALM: -8 (риск-менее агрессивно)
+        - 3+ модуля с score >= 75: -4
+        - 2 модуля с score >= 75: -2
+        - Объёмная тройка (Liq, VV, VSA) средняя >= 75: -5 (доверяем объёму)
+        - Liq >= 80 + Adv >= 85: -3
+
+        Returns:
+            float — финальный порог (мин 55)
+        """
         base = self._ENTRY_THRESHOLD
         if self.hmm_regime == 0:   # CALM
-            return base - 8        # 57
+            base -= 8               # 57
         elif self.hmm_regime == 2: # VOLATILE
-            return base + 5        # 70
-        return base                # NORMAL = 65
+            base += 5               # 70
+
+        # Снижение при сильных голосах независимо от HMM
+        if strong_votes >= 3:
+            base -= 4
+        elif strong_votes >= 2:
+            base -= 2
+
+        # Объёмная тройка (Liq + VSA) сильна — сильно снижаем порог
+        if liq_score >= 70 and vsa_score >= 70:
+            base -= 5
+
+        # Liq подтверждает Advisor
+        if liq_score >= 80 and adv_score >= 85:
+            base -= 3
+
+        return max(55.0, base)     # не ниже 55 никогда
     
     def _evaluate_entry_ensemble(self, symbol: str, confidence: float,
                                    trend: str, rsi: float,
@@ -614,14 +641,22 @@ class DecisionEngine:
         is_short = (side == 'short')
         
         # Инициализируем результаты голосов
-        scores = {
-            'ml_v2': {'score': 50, 'weight': 0.20, 'detail': 'N/A'},
-            'advisor': {'score': 50, 'weight': 0.10, 'detail': 'N/A'},
-            'mtf': {'score': 50, 'weight': 0.40, 'detail': 'N/A'},
-            'rsi_vol_btc': {'score': 50, 'weight': 0.00, 'detail': 'N/A'},
-            'liquidity': {'score': 50, 'weight': 0.25, 'detail': 'N/A'},
-            'volume_vwap': {'score': 50, 'weight': 0.20, 'detail': 'N/A'},
+        # ⚡ БАЗОВЫЕ ВЕСА
+        BASE_WEIGHTS = {
+            'ml_v2': 0.20,
+            'advisor': 0.10,
+            'mtf': 0.35,
+            'rsi_vol_btc': 0.00,
+            'liquidity': 0.25,
+            'volume_vwap': 0.15,
+            'vsa': 0.10,  # НОВЫЙ: VSA (Volume Spread Analysis)
         }
+
+        scores = {}
+        for k, w in BASE_WEIGHTS.items():
+            scores[k] = {'score': 50, 'weight': w, 'detail': 'N/A'}
+        # Веса для бонусов остаются (не входят в BASE_WEIGHTS)
+        _bonus_keys = ['_reversal_bonus', '_price_bonus', '_btc_bonus']
         
         # ═══ ГОЛОС 1: MLProfessionalV2 (20%) ═══════════════════════════════
         try:
@@ -836,6 +871,47 @@ class DecisionEngine:
             scores['volume_vwap']['score'] = 50
             scores['volume_vwap']['detail'] = f"error({e})"
         
+        # ═══ ГОЛОС 7: VSA — Volume Spread Analysis (10%) ═══════════════════
+        try:
+            from vsa_analyzer import analyze_volume_spread
+            if candles_5m and len(candles_5m) > 20:
+                vsa = analyze_volume_spread(candles_5m)
+                if vsa.signal == 'bullish':
+                    vsa_score = 60 + int(vsa.strength * 40)  # 60-100
+                elif vsa.signal == 'bearish':
+                    vsa_score = 40 - int(vsa.strength * 30)  # 10-40
+                else:
+                    vsa_score = 50
+                scores['vsa']['score'] = vsa_score
+                scores['vsa']['detail'] = vsa.detail
+        except Exception as e:
+            scores['vsa']['score'] = 50
+            scores['vsa']['detail'] = f'error({e})'
+
+        # ═══ АДАПТИВНЫЕ ВЕСА ══════════════════════════════════════════════
+        # Если Liq сильный (>70) а MTF слабый (<50) — снижаем вес MTF
+        liq_score = scores['liquidity']['score']
+        mtf_score = scores['mtf']['score']
+        adv_score = scores['advisor']['score']
+        vsa_score = scores['vsa']['score']
+
+        if liq_score >= 75 and mtf_score < 50:
+            # Liq уверен, MTF не подтверждает — не даём MTF душить сигнал
+            mtf_shrink = 0.5 if adv_score >= 60 else 0.3
+            if vsa_score >= 60:
+                mtf_shrink = max(mtf_shrink, 0.4)  # VSA подтверждает — ещё ослабляем MTF
+            transfer = BASE_WEIGHTS['mtf'] * mtf_shrink
+            scores['mtf']['weight'] = BASE_WEIGHTS['mtf'] - transfer
+            scores['liquidity']['weight'] = BASE_WEIGHTS['liquidity'] + transfer * 0.6
+            scores['vsa']['weight'] = BASE_WEIGHTS['vsa'] + transfer * 0.4
+            logger.debug(f"[DE] Адаптивные веса: MTF {BASE_WEIGHTS['mtf']:.2f}→{scores['mtf']['weight']:.2f}, Liq {BASE_WEIGHTS['liquidity']:.2f}→{scores['liquidity']['weight']:.2f}")
+        elif liq_score >= 60 and adv_score >= 80 and mtf_score < 50:
+            # Advisor сильный + Liq умеренный — немного ослабляем MTF
+            transfer = BASE_WEIGHTS['mtf'] * 0.25
+            scores['mtf']['weight'] = BASE_WEIGHTS['mtf'] - transfer
+            scores['advisor']['weight'] = BASE_WEIGHTS['advisor'] + transfer * 0.6
+            scores['liquidity']['weight'] = BASE_WEIGHTS['liquidity'] + transfer * 0.4
+
         # ═══ БОНУС ЗА ПОЗИЦИЮ ЦЕНЫ И РАННИЙ РАЗВОРОТ ══════════════════
         # Бонус +0..20 если цена в нижней половине дневного диапазона (отскок)
         # Бонус +0..15 дополнительно если детектор разворота активен
@@ -916,7 +992,17 @@ class DecisionEngine:
         # ═══ ИТОГОВЫЙ СКОР ═════════════════════════════════════════════════
         final_score = sum(v['score'] * v['weight'] for v in scores.values())
         
-        threshold = self._get_entry_threshold()
+        # Сколько модулей дают сильные сигналы (используем ядро голосов, без бонусов)
+        core_votes = [scores['ml_v2'], scores['advisor'], scores['liquidity'],
+                      scores['volume_vwap'], scores['vsa']]
+        strong_votes = sum(1 for v in core_votes if v['score'] >= 75)
+        
+        threshold = self._get_entry_threshold(
+            strong_votes=strong_votes,
+            liq_score=scores['liquidity']['score'],
+            adv_score=scores['advisor']['score'],
+            vsa_score=scores['vsa']['score']
+        )
         
         # Разбивка голосов для логов/дашборда
         votes_str = (
@@ -925,7 +1011,8 @@ class DecisionEngine:
             f"MTF:{scores['mtf']['score']:.0f}({scores['mtf']['detail']}) "
             f"RVB:{scores['rsi_vol_btc']['score']:.0f}({scores['rsi_vol_btc']['detail']}) "
             f"Liq:{scores['liquidity']['score']:.0f}({scores['liquidity']['detail']}) "
-            f"VV:{scores['volume_vwap']['score']:.0f}({scores['volume_vwap']['detail']})"
+            f"VV:{scores['volume_vwap']['score']:.0f}({scores['volume_vwap']['detail']}) "
+            f"VSA:{scores['vsa']['score']:.0f}({scores['vsa']['detail']})"
         )
         
         votes = {
@@ -934,6 +1021,8 @@ class DecisionEngine:
             'mtf': {'score': scores['mtf']['score'], 'detail': scores['mtf']['detail']},
             'rsi_vol_btc': {'score': scores['rsi_vol_btc']['score'], 'detail': scores['rsi_vol_btc']['detail']},
             'liquidity': {'score': scores['liquidity']['score'], 'detail': scores['liquidity']['detail']},
+            'volume_vwap': {'score': scores['volume_vwap']['score'], 'detail': scores['volume_vwap']['detail']},
+            'vsa': {'score': scores['vsa']['score'], 'detail': scores['vsa']['detail']},
         }
         
         if final_score >= threshold:
@@ -954,7 +1043,7 @@ class DecisionEngine:
         else:
             return {
                 'approved': False,
-                'reason': f"⏭️ Score={final_score:.0f} < {threshold} {votes_str} bonus={price_bonus:.0f} rev={reversal_bonus:.0f} btc={btc_bonus:+.0f}",
+                'reason': f"⏭️ Score={final_score:.0f} < {threshold}({strong_votes}≥75) {votes_str} bonus={price_bonus:.0f} rev={reversal_bonus:.0f} btc={btc_bonus:+.0f}",
                 'final_score': final_score,
                 'threshold': threshold,
                 'votes': votes,

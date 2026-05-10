@@ -79,6 +79,8 @@ class LiquidityCluster:
         # Кэш для обнаруженных зон (сбрасывается при каждом evaluate)
         self._cached_of: List[OrderFlowInfo] = []
         self._cached_ob: List[OrderBlockInfo] = []
+        # История POC для анализа смещения (для динамики Liq)
+        self._poc_history: List[float] = []
 
     # ──────────────────────────────────────────────────────────────────────────
     # ПУБЛИЧНЫЙ МЕТОД
@@ -163,18 +165,33 @@ class LiquidityCluster:
                     ob_details.append(ob.kind[:3])
             if dead:
                 ob_details.append(f"OF{len(dead)}")
+
+        # ── Динамика POC ───────────────────────────────────────────────────
+        poc_trend_str = ''
+        self._poc_history.append(poc)
+        if len(self._poc_history) > 12:
+            self._poc_history = self._poc_history[-12:]
+        if len(self._poc_history) >= 6:
+            poc_start = self._poc_history[0]
+            poc_end = self._poc_history[-1]
+            if poc_start > 0:
+                poc_change = (poc_end - poc_start) / poc_start
+                if abs(poc_change) > 0.001:
+                    poc_trend_str = 'POC↑' if poc_change > 0 else 'POC↓'
+
         detail = (
             f"POC={poc:.4f} VAH={vah:.4f} VAL={val:.4f} "
             f"q={cluster_quality:.2f} fvg↑={len(fvg_above)} fvg↓={len(fvg_below)} "
             f"{' '.join(ob_details)} "
-            f"{trap or ''}"
+            f"{poc_trend_str} {trap or ''}"
         )
 
         # Кэшируем для следующих вызовов
         self._cached_of = order_flows
         self._cached_ob = order_blocks
 
-        return {'score': int(score), 'detail': detail, 'signal': signal, 'state': state}
+        return {'score': int(score), 'detail': detail, 'signal': signal, 'state': state,
+                'poc_trend': poc_trend_str}
 
     # ──────────────────────────────────────────────────────────────────────────
     # ORDER FLOW — ДЕТЕКЦИЯ ИМПУЛЬСОВ
