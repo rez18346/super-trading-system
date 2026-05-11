@@ -630,12 +630,31 @@ class IndustrialTrader:
                 mtf_candles_4h = {}
                 btc_price = None
                 
+                btc_5m_candles = None
+                btc_1h_candles = None
+                
                 try:
                     from data_cache import get_fetcher, get_price
                     fetcher = get_fetcher()
                     if fetcher:
                         # BTC цена из кеша (или API с троттлингом 3с)
                         btc_price = fetcher.get_ticker('BTC/USDT')
+                        
+                        # BTC свечи для Regime Tracker
+                        raw_btc_5m = fetcher.get_ohlcv('BTC/USDT', '5m', 50)
+                        raw_btc_1h = fetcher.get_ohlcv('BTC/USDT', '1h', 48)
+                        if raw_btc_5m:
+                            import pandas as pd
+                            btc_5m_candles = pd.DataFrame(
+                                [[c[1],c[2],c[3],c[4],c[5]] for c in raw_btc_5m],
+                                columns=['open','high','low','close','volume']
+                            )
+                        if raw_btc_1h:
+                            import pandas as pd
+                            btc_1h_candles = pd.DataFrame(
+                                [[c[1],c[2],c[3],c[4],c[5]] for c in raw_btc_1h],
+                                columns=['open','high','low','close','volume']
+                            )
                         
                         # Загружаем 1H/4H для каждой пары — через кеш (60с троттлинг)
                         for sym in symbols:
@@ -669,6 +688,19 @@ class IndustrialTrader:
                 if btc_price is not None:
                     de.set_multi_tf_data(btc_price=btc_price)
                     de.update_btc_reference(btc_price)
+                
+                # BTC Regime Tracker: загружаем/обновляем фазу BTC
+                if not hasattr(self, '_btc_regime'):
+                    from btc_regime_tracker import BTCRegimeTracker
+                    self._btc_regime = BTCRegimeTracker()
+                if btc_5m_candles is not None and btc_1h_candles is not None:
+                    try:
+                        regime_result = self._btc_regime.update(btc_5m_candles, btc_1h_candles)
+                        logger.info(f"🧠 BTC Regime: {regime_result['regime']} → rec={regime_result['recommendation']} ({regime_result['message']})")
+                        if not self._btc_regime.is_buy_allowed():
+                            logger.info(f"⏳ BTC Regime: BUY заблокирован — {regime_result['regime']}. Пропускаем входы.")
+                    except Exception as e:
+                        logger.warning(f"⚠️ BTC Regime Tracker: {e}")
                 
                 # BTC Direction Predictor: загружаем/обновляем прогноз каждую итерацию
                 if hasattr(de, '_btc_predictor'):
@@ -714,6 +746,13 @@ class IndustrialTrader:
                     
                     # ─── ТОРГОВАЯ ЛОГИКА ──────────────────────────────────────
                     
+                    # 🛡️ BTC Regime Check: блокируем вход если BTC в pump/dump/distribution
+                    if symbol not in self.positions:
+                        if hasattr(self, '_btc_regime') and not self._btc_regime.is_buy_allowed():
+                            regime_name = self._btc_regime.get_regime()
+                            logger.info(f"⏳ [DE→HOLD] {symbol}: BTC Regime {regime_name} — BUY заблокирован")
+                            continue
+                    
                     # ⚡ DecisionEngine: ЕДИНСТВЕННЫЙ источник решений о входе
                     # DE оценивает рынок ML-ансамблем. Если одобрил — входим.
                     if symbol not in self.positions:
@@ -743,7 +782,7 @@ class IndustrialTrader:
                                     logger.info(f"⚠️ [DE] {symbol}: лимит {len(self.positions)}/{max_positions}")
                                     continue
                                 
-                                logger.info(f"⚡ [DE→BUY] {symbol}: score={score:.0f}/100 size={size_mult:.2f} | ${de_price:.4f}")
+                                logger.info(f"⚡ [DE→BUY] {symbol}: score={score:.0f}/100 size={size_mult:.2f} | ${de_price:.4f} | {decision.reason}")
                                 # Размер позиции = стандартный * size_mult от DE, с учётом Score
                                 base_qty = self.calculate_position_size(symbol, de_price, score)
                                 quantity = base_qty * size_mult
@@ -851,6 +890,10 @@ class IndustrialTrader:
                                 logger.warning(f"⚠️ {symbol}: free={free_asset:.6f} < qty={quantity:.6f}. Использую free.")
                             
                             result = self.execute_trade(symbol, 'sell', safe_qty, current_price)
+
+                            # 🚫 Кулдаун re-entry: запомнить время выхода
+                            if result is not None:
+                                de.record_exit(symbol, sell_reason)
                             
                             # 🧠 ML: обучаем на результате сделки
                             if result is not None and symbol in self.positions:

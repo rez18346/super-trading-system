@@ -1,0 +1,347 @@
+#!/usr/bin/env python3
+"""
+BTC Regime Tracker — модуль определения фазы движения BTC в реальном времени.
+
+Анализирует 5M и 1H свечи BTC, определяет фазу рынка (pump, dump, accumulation,
+distribution, recovery) и выдаёт рекомендации: когда входить, когда сидеть,
+а когда принудительно фиксировать прибыль.
+
+Зависимости: numpy, pandas (уже установлены).
+"""
+
+import logging
+import time
+from typing import Optional
+
+import numpy as np
+import pandas as pd
+
+logger = logging.getLogger(__name__)
+
+# ──────────────────────────────────────────────
+# Пороговые константы
+# ──────────────────────────────────────────────
+PUMP_THRESHOLD = 1.5       # % роста за 30 мин → pump
+DUMP_THRESHOLD = -1.5      # % падения за 30 мин → dump
+VOLUME_SIGMA = 2.0         # количество сигм для аномального объёма
+DEFAULT_COOLDOWN = 7200    # кулдаун после dump (сек) — по умолч. 2ч
+DISTRIBUTION_MIN_BARS = 4  # минимум баров 5M для распознавания distribution
+
+
+class BTCRegimeTracker:
+    """Определяет фазу движения BTC на основе свечных данных."""
+
+    def __init__(self, reentry_cooldown_seconds: int = DEFAULT_COOLDOWN):
+        """
+        Args:
+            reentry_cooldown_seconds:  время в секундах, в течение которого
+                                       после dump запрещены покупки.
+        """
+        self._cooldown_seconds = reentry_cooldown_seconds
+        self._cooldown_until: float = 0.0
+        self._regime: str = "unknown"
+        self._last_result: dict = {}
+
+    # ── публичный API ────────────────────────
+
+    def update(self,
+               btc_5m_candles: pd.DataFrame,
+               btc_1h_candles: pd.DataFrame) -> dict:
+        """
+        Анализирует свечи BTC и возвращает словарь с фазой, изменениями,
+        рекомендацией и человекочитаемым сообщением.
+
+        Args:
+            btc_5m_candles:  DataFrame с колонками ['open','high','low','close','volume']
+                             в хронологическом порядке (первая строка — самая старая).
+            btc_1h_candles:  то же самое для часовых свечей.
+
+        Returns:
+            dict с полями:
+                regime, btc_change_30m, btc_change_1h, btc_change_4h,
+                avg_volume_30m, recommendation, cooldown_until, message
+        """
+        self._validate_input(btc_5m_candles, btc_1h_candles)
+
+        # 1. Считаем изменения цены за разные окна
+        change_30m = self._price_change_percent(btc_5m_candles, 6)    # 6 × 5M = 30 мин
+        change_1h  = self._price_change_percent(btc_1h_candles, 1)    # 1 час
+        change_4h  = self._price_change_percent(btc_1h_candles, 4)    # 4 часа
+
+        # 2. Объёмный анализ (на 5M свечах)
+        avg_vol_30m, vol_zscore = self._volume_analysis(btc_5m_candles, window=6)
+
+        # 3. Определяем фазу
+        regime = self._classify_regime(
+            change_30m, change_1h, change_4h,
+            vol_zscore, btc_5m_candles
+        )
+        self._regime = regime
+
+        # 4. Рекомендация
+        recommendation = self._get_recommendation(regime)
+
+        # 5. Управляем кулдауном
+        if regime == "dump":
+            new_cd = time.time() + self._cooldown_seconds
+            if new_cd > self._cooldown_until:
+                self._cooldown_until = new_cd
+                logger.info("Установлен кулдаун на BUY до %.1f", self._cooldown_until)
+
+        self._last_result = {
+            "regime":          regime,
+            "btc_change_30m":  round(change_30m, 2),
+            "btc_change_1h":   round(change_1h, 2),
+            "btc_change_4h":   round(change_4h, 2),
+            "avg_volume_30m":  round(avg_vol_30m, 2),
+            "recommendation":  recommendation,
+            "cooldown_until":  self._cooldown_until,
+            "message":         self._build_message(regime, change_30m, recommendation),
+        }
+
+        logger.info("Regime=%s, 30m=%.2f%%, rec=%s", regime, change_30m, recommendation)
+        return self._last_result
+
+    def is_buy_allowed(self) -> bool:
+        """Можно ли сейчас покупать? Проверяет кулдаун и фазу."""
+        if time.time() < self._cooldown_until:
+            return False
+        if self._regime in ("pump", "distribution"):
+            return False
+        if self._regime == "dump":
+            return False
+        return True
+
+    def get_regime(self) -> str:
+        """Возвращает текущую фазу."""
+        return self._regime
+
+    # ── внутренние методы ────────────────────
+
+    @staticmethod
+    def _validate_input(df_5m: pd.DataFrame, df_1h: pd.DataFrame) -> None:
+        """Проверяет, что в DataFrame есть необходимые колонки и данные."""
+        required = {"open", "high", "low", "close", "volume"}
+        for name, df in [("5m", df_5m), ("1h", df_1h)]:
+            if df.empty:
+                raise ValueError(f"DataFrame {name} пуст")
+            missing = required - set(df.columns)
+            if missing:
+                raise ValueError(f"В {name} свечах не хватает колонок: {missing}")
+
+    @staticmethod
+    def _price_change_percent(df: pd.DataFrame, bars: int) -> float:
+        """
+        Возвращает % изменения цены close за последние `bars` свечей.
+        Если данных меньше, чем `bars`, считает по доступным.
+        """
+        closes = df["close"].values
+        if len(closes) < 2:
+            return 0.0
+        n = min(bars, len(closes) - 1)
+        start_price = closes[-(n + 1)]
+        end_price = closes[-1]
+        if start_price == 0:
+            return 0.0
+        return (end_price - start_price) / start_price * 100.0
+
+    @staticmethod
+    def _volume_analysis(df_5m: pd.DataFrame, window: int = 6):
+        """
+        Анализирует объём на `window` последних свечах 5M.
+        Возвращает (avg_volume, zscore) относительно предшествующей истории.
+        """
+        volumes = df_5m["volume"].values
+        if len(volumes) < window + 5:
+            return float(np.mean(volumes[-window:])), 0.0
+
+        recent = volumes[-window:]                     # последние window свечей
+        history = volumes[:-(window + 1)]              # всё до них (но не пересекаем)
+
+        avg_recent = float(np.mean(recent))
+        if len(history) < 5:
+            return avg_recent, 0.0
+
+        hist_mean = float(np.mean(history))
+        hist_std  = float(np.std(history, ddof=1))
+        if hist_std < 1e-9:
+            return avg_recent, 0.0
+
+        zscore = (avg_recent - hist_mean) / hist_std
+        return avg_recent, zscore
+
+    def _classify_regime(self,
+                         change_30m: float,
+                         change_1h: float,
+                         change_4h: float,
+                         vol_zscore: float,
+                         df_5m: pd.DataFrame) -> str:
+        """
+        Классифицирует фазу рынка.
+
+        Приоритет:
+            1. Pump / Dump  (резкое движение)
+            2. Recovery     (отскок после dump — умеренный рост на фоне глубокого падения)
+            3. Distribution (консолидация после pump)
+            4. Accumulation (боковик, низкая волатильность)
+        """
+        # ── Recovery — отскок после dump (проверяем ПЕРЕД pump/dump,
+        #     чтобы поймать умеренное восстановление) ──
+        # Условия: 30м умеренно положительный (0.2–1.2%), 1ч и 4ч всё ещё
+        # глубоко отрицательные, и не было свежего pump.
+        if (0.2 <= change_30m <= 1.2
+                and change_1h < -0.8
+                and change_4h < -0.5
+                and not self._is_prior_pump(df_5m, lookback=6)):
+            logger.debug("Recovery detected: 30m=%.2f%%, 1h=%.2f%%", change_30m, change_1h)
+            return "recovery"
+
+        # ── Pump ──
+        if change_30m >= PUMP_THRESHOLD:
+            logger.debug("Pump detected: 30m=%.2f%%, vol_z=%.2f", change_30m, vol_zscore)
+            return "pump"
+
+        # ── Dump ──
+        if change_30m <= DUMP_THRESHOLD:
+            logger.debug("Dump detected: 30m=%.2f%%, vol_z=%.2f", change_30m, vol_zscore)
+            return "dump"
+
+        # ── Distribution — консолидация после pump ──
+        # Умеренные изменения, но был предшествующий существенный рост
+        if self._is_prior_pump(df_5m, lookback=12):
+            # Если сейчас изменений почти нет — distribution
+            if abs(change_30m) < PUMP_THRESHOLD * 0.5:
+                logger.debug("Distribution detected (prior pump, now flat)")
+                return "distribution"
+
+        # ── Accumulation — боковик ──
+        if abs(change_30m) < PUMP_THRESHOLD * 0.5:
+            return "accumulation"
+
+        # fallback
+        return "accumulation"
+
+    @staticmethod
+    def _is_prior_pump(df_5m: pd.DataFrame, lookback: int = 12) -> bool:
+        """
+        Проверяет, был ли pump в окне, предшествующем последним 6 свечам 5M.
+        Использует скользящий максимум: если в окне была пара точек (i, j),
+        где i < j и рост close[j]/close[i] - 1 >= PUMP_THRESHOLD, то pump был.
+        """
+        if len(df_5m) < lookback + 6:
+            return False
+        # окно: от -lookback-6 до -7 (исключаем последние 6 свечей)
+        start = max(0, -(lookback + 6))
+        end   = -6
+        closes = df_5m["close"].values[start:end]
+        if len(closes) < 5:
+            return False
+        # Сканируем все пары i<j в окне
+        for i in range(len(closes)):
+            for j in range(i + 1, len(closes)):
+                pct = (closes[j] - closes[i]) / closes[i] * 100.0
+                if pct >= PUMP_THRESHOLD:
+                    return True
+        return False
+
+    def _get_recommendation(self, regime: str) -> str:
+        """Маппинг фазы → рекомендация."""
+        mapping = {
+            "pump":          "sell_only",
+            "dump":          "no_trade",
+            "accumulation":  "buy_allowed",
+            "distribution":  "sell_only",
+            "recovery":      "buy_priority",
+        }
+        return mapping.get(regime, "buy_allowed")
+
+    @staticmethod
+    def _build_message(regime: str, change_30m: float,
+                       recommendation: str) -> str:
+        """Формирует человекочитаемое описание."""
+        msgs = {
+            "pump": (
+                f"🚀 PUMP: BTC вырос на {change_30m:.2f}% за 30 мин. "
+                "Продажи разрешены, покупки заблокированы. "
+                "Принудительный take-profit."
+            ),
+            "dump": (
+                f"📉 DUMP: BTC упал на {abs(change_30m):.2f}% за 30 мин. "
+                "Торговля остановлена, ждём дна."
+            ),
+            "accumulation": (
+                f"➡️ Аккумуляция: BTC в боковике ({change_30m:+.2f}% за 30 мин). "
+                "Торговля по стандартной стратегии."
+            ),
+            "distribution": (
+                "📊 Дистрибьюция: консолидация после pump. "
+                "Только продажи, готовимся к dump."
+            ),
+            "recovery": (
+                f"🔄 Recovery: отскок {change_30m:+.2f}% за 30 мин. "
+                "Покупки с повышенным приоритетом."
+            ),
+        }
+        return msgs.get(regime, f"Фаза: {regime}, изменение: {change_30m:+.2f}%")
+
+
+# ══════════════════════════════════════════════
+# Демо / самопроверка (python btc_regime_tracker.py)
+# ══════════════════════════════════════════════
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    np.random.seed(42)
+
+    # Генерируем синтетические свечи для демонстрации
+    n_5m = 200
+    n_1h = 48
+
+    base_price = 65_000.0
+
+    # Сначала медленный рост, потом pump, потом коррекция
+    prices_5m = []
+    p = base_price
+    for i in range(n_5m):
+        if 40 <= i < 60:
+            p *= 1 + np.random.normal(0.0015, 0.002)   # pump-зона
+        elif 60 <= i < 80:
+            p *= 1 + np.random.normal(-0.001, 0.002)    # коррекция
+        else:
+            p *= 1 + np.random.normal(0.0002, 0.001)    # боковик
+        prices_5m.append(max(p, 1.0))
+
+    prices_1h = []
+    p = base_price
+    for i in range(n_1h):
+        p *= 1 + np.random.normal(0.0005, 0.003)
+        prices_1h.append(max(p, 1.0))
+
+    df_5m = pd.DataFrame({
+        "open":   prices_5m,
+        "high":   [v * 1.002 for v in prices_5m],
+        "low":    [v * 0.998 for v in prices_5m],
+        "close":  prices_5m,
+        "volume": np.random.exponential(1000, n_5m).tolist(),
+    })
+
+    df_1h = pd.DataFrame({
+        "open":   prices_1h,
+        "high":   [v * 1.005 for v in prices_1h],
+        "low":    [v * 0.995 for v in prices_1h],
+        "close":  prices_1h,
+        "volume": np.random.exponential(10_000, n_1h).tolist(),
+    })
+
+    tracker = BTCRegimeTracker()
+    result = tracker.update(df_5m, df_1h)
+
+    print("\n=== BTC Regime Tracker ===")
+    for k, v in result.items():
+        print(f"  {k:25s} = {v}")
+    print(f"\n  buy_allowed: {tracker.is_buy_allowed()}")
+    print(f"  get_regime:  {tracker.get_regime()}")

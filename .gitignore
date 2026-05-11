@@ -1,56 +1,36 @@
-# ==========================================
-# 🔒 Безопасность — НЕ КОММИТИТЬ
-# ==========================================
-config.py                    # API-ключи и приватные настройки
-*.key
-*.pem
-*.env
-.env.*
+# Backups
+*.backup
+*.backup.*
+backups/
+
+# WIP / temp
+*.wip
+*.zip
+*.tar.gz
+
+# Reference code (external repos)
+reference_*/
+deepalpha.zip
+
+# Data caches
+data/*.json
+data/*.csv
+data/*.npy
+data/*.db-shm
+data/*.db-wal
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
 .venv/
 
-# ==========================================
-# 🗄️ Данные трейдера
-# ==========================================
-data/                        # SQLite БД, PID-файлы, кеш
-*.db
-*.db-journal
-*.pid
-*.bak
-*.log
-logs/
-!*.example.py                # кроме example-файлов
-
-# ==========================================
-# 🐍 Python
-# ==========================================
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-.venv
-*.egg-info/
-dist/
-build/
-*.egg
-
-# ==========================================
-# 🛠️ Редакторы / ОС
-# ==========================================
+# IDE
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
 
-# ==========================================
-# 📦 ML модели (тяжёлые, генерируются на лету)
-# ==========================================
-models/
-*.model
-*.pkl
-*.joblib
+# System
+*.pid
+nohup.out
