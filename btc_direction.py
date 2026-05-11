@@ -51,8 +51,8 @@ SCALER_PATH = os.path.join(os.path.dirname(__file__), 'data', 'btc_scaler.pkl')
 FEATURES_PATH = os.path.join(os.path.dirname(__file__), 'data', 'btc_features.json')
 
 # Параметры для классификации направления
-UP_THRESHOLD = 0.005    # +0.5% за TARGET_HOURS_AHEAD = UP
-DOWN_THRESHOLD = -0.005 # -0.5% = DOWN
+UP_THRESHOLD = 0.010     # +1.0% за TARGET_HOURS_AHEAD = UP (было 0.5% — много шума, 1.5% — мало примеров)
+DOWN_THRESHOLD = -0.005  # -0.5% = DOWN (оставляем старый — падения важнее не пропустить)
 SIDE_ZONE = 0.003      # ±0.3% вокруг нуля = SIDE
 
 
@@ -73,7 +73,7 @@ class BTCDirectionPredictor:
         self.model = None
         self.scaler = StandardScaler()
         self.feature_cols = None
-        self.last_train_time = 0
+        self.last_train_time = time.time()  # Считаем что загруженная модель уже обучена
         self.retrain_interval = 86400  # Раз в сутки
         self.training_in_progress = False
         
@@ -333,15 +333,21 @@ class BTCDirectionPredictor:
             
             # ─── XGBoost ═════════════════════
             xgb = XGBClassifier(
-                n_estimators=200,
+                n_estimators=400,
                 max_depth=6,
                 learning_rate=0.05,
                 subsample=0.8,
                 colsample_bytree=0.8,
-                scale_pos_weight=None,
+                scale_pos_weight=2.0,
                 random_state=42,
                 verbosity=0
             )
+            
+            # ─── Веса классов для повышения чувствительности к UP/DOWN ═══
+            class_weights = {0: 2.0, 1: 1.0, 2: 2.5}  # DOWN=2x, SIDE=1x, UP=2.5x
+            sample_weight_arr = np.ones(len(X_train_scaled))
+            for cls, w in class_weights.items():
+                sample_weight_arr[y_train == cls] = w
             
             # ─── Ансамбль ════════════════════
             ensemble = VotingClassifier(
@@ -350,7 +356,7 @@ class BTCDirectionPredictor:
             )
             
             # Обучение
-            ensemble.fit(X_train_scaled, y_train)
+            ensemble.fit(X_train_scaled, y_train, sample_weight=sample_weight_arr)
             
             # Оценка на тесте
             y_pred = ensemble.predict(X_test_scaled)

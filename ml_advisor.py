@@ -27,6 +27,7 @@ import xgboost as xgb
 logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TRAINING_DATA_PATH = os.path.join(BASE_DIR, "data/training_data.json")
 MODEL_PATH = os.path.join(BASE_DIR, "data/ml_advisor.pkl")
 SCALER_PATH = os.path.join(BASE_DIR, "data/ml_scaler.pkl")
 CONFIG_PATH = os.path.join(BASE_DIR, "config/api_config_final.json")
@@ -105,6 +106,7 @@ class MLAdvisor:
 
         # Пытаемся загрузить обученную модель
         self._load_model()
+        self._load_training_data()  # Загружаем накопленные примеры
 
         # Загружаем конфиг для пар
         try:
@@ -115,6 +117,27 @@ class MLAdvisor:
             self.pairs = []
 
         logger.info(f"🧠 ML-Советник v2 (XGBoost) инициализирован (модель: {'готова' if self.is_trained else 'ожидает обучения'})")
+
+    def _load_training_data(self):
+        """Загрузить накопленные данные из JSON"""
+        if os.path.exists(TRAINING_DATA_PATH):
+            try:
+                with open(TRAINING_DATA_PATH, 'r') as f:
+                    raw = json.load(f)
+                self.training_data = raw
+                logger.info(f"📦 Загружено {len(raw)} записей обучения")
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось загрузить training_data: {e}")
+                self.training_data = []
+
+    def _save_training_data(self):
+        """Сохранить накопленные данные в JSON"""
+        try:
+            os.makedirs(os.path.dirname(TRAINING_DATA_PATH), exist_ok=True)
+            with open(TRAINING_DATA_PATH, 'w') as f:
+                json.dump(self.training_data, f, default=str)
+        except Exception as e:
+            logger.warning(f"⚠️ Не удалось сохранить training_data: {e}")
 
     def _load_model(self):
         """Загрузка сохранённой модели"""
@@ -310,6 +333,7 @@ class MLAdvisor:
             'reason': reason,
             'time': datetime.now().isoformat()
         })
+        self._save_training_data()
 
         logger.info(f"📚 ML: обучение на {symbol} (PnL={pnl_pct:+.2f}%, label={int(label)})")
 

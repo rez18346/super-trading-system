@@ -38,6 +38,7 @@ class IndustrialTrader:
         self.setup_exchange()
         self.running = False
         self.positions = {}
+        self._lock = threading.RLock()
         self.trades_history = []
         self.capital = self.config['trading']['capital']
         self.available_capital = self.capital
@@ -319,7 +320,8 @@ class IndustrialTrader:
         risk_config = self.config['risk_management']
         
         # Проверка максимальной дневной потери
-        if self.daily_pnl <= -risk_config['max_daily_loss_percent']:
+        max_loss_abs = (risk_config['max_daily_loss_percent'] / 100.0) * self.capital
+        if self.daily_pnl <= -max_loss_abs:
             logger.warning(f"Достигнут лимит дневных потерь: {self.daily_pnl}%")
             return False
         
@@ -396,18 +398,19 @@ class IndustrialTrader:
                         'entry_time': timestamp,
                         'side': 'long',
                         # SL/TP уровни от DecisionEngine (заполнит caller)
-                        '_sl_price': sl_price if 'sl_price' in dir() else None,
-                        '_tp_price': tp_price if 'tp_price' in dir() else None,
-                        '_trail_act': trail_act if 'trail_act' in dir() else None,
-                        '_trail_dist': trail_dist if 'trail_dist' in dir() else None,
-                        '_max_hold_h': max_hold_h if 'max_hold_h' in dir() else None,
+                        '_sl_price': sl_price if sl_price is not None else None,
+                        '_tp_price': tp_price if tp_price is not None else None,
+                        '_trail_act': trail_act if trail_act is not None else None,
+                        '_trail_dist': trail_dist if trail_dist is not None else None,
+                        '_max_hold_h': max_hold_h if max_hold_h is not None else None,
                     }
                     self.available_capital -= quantity * price
                     db.add_trade(symbol, 'buy', price, quantity, timestamp=timestamp)
                 elif side == 'sell' and symbol in self.positions:
-                    position = self.positions.pop(symbol)
+                    with self._lock:
+                        position = self.positions.pop(symbol)
                     pnl = (price - position['entry_price']) * quantity
-                    self.available_capital += quantity * price + pnl
+                    self.available_capital += quantity * price
                     self.daily_pnl += pnl
                     self.daily_trades += 1
                     
@@ -506,20 +509,20 @@ class IndustrialTrader:
                     # Добавляем новую позицию
                     # Используем order_price (цена BUY ордера), а не WA из БД
                     # Баг: DB.calculate_weighted_entry хранит старые цены, искажая PnL
-                    real_entry = order_price  # берём цену, по которой реально исполнился BUY
-                    if symbol not in self.positions:
-                        self.positions[symbol] = {
-                            'quantity': actual_qty,
-                            'entry_price': real_entry,
-                            'entry_time': datetime.now().isoformat(),
-                            'max_profit': 0.0
-                        }
-                        logger.info(f"📥 Добавлена новая позиция: {symbol} - {actual_qty:.6f} @ ${real_entry:.4f}")
-                    else:
-                        self.positions[symbol]['quantity'] = actual_qty
-                        self.positions[symbol]['entry_price'] = real_entry
-                        self.positions[symbol]['entry_time'] = datetime.now().isoformat()
-                        logger.info(f"📊 Обновлена позиция {symbol}: {actual_qty:.6f} @ ${real_entry:.4f}")
+                    with self._lock:
+                        real_entry = order_price
+                        if symbol not in self.positions:
+                            self.positions[symbol] = {
+                                'quantity': actual_qty,
+                                'entry_price': real_entry,
+                                'entry_time': datetime.now().isoformat(),
+                                'max_profit': 0.0
+                            }
+                        else:
+                            self.positions[symbol]['quantity'] = actual_qty
+                            self.positions[symbol]['entry_price'] = real_entry
+                            self.positions[symbol]['entry_time'] = datetime.now().isoformat()
+                    logger.info(f"📥 Обновлена позиция: {symbol} - {actual_qty:.6f} @ ${real_entry:.4f}")
                 elif side == 'sell':
                     # Запись sell в trade_history
                     pnl = 0
@@ -545,7 +548,7 @@ class IndustrialTrader:
                     
                     # Удаляем позицию после продажи
                     if symbol in self.positions:
-                        del self.positions[symbol]
+                        self.positions.pop(symbol, None)
                         db.remove_position(symbol)
                         pnl_str = f", PnL=${pnl:.2f} ({pnl_pct:+.2f}%)" if pnl != 0 else ""
                         logger.info(f"📤 Позиция {symbol} продана{pnl_str}")
@@ -559,20 +562,22 @@ class IndustrialTrader:
             return None
     
     def clean_stale_orders(self):
-        """Отменяет лимитные ордера, висящие дольше таймаута (sell 300c, buy 60c)."""
+        """Отменяет лимитные ордера, висящие дольше таймаута (настраивается в конфиге)."""
         try:
+            stale_cfg = self.config.get('clean_stale_orders', {})
+            sell_timeout = stale_cfg.get('sell_timeout', 300)
+            buy_timeout = stale_cfg.get('buy_timeout', 180)
             orders = self.exchange.fetchOpenOrders()
             if orders:
                 now = time.time()
                 for o in orders:
                     age = now - (o['timestamp'] / 1000)
-                    # Sell-ордера: живут дольше (5 мин), чтобы не отменять трейлинг/TP
                     if o['side'] == 'sell':
-                        if age > 300:
+                        if age > sell_timeout:
                             self.exchange.cancelOrder(o['id'], o['symbol'])
                             logger.info(f"🧹 Отменён sell-ордер ({age:.0f}с): {o['symbol']} {o['amount']} @ ${o['price']}")
                     else:
-                        if age > 60:
+                        if age > buy_timeout:
                             self.exchange.cancelOrder(o['id'], o['symbol'])
                             logger.info(f"🧹 Отменён buy-ордер ({age:.0f}с): {o['symbol']} {o['amount']} @ ${o['price']}")
         except Exception as e:
@@ -605,21 +610,22 @@ class IndustrialTrader:
                 # 🔄 СИНХРОНИЗАЦИЯ С БИРЖЕЙ: сверяем self.positions с реальным балансом
                 try:
                     balance = self.exchange.fetch_balance()
-                    for symbol in list(self.positions.keys()):
-                        currency = symbol.split('/')[0]
-                        real_qty = balance['total'].get(currency, 0)
-                        mem_qty = self.positions[symbol]['quantity']
-                        real_value = real_qty * (balance['free'].get(currency, 0) or 0)
-                        
-                        # Если на бирже нет актива — удаляем из памяти
-                        if real_qty < 0.000001:
-                            logger.warning(f"🔄 Синхронизация: {symbol} нет на бирже. Удаляю из кеша/БД.")
-                            del self.positions[symbol]
-                            db.remove_position(symbol)
-                        # Если актив есть, но сильно меньше закешированного — обновляем
-                        elif real_qty < mem_qty * 0.5:
-                            self.positions[symbol]['quantity'] = real_qty
-                            logger.info(f"🔄 Синхронизация: {symbol} скорректирован с {mem_qty:.4f} до {real_qty:.4f}")
+                    with self._lock:
+                        for symbol in list(self.positions.keys()):
+                            currency = symbol.split('/')[0]
+                            real_qty = balance['total'].get(currency, 0)
+                            mem_qty = self.positions[symbol]['quantity']
+                            real_value = real_qty * (balance['free'].get(currency, 0) or 0)
+                            
+                            # Если на бирже нет актива — удаляем из памяти
+                            if real_qty < 0.000001:
+                                logger.warning(f"🔄 Синхронизация: {symbol} нет на бирже. Удаляю из кеша/БД.")
+                                self.positions.pop(symbol, None)
+                                db.remove_position(symbol)
+                            # Если актив есть, но сильно меньше закешированного — обновляем
+                            elif real_qty < mem_qty * 0.5:
+                                self.positions[symbol]['quantity'] = real_qty
+                                logger.info(f"🔄 Синхронизация: {symbol} скорректирован с {mem_qty:.4f} до {real_qty:.4f}")
                 except Exception as e:
                     logger.warning(f"Ошибка синхронизации: {e}")
                 
@@ -680,9 +686,11 @@ class IndustrialTrader:
                     except:
                         pass
                 
-                # Инициализация DecisionEngine (синглтон)
-                from decision_engine import DecisionEngine
-                de = DecisionEngine()
+                # Инициализация DecisionEngine (синглтон — один на весь процесс)
+                if not hasattr(self, '_de'):
+                    from decision_engine import DecisionEngine
+                    self._de = DecisionEngine()
+                de = self._de
                 
                 # BTC-корреляция для DE
                 if btc_price is not None:
@@ -871,7 +879,7 @@ class IndustrialTrader:
                             if total_asset < 0.000001:
                                 logger.warning(f"⏭️ {symbol}: нет на бирже ({currency}=0). Удаляю из памяти.")
                                 if symbol in self.positions:
-                                    del self.positions[symbol]
+                                    self.positions.pop(symbol, None)
                                 db.remove_position(symbol)
                                 continue
                             
@@ -880,7 +888,7 @@ class IndustrialTrader:
                             if pos_value < MIN_POSITION_VALUE:
                                 logger.warning(f"⏭️ {symbol}: остаток ${pos_value:.2f} < ${MIN_POSITION_VALUE:.2f}. Чищу кеш без продажи.")
                                 if symbol in self.positions:
-                                    del self.positions[symbol]
+                                    self.positions.pop(symbol, None)
                                 db.remove_position(symbol)
                                 continue
                             
@@ -912,7 +920,7 @@ class IndustrialTrader:
                             # 🛡️ Если sell не удался — принудительно удаляем позицию
                             if result is None and symbol in self.positions:
                                 logger.warning(f"⚠️ Sell {symbol} не удался. Принудительно очищаю позицию из памяти.")
-                                del self.positions[symbol]
+                                self.positions.pop(symbol, None)
                                 db.remove_position(symbol)
                 
                 # Пауза между циклами

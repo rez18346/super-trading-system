@@ -645,12 +645,13 @@ class DecisionEngine:
         BASE_WEIGHTS = {
             'ml_v2': 0.20,
             'advisor': 0.10,
-            'mtf': 0.35,
+            'mtf': 0.20,   # было 0.35 — сумма была 1.15, теперь 1.0
             'rsi_vol_btc': 0.00,
             'liquidity': 0.25,
             'volume_vwap': 0.15,
-            'vsa': 0.10,  # НОВЫЙ: VSA (Volume Spread Analysis)
+            'vsa': 0.10,
         }
+        # Сумма весов = 1.0 (0.20+0.10+0.20+0.00+0.25+0.15+0.10)
 
         scores = {}
         for k, w in BASE_WEIGHTS.items():
@@ -966,6 +967,9 @@ class DecisionEngine:
         scores['_reversal_bonus'] = {'score': reversal_bonus, 'weight': 1.0}
         scores['_price_bonus'] = {'score': price_bonus, 'weight': 1.0}
         
+        # ═══ ИТОГОВЫЙ СКОР ═════════════════════════════════════════════════
+        final_score = sum(v['score'] * v['weight'] for v in scores.values())
+        
         # ═══ BTC DIRECTION PREDICTOR ═══════════════════════════════════════
         btc_bonus = 0
         try:
@@ -988,9 +992,6 @@ class DecisionEngine:
                 'threshold': threshold,
                 'votes': {},
             }
-        
-        # ═══ ИТОГОВЫЙ СКОР ═════════════════════════════════════════════════
-        final_score = sum(v['score'] * v['weight'] for v in scores.values())
         
         # Сколько модулей дают сильные сигналы (используем ядро голосов, без бонусов)
         core_votes = [scores['ml_v2'], scores['advisor'], scores['liquidity'],
@@ -1024,6 +1025,48 @@ class DecisionEngine:
             'volume_vwap': {'score': scores['volume_vwap']['score'], 'detail': scores['volume_vwap']['detail']},
             'vsa': {'score': scores['vsa']['score'], 'detail': scores['vsa']['detail']},
         }
+        
+        # ═══ СОХРАНЕНИЕ ИСТОРИИ ГОЛОСОВ ════════════════════════════════
+        try:
+            now = time.time()
+            # Не чаще раза в 3 секунды для той же монеты
+            if not hasattr(self, '_last_vote_ts'):
+                self._last_vote_ts = {}
+            last_ts = self._last_vote_ts.get(symbol, 0)
+            if now - last_ts < 3.0:
+                pass  # слишком часто — пропускаем запись на диск
+            else:
+                self._last_vote_ts[symbol] = now
+                vote_record = {
+                    'ts': datetime.now(timezone.utc).isoformat(),
+                    'symbol': symbol,
+                    'approved': final_score >= threshold,
+                    'final_score': round(final_score, 1),
+                    'threshold': threshold,
+                    'price': round(current_price, 6),
+                    'weights': {k: BASE_WEIGHTS.get(k, 0) for k in BASE_WEIGHTS},
+                    'bonus': {'price': round(price_bonus, 1), 'reversal': round(reversal_bonus, 1), 'btc': round(btc_bonus, 1)},
+                    'votes': votes,
+                    'strong_count': strong_votes,
+                }
+                vote_log_path = os.path.join(BASE_DIR, 'data', 'vote_history.json')
+                os.makedirs(os.path.dirname(vote_log_path), exist_ok=True)
+                history = []
+                if os.path.exists(vote_log_path):
+                    try:
+                        with open(vote_log_path, 'r') as f:
+                            history = json.load(f)
+                    except:
+                        history = []
+                history.append(vote_record)
+                # Держим последние 10000 записей
+                if len(history) > 10000:
+                    history = history[-10000:]
+                with open(vote_log_path, 'w') as f:
+                    json.dump(history, f, indent=2, default=str)
+        except Exception as e:
+            logger.debug(f"[DE] vote_history save error: {e}")
+        # ════════════════════════════════════════════════════════════════
         
         if final_score >= threshold:
             return {
