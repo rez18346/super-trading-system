@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from typing import Optional, AsyncGenerator
 from pathlib import Path
 
+import re
 import db
 import uvicorn
 from fastapi import FastAPI, Request
@@ -116,10 +117,24 @@ _snapshot_thread.start()
 # ─── ВСПОМОГАТЕЛЬНЫЕ ─────────────────────────────────────────────────────────
 
 def read_log_tail(n: int = 50) -> list:
+    """Читает последние N строк лога с конца файла."""
     try:
-        with open(SYSTEM_LOG_FILE, 'r') as f:
-            lines = f.readlines()
-        return lines[-n:]
+        with open(SYSTEM_LOG_FILE, 'rb') as f:
+            f.seek(0, 2)  # конец
+            fsize = f.tell()
+            chunk = min(fsize, 100 * 1024)  # читаем до 100KB с конца
+            f.seek(max(0, fsize - chunk))
+            # Отбрасываем первую неполную строку
+            data = f.read()
+            lines = data.decode('utf-8', errors='replace').splitlines()
+            if len(lines) > n:
+                return lines[-n:]
+            # Если не хватило — читаем больше
+            if chunk < fsize:
+                f.seek(0)
+                all_lines = f.read().decode('utf-8', errors='replace').splitlines()
+                return all_lines[-n:]
+            return lines
     except Exception:
         return ["Нет лог-файла"]
 
@@ -129,7 +144,7 @@ def read_log_since(timestamp: float) -> list:
         mtime = os.path.getmtime(SYSTEM_LOG_FILE)
         if mtime < timestamp:
             return []
-        with open(SYSTEM_LOG_FILE, 'r') as f:
+        with open(SYSTEM_LOG_FILE, 'r', errors='replace') as f:
             lines = f.readlines()
         result = []
         for line in reversed(lines):
@@ -164,7 +179,6 @@ def _parse_votes_from_log() -> dict:
     Читает весь лог с конца, собирает последнее состояние каждой пары.
     Возвращает {symbol: {...price, score, votes...}}
     """
-    import re
     # Список всех отслеживаемых пар
     ALL_SYMBOLS = ['BTC','ETH','SOL','XRP','ADA','AVAX','DOT','DOGE','LINK','LTC','BCH',
                    'ATOM','ALGO','EGLD','APT','ARB','ROSE','MNT','FIL','NEAR','OP','SAND']
@@ -173,13 +187,12 @@ def _parse_votes_from_log() -> dict:
     # Сколько строк прочитали — лимит на проход
     MAX_LINES = 20000
     try:
-        with open(SYSTEM_LOG_FILE, 'r') as f:
-            # Читаем с конца: taker либо tail, либо mmap
-            # Для большого лога читаем не более MAX_LINES с конца
+        with open(SYSTEM_LOG_FILE, 'r', errors='replace') as f:
+            # Читаем с конца
             f.seek(0, 2)  # в конец
             fsize = f.tell()
-            # читаем блок с конца
-            chunk_size = min(fsize, 512 * 1024)  # макс 512KB
+            # читаем большой блок с конца (1MB для захвата OB1 idm)
+            chunk_size = min(fsize, 1024 * 1024)  # макс 1MB
             f.seek(max(0, fsize - chunk_size))
             # если сдвинулись не на начало — пропускаем неполную строку
             if f.tell() > 0:
@@ -188,7 +201,7 @@ def _parse_votes_from_log() -> dict:
             # Если в блоке не всё — расширяем
             if len(lines) < MAX_LINES and fsize > chunk_size:
                 # Добираем ещё блок
-                chunk_size *= 2
+                chunk_size = min(fsize, 2 * 1024 * 1024)
                 f.seek(max(0, fsize - chunk_size))
                 if f.tell() > 0:
                     f.readline()
@@ -213,16 +226,20 @@ def _parse_votes_from_log() -> dict:
             # Ищем bonus/rev/btc в конце строки
             bonus_match = re.search(r'bonus=([-\d]+) rev=([-\d]+) btc=([-+]\d+)', line)
             # IDM / Order Block — ищем прямо в строке лога
-            idm_match = re.search(r'OB\d+\s+(bullish|bearish|idm)', line)
+            idm_match = re.search(r'OB\d+\s+(idm|ext)(?:\s+(bullish|bearish))?', line)
             idm_info = ''
             if idm_match:
-                ob_type = idm_match.group(2)
+                ob_type = idm_match.group(1)
                 if ob_type == 'idm':
-                    idm_info = 'IDM'
-                elif ob_type == 'bullish':
-                    idm_info = 'OB↑'
-                elif ob_type == 'bearish':
-                    idm_info = 'OB↓'
+                    direction = idm_match.group(2)
+                    if direction == 'bullish':
+                        idm_info = 'IDM↑'
+                    elif direction == 'bearish':
+                        idm_info = 'IDM↓'
+                    else:
+                        idm_info = 'IDM'
+                elif ob_type == 'ext':
+                    idm_info = 'EXT'
             result[sym] = {
                 'score': int(m.group(3)),
                 'signal': m.group(1),
@@ -242,7 +259,7 @@ def _parse_votes_from_log() -> dict:
         vm = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*VETO: (.+)', line)
         if vm:
             sym = vm.group(2)
-            if sym not in result or result[sym].get('score') == 0 or 'veto' not in result[sym]:
+            if sym not in result:
                 result[sym] = {
                     'score': 0,
                     'signal': vm.group(1),
@@ -314,6 +331,37 @@ def get_status_snapshot() -> dict:
                 'votes': v
             }
 
+    # BTC Regime: парсим из лога последнее сообщение
+    btc_regime = {}
+    try:
+        log_lines = read_log_tail(2000)
+        for line in reversed(log_lines):
+            # Формат: BTC Regime: ... → rec=... (из industrial_trader)
+            # Формат: Regime=..., rec=... (из btc_regime_tracker)
+            # Формат: "BTC Regime <regime> — ..." (из HOLD сообщений)
+            rm = re.search(r'(?:BTC )?Regime\s*(?:[:=]|\s+)(\w+)', line)
+            if rm:
+                regime_name = rm.group(1).lower()
+                # Нормализуем названия
+                rec_map = {
+                    'pump': 'sell_only',
+                    'dump': 'no_trade',
+                    'distribution': 'sell_only',
+                    'accumulation': 'buy_allowed',
+                    'recovery': 'buy_priority',
+                    'unknown': 'buy_allowed',
+                }
+                # Попробуем найти rec= в той же строке
+                rec_match = re.search(r'rec=(\w+)', line)
+                recommendation = rec_match.group(1) if rec_match else rec_map.get(regime_name, 'buy_allowed')
+                btc_regime = {
+                    'regime': regime_name,
+                    'recommendation': recommendation,
+                }
+                break
+    except Exception:
+        pass
+    
     return {
         'running': running,
         'pid': pid,
@@ -322,6 +370,7 @@ def get_status_snapshot() -> dict:
         'pnl': pnl,
         'balance': balance_info,
         'trades': trades_history,
+        'btc_regime': btc_regime,
         'log_tail': read_log_tail(5),
     }
 
@@ -457,6 +506,7 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
   <div class="status-card"><h3>Позиции</h3><div class="value" id="stPositions">0/5</div></div>
   <div class="status-card"><h3>Капитал</h3><div class="value" id="stCapital">$0</div></div>
   <div class="status-card"><h3>Сделок</h3><div class="value" id="stTrades">0</div></div>
+  <div class="status-card"><h3>BTC</h3><div class="value" id="stBtcRegime">загрузка...</div></div>
 </div>
 
 <div class="section" style="grid-column:1/-1">
@@ -616,6 +666,9 @@ function updBar(d){
   document.getElementById('stPositions').textContent=Object.keys(d.positions||{}).length+'/5';
   document.getElementById('stCapital').innerHTML=(d.balance?fmtP(d.balance.in_positions+270):'$0')+' <span style="font-size:12px;color:#8b949e">(всего)</span>';
   document.getElementById('stTrades').textContent=d.pnl?.total_trades||0;
+  const btcR=d.btc_regime||{regime:'—',recommendation:''};
+  const regimeEl=document.getElementById('stBtcRegime');
+  if(regimeEl){regimeEl.textContent=btcR.regime+' / '+btcR.recommendation;regimeEl.className='value '+(btcR.recommendation==='buy_allowed'||btcR.recommendation==='buy_priority'?'green':'red');}
   document.getElementById('subtitle').textContent='PID: '+(d.pid||'—')+' | обновлено '+new Date().toLocaleTimeString();
   updPos(d.positions||{});
   if(d.trades) updTrades(d.trades);
@@ -633,6 +686,23 @@ es.onmessage=function(e){try{const m=JSON.parse(e.data);if(m.type==='status'&&m.
 fetch('/api/status').then(r=>r.json()).then(d=>{updBar(d)});
 </script>
 </body></html>""")
+
+
+@app.get("/api/vote-history")
+async def api_vote_history(symbol: str = "", limit: int = 50):
+    """История голосов DE."""
+    vote_path = os.path.join(BASE_DIR, "data", "vote_history.json")
+    if not os.path.exists(vote_path):
+        return {"entries": [], "total": 0}
+    try:
+        with open(vote_path, "r") as f:
+            history = json.load(f)
+        if symbol:
+            history = [e for e in history if e.get("symbol", "").startswith(symbol.upper())]
+        history = history[-limit:]
+        return {"entries": list(reversed(history)), "total": len(history)}
+    except Exception as e:
+        return {"error": str(e), "entries": [], "total": 0}
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8765):
