@@ -362,6 +362,42 @@ def get_status_snapshot() -> dict:
     except Exception:
         pass
     
+    # BTC Direction: парсим направление от ML-предиктора
+    btc_direction = {}
+    try:
+        log_lines = read_log_tail(1000)
+        for line in reversed(log_lines):
+            # 🔮 BTC Direction: side (conf=50%, strength=50, up=33% down=33%)
+            dm = re.search(r'BTC Direction: (\w+) \(conf=(\d+)%, strength=(\d+), up=(\d+)% down=(\d+)%\)', line)
+            if dm:
+                btc_direction = {
+                    'direction': dm.group(1),
+                    'confidence': int(dm.group(2)),
+                    'strength': int(dm.group(3)),
+                    'up_probability': int(dm.group(4)),
+                    'down_probability': int(dm.group(5)),
+                }
+                break
+    except Exception:
+        pass
+    
+    # BTC цена/RSI из последнего анализа
+    btc_analysis = {}
+    try:
+        log_lines = read_log_tail(1000)
+        for line in reversed(log_lines):
+            am = re.search(r'BTC/USDT: Цена=\$([\d.]+), Тренд=(\w+), Уверенность=([\d.]+)%, RSI=([\d.]+)', line)
+            if am:
+                btc_analysis = {
+                    'price': float(am.group(1)),
+                    'trend': am.group(2),
+                    'confidence': float(am.group(3)),
+                    'rsi': float(am.group(4)),
+                }
+                break
+    except Exception:
+        pass
+    
     return {
         'running': running,
         'pid': pid,
@@ -371,6 +407,8 @@ def get_status_snapshot() -> dict:
         'balance': balance_info,
         'trades': trades_history,
         'btc_regime': btc_regime,
+        'btc_direction': btc_direction,
+        'btc_analysis': btc_analysis,
         'log_tail': read_log_tail(5),
     }
 
@@ -506,7 +544,9 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
   <div class="status-card"><h3>Позиции</h3><div class="value" id="stPositions">0/5</div></div>
   <div class="status-card"><h3>Капитал</h3><div class="value" id="stCapital">$0</div></div>
   <div class="status-card"><h3>Сделок</h3><div class="value" id="stTrades">0</div></div>
-  <div class="status-card"><h3>BTC</h3><div class="value" id="stBtcRegime">загрузка...</div></div>
+  <div class="status-card"><h3>BTC Режим</h3><div class="value" id="stBtcRegime">загрузка...</div></div>
+  <div class="status-card" style="grid-column:span 2"><h3>BTC Направление</h3><div class="value" id="stBtcDirection" style="font-size:13px">загрузка...</div></div>
+  <div class="status-card"><h3>BTC Анализ</h3><div class="value" id="stBtcAnalysis">загрузка...</div></div>
 </div>
 
 <div class="section" style="grid-column:1/-1">
@@ -669,6 +709,12 @@ function updBar(d){
   const btcR=d.btc_regime||{regime:'—',recommendation:''};
   const regimeEl=document.getElementById('stBtcRegime');
   if(regimeEl){regimeEl.textContent=btcR.regime+' / '+btcR.recommendation;regimeEl.className='value '+(btcR.recommendation==='buy_allowed'||btcR.recommendation==='buy_priority'?'green':'red');}
+  const btcDir=d.btc_direction||{};
+  const dirEl=document.getElementById('stBtcDirection');
+  if(dirEl){const dirName={up:'📈',down:'📉',side:'➡️',unknown:'❓'}[btcDir.direction]||'—';dirEl.innerHTML=(btcDir.direction?'<b>'+dirName+' '+btcDir.direction+'</b> | conf='+btcDir.confidence+'% | up='+btcDir.up_probability+'% down='+btcDir.down_probability+'%':'загрузка...');dirEl.className='value '+(btcDir.direction==='up'?'green':btcDir.direction==='down'?'red':'');}
+  const btcA=d.btc_analysis||{};
+  const aEl=document.getElementById('stBtcAnalysis');
+  if(aEl){aEl.innerHTML=btcA.price?'$'+fmtP(btcA.price)+' | '+btcA.trend+' | RSI='+btcA.rsi:'загрузка...';aEl.className='value '+(btcA.trend==='bullish'?'green':btcA.trend==='bearish'?'red':'');}
   document.getElementById('subtitle').textContent='PID: '+(d.pid||'—')+' | обновлено '+new Date().toLocaleTimeString();
   updPos(d.positions||{});
   if(d.trades) updTrades(d.trades);
