@@ -315,6 +315,22 @@ class IndustrialTrader:
             'volatility': latest['atr'] / latest['close'] * 100 if not pd.isna(latest['atr']) else 0
         }
     
+    def _notify_trade(self, symbol: str, side: str, price: float, quantity: float):
+        """Записать алерт о сделке для дашборда и мониторинга"""
+        try:
+            alert = {
+                'symbol': symbol,
+                'side': side,
+                'price': price,
+                'quantity': quantity,
+                'timestamp': time.time(),
+                'ts_human': datetime.now().strftime('%H:%M:%S')
+            }
+            with open('/tmp/trade_alert.json', 'w') as f:
+                json.dump(alert, f)
+        except:
+            pass
+
     def check_risk_limits(self) -> bool:
         """Проверка лимитов риска"""
         risk_config = self.config['risk_management']
@@ -390,6 +406,9 @@ class IndustrialTrader:
                     'paper': True
                 }
                 
+                # 🚀 Алерт о новой сделке — записываем для дашборда
+                self._notify_trade(symbol, side, price, quantity)
+                
                 # Обновляем позиции
                 if side == 'buy':
                     self.positions[symbol] = {
@@ -403,6 +422,7 @@ class IndustrialTrader:
                         '_trail_act': trail_act if trail_act is not None else None,
                         '_trail_dist': trail_dist if trail_dist is not None else None,
                         '_max_hold_h': max_hold_h if max_hold_h is not None else None,
+                        '_created_at': time.time(),  # 🛡️ Для защиты от sync-удаления
                     }
                     self.available_capital -= quantity * price
                     db.add_trade(symbol, 'buy', price, quantity, timestamp=timestamp)
@@ -516,13 +536,18 @@ class IndustrialTrader:
                                 'quantity': actual_qty,
                                 'entry_price': real_entry,
                                 'entry_time': datetime.now().isoformat(),
-                                'max_profit': 0.0
+                                'max_profit': 0.0,
+                                '_created_at': time.time()  # 🛡️ Для защиты от sync-удаления
                             }
                         else:
                             self.positions[symbol]['quantity'] = actual_qty
                             self.positions[symbol]['entry_price'] = real_entry
                             self.positions[symbol]['entry_time'] = datetime.now().isoformat()
-                    logger.info(f"📥 Обновлена позиция: {symbol} - {actual_qty:.6f} @ ${real_entry:.4f}")
+                            self.positions[symbol]['_created_at'] = time.time()
+                        # 💰 Обновляем доступный капитал сразу (предотвращает двойные BUY)
+                        order_cost = actual_qty * real_entry
+                        self.available_capital = max(0, self.available_capital - order_cost)
+                    logger.info(f"📥 Обновлена позиция: {symbol} - {actual_qty:.6f} @ ${real_entry:.4f}, капитал: ${self.available_capital:.2f}")
                 elif side == 'sell':
                     # Запись sell в trade_history
                     pnl = 0
@@ -548,10 +573,18 @@ class IndustrialTrader:
                     
                     # Удаляем позицию после продажи
                     if symbol in self.positions:
+                        entry = self.positions[symbol]['entry_price']
+                        qty = self.positions[symbol]['quantity']
+                        cost = entry * qty
                         self.positions.pop(symbol, None)
                         db.remove_position(symbol)
+                        # 💰 Возвращаем капитал (сколько потратили на вход + PnL)
+                        filled = order.get('filled', quantity) or quantity
+                        filled_price = order.get('average', order.get('price', price)) or price
+                        profit = (filled_price - entry) * filled
+                        self.available_capital += cost + profit
                         pnl_str = f", PnL=${pnl:.2f} ({pnl_pct:+.2f}%)" if pnl != 0 else ""
-                        logger.info(f"📤 Позиция {symbol} продана{pnl_str}")
+                        logger.info(f"📤 Позиция {symbol} продана{pnl_str}, капитал: ${self.available_capital:.2f}")
                 
                 return order
             else:
@@ -617,9 +650,20 @@ class IndustrialTrader:
                             mem_qty = self.positions[symbol]['quantity']
                             real_value = real_qty * (balance['free'].get(currency, 0) or 0)
                             
+                            # 🛡️ ЗАЩИТА СВЕЖИХ ПОЗИЦИЙ: не синхронизируем первые 30 сек после входа
+                            if '_created_at' in self.positions[symbol]:
+                                age = time.time() - self.positions[symbol]['_created_at']
+                                if age < 30:
+                                    continue  # Пропускаем синхронизацию для свежих позиций
+                            
                             # Если на бирже нет актива — удаляем из памяти
                             if real_qty < 0.000001:
                                 logger.warning(f"🔄 Синхронизация: {symbol} нет на бирже. Удаляю из кеша/БД.")
+                                self.positions.pop(symbol, None)
+                                db.remove_position(symbol)
+                            # Если осталась пыль (кол-во < 1% от исходного) — удаляем
+                            if real_qty < mem_qty * 0.01 and real_qty < 0.1:
+                                logger.warning(f"🔄 Синхронизация: {symbol} пыль ({real_qty:.6f} от {mem_qty:.4f}). Удаляю.")
                                 self.positions.pop(symbol, None)
                                 db.remove_position(symbol)
                             # Если актив есть, но сильно меньше закешированного — обновляем
@@ -790,6 +834,26 @@ class IndustrialTrader:
                                     logger.info(f"⚠️ [DE] {symbol}: лимит {len(self.positions)}/{max_positions}")
                                     continue
                                 
+                                # 🛡️ ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: кулдаун после SL (если DE пропустил)
+                                if hasattr(de, '_last_decisions') and symbol in de._last_decisions:
+                                    last_exit = de._last_decisions[symbol]
+                                    time_since = time.time() - last_exit.get('exit_time', 0)
+                                    cooldown = getattr(de, 'reentry_cooldown', 3600)
+                                    if time_since < cooldown:
+                                        remain = cooldown - time_since
+                                        logger.warning(f"🛡️ {symbol}: кулдаун {remain/60:.0f}мин (SL защита). Пропускаю BUY.")
+                                        continue
+                                
+                                # 🛡️ ЗАЩИТА ОТ ДВОЙНЫХ входов: если символ уже куплен в последние 30с
+                                _buy_lock = getattr(self, '_buy_locks', {})
+                                last_buy = _buy_lock.get(symbol, 0.0)
+                                if time.time() - last_buy < 30:
+                                    remaining = int(30 - (time.time() - last_buy))
+                                    logger.warning(f"🔒 {symbol}: блокировка повторного BUY ({remaining}с)")
+                                    continue
+                                _buy_lock[symbol] = time.time()
+                                self._buy_locks = _buy_lock
+                                
                                 logger.info(f"⚡ [DE→BUY] {symbol}: score={score:.0f}/100 size={size_mult:.2f} | ${de_price:.4f} | {decision.reason}")
                                 # Размер позиции = стандартный * size_mult от DE, с учётом Score
                                 base_qty = self.calculate_position_size(symbol, de_price, score)
@@ -840,6 +904,57 @@ class IndustrialTrader:
                         else:
                             position['max_profit'] = max(position['max_profit'], pnl_percent)
                         
+                        # 🎯 РАННИЙ ТРЕЙЛИНГ: цена прошла +1.5% — активируем плотный трейлинг 0.3%
+                        # Отличие от стандартного трейлинга: срабатывает раньше и плотнее
+                        # Если рост продолжается — остаёмся в позиции и трейлим
+                        early_trail_triggered = False
+                        early_trail_reason = ""
+                        if pnl_percent >= 1.5 and tp_pct > 2.0:
+                            # Запоминаем пик для раннего трейлинга
+                            if '_early_trail_peak' not in position:
+                                position['_early_trail_peak'] = current_price
+                                logger.info(f"📈 [Ранний трейлинг] {symbol}: активирован при PnL={pnl_percent:+.2f}%, пик={current_price:.4f}")
+                            else:
+                                # Обновляем пик если цена выросла
+                                if current_price > position['_early_trail_peak']:
+                                    position['_early_trail_peak'] = current_price
+                                # Проверяем откат от пика (0.3% = $0.003 на $1)
+                                peak = position['_early_trail_peak']
+                                trail_dist_pct = 0.003  # 0.3%
+                                trail_price = peak * (1 - trail_dist_pct)
+                                if current_price <= trail_price and pnl_percent >= 0.8:
+                                    early_trail_triggered = True
+                                    early_trail_reason = f"Ранний трейлинг: пик={peak:.4f}, откат до {current_price:.4f} ({pnl_percent:+.2f}%)"
+                                    logger.info(f"🎯 [Ранний трейлинг] {symbol}: {early_trail_reason}")
+                        
+                        # ⚡ ИМПУЛЬСНЫЙ ВЫХОД: проверяем 1M свечи на затухание
+                        impulse_exit_signal = None
+                        # 🛡️ Защита от повторного срабатывания: модульный кулдаун (60с)
+                        from impulse_exit import is_cooldown_active, mark_trigger
+                        if not is_cooldown_active(symbol, 60):
+                            try:
+                                from impulse_exit import detect_impulse_exhaustion
+                                candles_1m = None
+                                if hasattr(self, 'exchange'):
+                                    raw_1m = self.exchange.fetch_ohlcv(symbol, '1m', limit=20)
+                                    if raw_1m and len(raw_1m) >= 5:
+                                        candles_1m = [
+                                            {'o':c[1],'h':c[2],'l':c[3],'c':c[4],'v':c[5]}
+                                            for c in raw_1m
+                                        ]
+                                if candles_1m and len(candles_1m) >= 5:
+                                    impulse_result = detect_impulse_exhaustion(
+                                        candles_1m,
+                                        entry_price=entry_price,
+                                        current_pnl_pct=pnl_percent
+                                    )
+                                    if impulse_result.exhaustion and pnl_percent > 0.3:
+                                        impulse_exit_signal = f"Импульс: {impulse_result.detail}"
+                                        logger.info(f"⚡ [IMPULSE EXIT] {symbol}: {impulse_result.detail} (PnL={pnl_percent:+.2f}%)")
+                                        mark_trigger(symbol)  # 🛡️ глобальный кулдаун
+                            except Exception as e:
+                                logger.debug(f"[IMPULSE] {symbol}: {e}")  # Не критично
+                        
                         exit_decision = de.decide_exit(
                             symbol, entry_price, current_price,
                             highest_price=current_price * (1 + position['max_profit'] / 100),
@@ -850,8 +965,12 @@ class IndustrialTrader:
                             max_hold_hours=max_hold, side='long'
                         )
                         
-                        should_sell = (exit_decision is not None)
+                        should_sell = (exit_decision is not None) or early_trail_triggered or (impulse_exit_signal is not None)
                         sell_reason = exit_decision.reason if exit_decision else ""
+                        if early_trail_triggered:
+                            sell_reason = early_trail_reason
+                        elif impulse_exit_signal is not None:
+                            sell_reason = impulse_exit_signal
                         
                         if not should_sell:
                             # Статусный лог (раз в цикл для видимых PnL)
