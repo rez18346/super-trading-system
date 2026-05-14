@@ -455,6 +455,7 @@ class DecisionEngine:
         
         # 1. Лимит позиций
         if current_positions_count >= max_positions:
+            self._save_veto_vote(symbol, current_price, f"Максимум {max_positions} позиций", side)
             return Decision(symbol, 'hold', side=side, reason=f"Максимум {max_positions} позиций")
         
         # 2. Кулдаун повторного входа
@@ -463,18 +464,21 @@ class DecisionEngine:
             time_since = now - last_exit.get('exit_time', 0)
             if time_since < self.reentry_cooldown:
                 remain = self.reentry_cooldown - time_since
+                reason = f"Повторный вход через {remain/60:.1f} мин"
+                self._save_veto_vote(symbol, current_price, reason, side)
                 return Decision(
                     symbol, 'hold', side=side,
-                    reason=f"Повторный вход через {remain/60:.1f} мин"
+                    reason=reason
                 )
         
         # 3. BTC-корреляция: не входить если BTC падает
         if btc_p is not None and self._btc_reference_price is not None:
             btc_change_4h = (btc_p - self._btc_reference_price) / self._btc_reference_price * 100
             if btc_change_4h < -1.5:
+                reason = f"VETO: BTC упал на {btc_change_4h:.1f}% за период"
                 self.stats['veto_btc_drop'] += 1
-                return Decision(symbol, 'hold', side=side,
-                               reason=f"VETO: BTC упал на {btc_change_4h:.1f}% за период")
+                self._save_veto_vote(symbol, current_price, reason, side)
+                return Decision(symbol, 'hold', side=side, reason=reason)
         
         # 4. Multi-timeframe veto: не входить против старшего ТФ
         # ⚡ ЗАЛОЖЕНО ПОД ШОРТ: для short — блокировка при bullish
@@ -487,9 +491,10 @@ class DecisionEngine:
             try:
                 trend_1h = self._calc_trend_from_candles(c1h)
                 if trend_1h in veto_trends:
+                    reason = f"VETO: 1H тренд {veto_label}"
                     self.stats['veto_mtf_conflict'] += 1
-                    return Decision(symbol, 'hold', side=side,
-                                   reason=f"VETO: 1H тренд {veto_label}")
+                    self._save_veto_vote(symbol, current_price, reason, side)
+                    return Decision(symbol, 'hold', side=side, reason=reason)
             except:
                 pass
         
@@ -497,9 +502,10 @@ class DecisionEngine:
             try:
                 trend_4h = self._calc_trend_from_candles(c4h)
                 if trend_4h in veto_trends:
+                    reason = f"VETO: 4H тренд {veto_label}"
                     self.stats['veto_mtf_conflict'] += 1
-                    return Decision(symbol, 'hold', side=side,
-                                   reason=f"VETO: 4H тренд {veto_label}")
+                    self._save_veto_vote(symbol, current_price, reason, side)
+                    return Decision(symbol, 'hold', side=side, reason=reason)
             except:
                 pass
         
@@ -542,6 +548,46 @@ class DecisionEngine:
                 reason=entry_checks['reason']
             )
     
+
+    def _save_veto_vote(self, symbol: str, current_price: float, veto_reason: str, side: str = 'long') -> None:
+        """Save a vote record for VETO cases (dashboard fix)."""
+        try:
+            now = time.time()
+            if not hasattr(self, '_last_vote_ts'):
+                self._last_vote_ts = {}
+            last_ts = self._last_vote_ts.get(symbol, 0)
+            if now - last_ts < 3.0:
+                return
+            self._last_vote_ts[symbol] = now
+            vote_record = {
+                'ts': datetime.now(timezone.utc).isoformat(),
+                'symbol': symbol,
+                'approved': False,
+                'final_score': 0.0,
+                'threshold': 0,
+                'price': round(current_price, 6),
+                'veto_reason': veto_reason,
+                'votes': {},
+                'strong_count': 0,
+            }
+            vote_log_path = os.path.join(BASE_DIR, 'data', 'vote_history.json')
+            os.makedirs(os.path.dirname(vote_log_path), exist_ok=True)
+            history = []
+            if os.path.exists(vote_log_path):
+                try:
+                    with open(vote_log_path, 'r') as f:
+                        history = json.load(f)
+                except:
+                    history = []
+            history.append(vote_record)
+            if len(history) > 10000:
+                history = history[-10000:]
+            with open(vote_log_path, 'w') as f:
+                json.dump(history, f, indent=2, default=str)
+        except Exception as e:
+            pass  # silently ignore
+
+
     def _calc_trend_from_candles(self, candles: list) -> str:
         """Определить тренд по списку свечей (быстро по EMAs).
         Поддерживает список списков [ts,o,h,l,c,v] и список словарей {o,h,l,c,v,t}."""

@@ -44,6 +44,7 @@ class IndustrialTrader:
         self.available_capital = self.capital
         self.daily_pnl = 0.0
         self.daily_trades = 0
+        self._current_market_mode = 'neutral'
         
         # Статистика
         self.stats = {
@@ -751,6 +752,71 @@ class IndustrialTrader:
                         logger.info(f"🧠 BTC Regime: {regime_result['regime']} → rec={regime_result['recommendation']} ({regime_result['message']})")
                         if not self._btc_regime.is_buy_allowed():
                             logger.info(f"⏳ BTC Regime: BUY заблокирован — {regime_result['regime']}. Пропускаем входы.")
+                        
+                        # 🎯 ДИНАМИЧЕСКОЕ ПЕРЕКЛЮЧЕНИЕ РЕЖИМОВ ПО ТРЕНДУ BTC
+                        # Определяем режим: up_trend или down_trend
+                        regime = regime_result['regime']
+                        
+                        # Upward regimes — трейлинг, крупный лот, без импульса
+                        # Downward regimes — импульс, мелкий лот
+                        up_regimes = ('accumulation', 'recovery')
+                        down_regimes = ('dump', 'distribution', 'pump')
+                        
+                        if regime in up_regimes:
+                            self._current_market_mode = 'up_trend'
+                            # Импульс: только при очень сильных сигналах (почти отключён)
+                            impulse_cfg = {
+                                'exit_score_threshold': 95,
+                                'min_confirmations': 2,
+                                'consecutive_confirmations': 3,
+                                'micro_trend_filter': True,
+                                'min_hold_seconds': 120,
+                                'lookback_candles': 15,
+                                'volume_drop_threshold': 0.3,
+                                'wick_threshold': 0.6,
+                                'strong_volume_drop': 0.5,
+                                'body_shrink_threshold': 0.4
+                            }
+                            logger.info(f"📈 РЕЖИМ UP-TREND: трейлинг +50% лота, импульс подавлен")
+                        elif regime in down_regimes:
+                            self._current_market_mode = 'down_trend'
+                            # Импульс: активен, как сейчас
+                            impulse_cfg = {
+                                'exit_score_threshold': 65,
+                                'min_confirmations': 1,
+                                'consecutive_confirmations': 1,
+                                'micro_trend_filter': False,
+                                'min_hold_seconds': 0,
+                                'lookback_candles': 15,
+                                'volume_drop_threshold': 0.3,
+                                'wick_threshold': 0.6,
+                                'strong_volume_drop': 0.5,
+                                'body_shrink_threshold': 0.4
+                            }
+                            logger.info(f"📉 РЕЖИМ DOWN-TREND: импульс активен, лот стандартный")
+                        else:
+                            self._current_market_mode = 'neutral'
+                            impulse_cfg = {
+                                'exit_score_threshold': 75,
+                                'min_confirmations': 2,
+                                'consecutive_confirmations': 2,
+                                'micro_trend_filter': True,
+                                'min_hold_seconds': 60,
+                                'lookback_candles': 15,
+                                'volume_drop_threshold': 0.3,
+                                'wick_threshold': 0.6,
+                                'strong_volume_drop': 0.5,
+                                'body_shrink_threshold': 0.4
+                            }
+                            logger.info(f"➡️ РЕЖИМ NEUTRAL: стандартные настройки")
+                        
+                        # Записываем конфиг (импульс читает его на лету)
+                        try:
+                            with open('/tmp/impulse_config.json', 'w') as f_ic:
+                                json.dump(impulse_cfg, f_ic)
+                            logger.info(f"⚙️ Импульс-конфиг обновлён для режима {self._current_market_mode}")
+                        except Exception as e_ic:
+                            logger.warning(f"⚠️ Ошибка записи impulse_config: {e_ic}")
                     except Exception as e:
                         logger.warning(f"⚠️ BTC Regime Tracker: {e}")
                 
@@ -828,6 +894,20 @@ class IndustrialTrader:
                                 # Адаптивный размер позиции: от DE или стандартный
                                 size_mult = decision.position_size or 0.5
                                 
+                                # 🎯 РЕЖИМ-ЗАВИСИМЫЙ РАЗМЕР ПОЗИЦИИ
+                                # На восходящем тренде входим крупнее (×2-3)
+                                # На нисходящем — консервативно (×0.5-1)
+                                market_mode = getattr(self, '_current_market_mode', 'neutral')
+                                if market_mode == 'up_trend':
+                                    regime_mult = 2.5  # $30-50 на сделку
+                                    logger.info(f"📈 UP-TREND: множитель позиции {regime_mult}x")
+                                elif market_mode == 'down_trend':
+                                    regime_mult = 0.7  # $10-15 на сделку
+                                    logger.info(f"📉 DOWN-TREND: множитель позиции {regime_mult}x")
+                                else:
+                                    regime_mult = 1.0  # $15-25 стандарт
+                                size_mult = size_mult * regime_mult
+                                
                                 # Лимиты безопасности
                                 max_positions = self.config['risk_management'].get('max_open_positions', 3)
                                 if len(self.positions) >= max_positions:
@@ -888,6 +968,14 @@ class IndustrialTrader:
                         entry_price = position['entry_price']
                         pnl_percent = (current_price - entry_price) / entry_price * 100
                         
+                        # 🧹 СТАРЫЕ ПОЗИЦИИ: force-закрытие если больше 36ч и PnL в - или меньше +2%
+                        stale_hours = 36
+                        stale_sell_reason = None
+                        if hold_hours >= stale_hours:
+                            if pnl_percent < 2.0:
+                                stale_sell_reason = f"Принудительно: позиция {hold_hours:.0f}ч, PnL={pnl_percent:+.2f}%"
+                                logger.warning(f"⏰ [STALE] {symbol}: {stale_sell_reason}. Закрываю.")
+                        
                         # Параметры HMM-адаптивного риска
                         rp = de.get_sl_tp_params(side='long')
                         
@@ -909,7 +997,7 @@ class IndustrialTrader:
                         # Если рост продолжается — остаёмся в позиции и трейлим
                         early_trail_triggered = False
                         early_trail_reason = ""
-                        if pnl_percent >= 1.5 and tp_pct > 2.0:
+                        if pnl_percent >= 1.5 and rp['tp_pct'] > 2.0:
                             # Запоминаем пик для раннего трейлинга
                             if '_early_trail_peak' not in position:
                                 position['_early_trail_peak'] = current_price
@@ -929,11 +1017,18 @@ class IndustrialTrader:
                         
                         # ⚡ ИМПУЛЬСНЫЙ ВЫХОД: проверяем 1M свечи на затухание
                         impulse_exit_signal = None
-                        # 🛡️ Защита от повторного срабатывания: модульный кулдаун (60с)
-                        from impulse_exit import is_cooldown_active, mark_trigger
-                        if not is_cooldown_active(symbol, 60):
+                        # 🛡️ Auto-reload: подхватываем изменения /tmp/impulse_config.json на лету
+                        try:
+                            import importlib
+                            import impulse_exit as ie
+                            importlib.reload(ie)
+                        except Exception:
                             try:
-                                from impulse_exit import detect_impulse_exhaustion
+                                import impulse_exit as ie
+                            except Exception:
+                                ie = None
+                        if ie is not None and not ie.is_cooldown_active(symbol, 60):
+                            try:
                                 candles_1m = None
                                 if hasattr(self, 'exchange'):
                                     raw_1m = self.exchange.fetch_ohlcv(symbol, '1m', limit=20)
@@ -943,7 +1038,7 @@ class IndustrialTrader:
                                             for c in raw_1m
                                         ]
                                 if candles_1m and len(candles_1m) >= 5:
-                                    impulse_result = detect_impulse_exhaustion(
+                                    impulse_result = ie.detect_impulse_exhaustion(
                                         candles_1m,
                                         entry_price=entry_price,
                                         current_pnl_pct=pnl_percent
@@ -951,7 +1046,7 @@ class IndustrialTrader:
                                     if impulse_result.exhaustion and pnl_percent > 0.3:
                                         impulse_exit_signal = f"Импульс: {impulse_result.detail}"
                                         logger.info(f"⚡ [IMPULSE EXIT] {symbol}: {impulse_result.detail} (PnL={pnl_percent:+.2f}%)")
-                                        mark_trigger(symbol)  # 🛡️ глобальный кулдаун
+                                        ie.mark_trigger(symbol)  # 🛡️ глобальный кулдаун
                             except Exception as e:
                                 logger.debug(f"[IMPULSE] {symbol}: {e}")  # Не критично
                         
@@ -965,12 +1060,14 @@ class IndustrialTrader:
                             max_hold_hours=max_hold, side='long'
                         )
                         
-                        should_sell = (exit_decision is not None) or early_trail_triggered or (impulse_exit_signal is not None)
+                        should_sell = (exit_decision is not None) or early_trail_triggered or (impulse_exit_signal is not None) or (stale_sell_reason is not None)
                         sell_reason = exit_decision.reason if exit_decision else ""
                         if early_trail_triggered:
                             sell_reason = early_trail_reason
                         elif impulse_exit_signal is not None:
                             sell_reason = impulse_exit_signal
+                        elif stale_sell_reason is not None:
+                            sell_reason = stale_sell_reason
                         
                         if not should_sell:
                             # Статусный лог (раз в цикл для видимых PnL)

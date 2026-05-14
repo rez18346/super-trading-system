@@ -162,7 +162,7 @@ class LiquidityCluster:
             if alive:
                 ob_details.append(f"OB{len(alive)}")
                 for ob in alive[:2]:
-                    ob_details.append(ob.kind[:3])
+                    ob_details.append(f"{ob.kind[:3]} {ob.direction}")
             if dead:
                 ob_details.append(f"OF{len(dead)}")
 

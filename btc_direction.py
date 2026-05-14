@@ -74,7 +74,7 @@ class BTCDirectionPredictor:
         self.scaler = StandardScaler()
         self.feature_cols = None
         self.last_train_time = time.time()  # Считаем что загруженная модель уже обучена
-        self.retrain_interval = 86400  # Раз в сутки
+        self.retrain_interval = 21600  # Каждые 6 часов (было 24ч — не успевал за рынком)
         self.training_in_progress = False
         
         # Последний прогноз
@@ -450,12 +450,12 @@ class BTCDirectionPredictor:
             down_prob = probs[0] if len(probs) > 0 else 0.33
             side_prob = probs[1] if len(probs) > 1 else 0.33
             
-            # Определяем направление
-            if up_prob > 0.50 and up_prob > down_prob and up_prob > side_prob:
+            # Определяем направление — порог снижен до 0.40 для лучшей чувствительности
+            if up_prob > down_prob and up_prob > side_prob and up_prob > 0.40:
                 direction = 'up'
                 confidence = up_prob
                 strength = min(int(up_prob * 100), 100)
-            elif down_prob > 0.50 and down_prob > up_prob and down_prob > side_prob:
+            elif down_prob > up_prob and down_prob > side_prob and down_prob > 0.40:
                 direction = 'down'
                 confidence = down_prob
                 strength = min(int(down_prob * 100), 100)

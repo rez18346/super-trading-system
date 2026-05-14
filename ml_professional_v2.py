@@ -688,6 +688,11 @@ FEATURE_NAMES = [
 
 def build_features_5m(candles_5m, candles_1h, candles_4h):
     """Построить 27 признаков из 5M/1H/4H (для обратной совместимости)."""
+    # Нормализация ключей (из to_dict('records') или Raw OHLCV)
+    candles_5m = [_normalize_candle_dict(c) for c in candles_5m]
+    candles_1h = [_normalize_candle_dict(c) for c in candles_1h]
+    candles_4h = [_normalize_candle_dict(c) for c in candles_4h]
+
     def _parse(arr):
         o = np.array([c['o'] for c in arr], dtype=float)
         h = np.array([c['h'] for c in arr], dtype=float)

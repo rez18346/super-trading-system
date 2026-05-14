@@ -547,6 +547,7 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
   <div class="status-card"><h3>BTC Режим</h3><div class="value" id="stBtcRegime">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2"><h3>BTC Направление</h3><div class="value" id="stBtcDirection" style="font-size:13px">загрузка...</div></div>
   <div class="status-card"><h3>BTC Анализ</h3><div class="value" id="stBtcAnalysis">загрузка...</div></div>
+  <div class="status-card" style="grid-column:span 2"><h3>🚀 Последняя сделка</h3><div class="value" id="stLastTrade" style="font-size:12px">загрузка...</div></div>
 </div>
 
 <div class="section" style="grid-column:1/-1">
@@ -569,6 +570,13 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
     </tr></thead>
     <tbody id="tbPos"><tr><td colspan="7" style="text-align:center;color:#8b949e;font-size:13px;padding:20px">Нет данных</td></tr></tbody></table>
   </div>
+
+<div class="section" style="grid-column:1/-1">
+  <h2>⛔ VETO-логи <span style="font-size:12px;color:#8b949e;font-weight:normal">— последние 15 отказов</span></h2>
+  <div id="tbVeto" style="font-family:'SF Mono','Consolas',monospace;font-size:12px;line-height:1.7;max-height:250px;overflow-y:auto">
+    <div style="text-align:center;color:#8b949e;padding:15px">Загрузка...</div>
+  </div>
+</div>
 
 <div class="section">
   <h2>📜 История сделок <span style="font-size:12px;cursor:pointer;color:#58a6ff" onclick="toggleTradeLog()">[полная история]</span></h2>
@@ -593,6 +601,28 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
 <div class="section" id="changelogSection" style="display:none">
   <h2>📋 История изменений</h2>
   <div style="font-family:'SF Mono','Consolas',monospace;font-size:12px;line-height:1.6;max-height:400px;overflow-y:auto;white-space:pre-wrap" id="changelogContent">Загрузка...</div>
+</div>
+
+<div class="section" style="font-size:12px">
+  <h2>📐 Легенда сигналов</h2>
+  <div style="display:flex;flex-wrap:wrap;gap:12px 24px">
+    <div><span style="display:inline-block;width:14px;text-align:center">🔵</span> ML-Pro <span style="color:#8b949e">(ML)</span></div>
+    <div><span style="display:inline-block;width:14px;text-align:center">🟢</span> Advisor <span style="color:#8b949e">(фундамент)</span></div>
+    <div><span style="display:inline-block;width:14px;text-align:center">🟡</span> MTF <span style="color:#8b949e">(таймфреймы)</span></div>
+    <div><span style="display:inline-block;width:14px;text-align:center">🟣</span> Reversal <span style="color:#8b949e">(разворот)</span></div>
+    <div><span style="display:inline-block;width:14px;text-align:center">🟠</span> Liquidity <span style="color:#8b949e">(POC/OB)</span></div>
+    <div><span style="display:inline-block;width:14px;text-align:center">🔴</span> Volume/VWAP</div>
+    <div><span style="display:inline-block;width:14px;text-align:center">B</span> Бонус <span style="color:#8b949e">(+BTC)</span></div>
+    <div><span style="display:inline-block;width:14px;text-align:center">R</span> Реверсивный</div>
+    <div><span style="display:inline-block;width:14px;text-align:center">₿</span> Маяк BTC</div>
+  </div>
+  <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:12px 24px;border-top:1px solid #30363d;padding-top:8px">
+    <span style="font-weight:600">▫IDM</span> <span style="color:#8b949e">—</span> <span style="color:#d29922">жетый</span> = индукция, направление неясно
+    <span style="font-weight:600">▫IDM↑</span> <span style="color:#8b949e">—</span> <span style="color:#e06c00">тёмно-оранж</span> = ликвидность ✦снизу✦ → цель вверх 🟢
+    <span style="font-weight:600">▫IDM↓</span> <span style="color:#8b949e">—</span> <span style="color:#e06c00">тёмно-оранж</span> = ликвидность ✦сверху✦ → цель вниз 🔴
+    <span style="font-weight:600">▫OB↑</span> <span style="color:#8b949e">—</span> <span style="color:#3fb950">зелёный</span> = бычий ордерблок (поддержка) 🟢
+    <span style="font-weight:600">▫OB↓</span> <span style="color:#8b949e">—</span> <span style="color:#f85149">красный</span> = медвежий ордерблок (сопротивление) 🔴
+  </div>
 </div>
 
 <div class="section">
@@ -649,7 +679,7 @@ function updPos(pos){
           '<span style="font-size:10px;color:'+(v.bonus>0?'#3fb950':v.bonus<0?'#f85149':'#555')+'">B'+(v.bonus||0)+'</span> '+
           '<span style="font-size:10px;color:'+(v.rev>0?'#d2d268':v.rev<0?'#f85149':'#555')+'">R'+(v.rev||0)+'</span> '+
           '<span style="font-size:10px;color:'+(v.btc>0?'#3fb950':v.btc<0?'#f85149':'#555')+'">₿'+(v.btc||0)+'</span>'+
-          (v.idm?' <span style="font-size:11px;font-weight:600;color:'+(v.idm==='IDM'?'#d29922':v.idm==='OB↑'?'#3fb950':v.idm==='OB↓'?'#f85149':'#8b949e')+'" title="Order Block / Inducement">▫'+v.idm+'</span>':'')
+          (v.idm?' <span style="font-size:11px;font-weight:600;color:'+(v.idm==='IDM'||v.idm==='IDM↑'?'#d29922':v.idm==='IDM↓'?'#e06c00':v.idm==='OB↑'?'#3fb950':v.idm==='OB↓'?'#f85149':'#8b949e')+'" title="'+(v.idm==='IDM'?'Индукция (Inducement) — сбор ликвидности, направление не определено':v.idm==='IDM↑'?'Индукция бычья (Inducement ↑) — ликвидность собрана снизу, цель вверх':v.idm==='IDM↓'?'Индукция медвежья (Inducement ↓) — ликвидность собрана сверху, цель вниз':v.idm==='OB↑'?'Ордерблок бычий (Order Block ↑) — поддержка, зона набора позиции':v.idm==='OB↓'?'Ордерблок медвежий (Order Block ↓) — сопротивление, зона набора шортов':'Неизвестно')+'">▫'+v.idm+'</span>':'')
         : (isVeto ? '<span style="color:#f85149;font-size:11px">⛔ '+v.veto+'</span>' : '<span style="color:#555;font-size:11px">ожидание...</span>');
       return '<tr>'+
         '<td style="font-size:14px;padding:4px 2px">'+em(s.split('/')[0])+'</td>'+
@@ -715,9 +745,37 @@ function updBar(d){
   const btcA=d.btc_analysis||{};
   const aEl=document.getElementById('stBtcAnalysis');
   if(aEl){aEl.innerHTML=btcA.price?'$'+fmtP(btcA.price)+' | '+btcA.trend+' | RSI='+btcA.rsi:'загрузка...';aEl.className='value '+(btcA.trend==='bullish'?'green':btcA.trend==='bearish'?'red':'');}
+  
+  // 🚀 Последняя сделка
+  fetch('/api/last-trade').then(r=>r.json()).then(t=>{
+    const ltEl=document.getElementById('stLastTrade');
+    if(!ltEl)return;
+    if(t.symbol){
+      const s=t.side==='buy'?'🟢 BUY':'🔴 SELL';
+      const c=t.side==='buy'?'#3fb950':'#f85149';
+      ltEl.innerHTML='<span style="color:'+c+'">'+s+'</span> '+t.symbol.split('/')[0]+' @ $'+fmtP(t.price)+' | '+t.ts_human;
+    }else{
+      ltEl.innerHTML='<span style="color:#555">—</span>';
+    }
+  }).catch(()=>{});
+  
   document.getElementById('subtitle').textContent='PID: '+(d.pid||'—')+' | обновлено '+new Date().toLocaleTimeString();
   updPos(d.positions||{});
   if(d.trades) updTrades(d.trades);
+  updVeto();
+}
+
+function updVeto(){
+  fetch('/api/veto-history').then(r=>r.json()).then(d=>{
+    const el=document.getElementById('tbVeto');
+    if(!el||!d.entries||!d.entries.length){if(el)el.innerHTML='<div style="text-align:center;color:#8b949e;padding:15px">Нет VETO</div>';return;}
+    el.innerHTML=d.entries.map(e=>{
+      const ts=(e.ts||'').slice(11,19);
+      const sym=e.symbol.replace('/USDT','');
+      const reason=e.veto_reason||'';
+      return '<div style="display:flex;gap:10px;padding:2px 0"><span style="color:#8b949e;min-width:50px">'+ts+'</span><span style="color:#f85149;font-weight:600;min-width:50px">'+sym+'</span><span style="color:#d29922">'+reason+'</span></div>';
+    }).join('');
+  }).catch(()=>{});
 }
 
 // ─── SSE ───
@@ -735,6 +793,24 @@ fetch('/api/status').then(r=>r.json()).then(d=>{updBar(d)});
 
 
 @app.get("/api/vote-history")
+@app.get("/api/veto-history")
+async def api_veto_history(limit: int = 15):
+    """Последние VETO-записи из vote_history."""
+    vote_path = os.path.join(BASE_DIR, "data", "vote_history.json")
+    if not os.path.exists(vote_path):
+        return {"entries": [], "total": 0}
+    try:
+        with open(vote_path, "r") as f:
+            history = json.load(f)
+        # Фильтр: только veto_entries (approved=False, есть veto_reason)
+        veto = [e for e in history if not e.get("approved", True) and e.get("veto_reason") and e.get("veto_reason", "").startswith("VETO")]
+        vetol = veto[-limit:]
+        return {"entries": list(reversed(vetol)), "total": len(vetol)}
+    except Exception as e:
+        return {"error": str(e), "entries": [], "total": 0}
+
+
+@app.get("/api/vote-history")
 async def api_vote_history(symbol: str = "", limit: int = 50):
     """История голосов DE."""
     vote_path = os.path.join(BASE_DIR, "data", "vote_history.json")
@@ -749,6 +825,21 @@ async def api_vote_history(symbol: str = "", limit: int = 50):
         return {"entries": list(reversed(history)), "total": len(history)}
     except Exception as e:
         return {"error": str(e), "entries": [], "total": 0}
+
+
+@app.get("/api/last-trade")
+async def api_last_trade():
+    """Последняя сделка (BUY/SELL) для алертов"""
+    alert_path = "/tmp/trade_alert.json"
+    if os.path.exists(alert_path):
+        try:
+            with open(alert_path, "r") as f:
+                data = json.load(f)
+            # Не стираем — дашборд сам решит когда обновить
+            return data
+        except:
+            return {"symbol": None, "side": None, "price": 0, "timestamp": 0}
+    return {"symbol": None, "side": None, "price": 0, "timestamp": 0}
 
 
 def run_server(host: str = "0.0.0.0", port: int = 8765):
