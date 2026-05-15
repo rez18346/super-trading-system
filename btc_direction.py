@@ -345,10 +345,10 @@ class BTCDirectionPredictor:
             class_counts = pd.Series(y).value_counts()
             logger.info(f"📊 BTC классы: UP={class_counts.get(2, 0)}, DOWN={class_counts.get(0, 0)}, SIDE={class_counts.get(1, 0)}")
             
-            # Разделение на train/test
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, shuffle=False, random_state=42
-            )
+            # Разделение на train/test — временное (последние 20% по времени)
+            split_idx = int(len(X) * 0.8)
+            X_train, X_test = X[:split_idx], X[split_idx:]
+            y_train, y_test = y[:split_idx], y[split_idx:]
             
             # Масштабирование
             self.scaler = StandardScaler()
@@ -396,31 +396,9 @@ class BTCDirectionPredictor:
             for cls, w in class_weights.items():
                 sample_weight_arr[y_train_bal == cls] = w
             
-            # ─── RandomForest — ловит нелинейные паттерны ═════
-            from sklearn.ensemble import RandomForestClassifier
-            rf = RandomForestClassifier(
-                n_estimators=300,
-                max_depth=8,
-                min_samples_leaf=10,
-                class_weight='balanced',
-                random_state=42,
-                n_jobs=4
-            )
-            
-            # ─── ExtraTrees — альтернативный взгляд ════════════
-            from sklearn.ensemble import ExtraTreesClassifier
-            et = ExtraTreesClassifier(
-                n_estimators=300,
-                max_depth=8,
-                min_samples_leaf=10,
-                class_weight='balanced',
-                random_state=42,
-                n_jobs=4
-            )
-            
-            # ─── Ансамбль (4 модели) — разнообразие = стабильность ═══
+            # ─── Ансамбль (LightGBM + XGBoost) ═══════════════
             ensemble = VotingClassifier(
-                estimators=[('lgbm', lgbm), ('xgb', xgb), ('rf', rf), ('et', et)],
+                estimators=[('lgbm', lgbm), ('xgb', xgb)],
                 voting='soft'
             )
             
@@ -527,13 +505,13 @@ class BTCDirectionPredictor:
             down_prob = probs[0] if len(probs) > 0 else 0.33
             side_prob = probs[1] if len(probs) > 1 else 0.33
             
-            # Определяем направление — порог 0.35 даёт больше сигналов
-            # После SMOTE модель должна увереннее различать UP/DOWN
-            if up_prob > down_prob and up_prob > side_prob and up_prob > 0.35:
+            # Определяем направление — порог 0.40 даёт меньше сигналов, но выше точность
+            # После дообучения с весом UP=8x модель должна быть увереннее
+            if up_prob > down_prob and up_prob > side_prob and up_prob > 0.40:
                 direction = 'up'
                 confidence = up_prob
                 strength = min(int(up_prob * 100), 100)
-            elif down_prob > up_prob and down_prob > side_prob and down_prob > 0.35:
+            elif down_prob > up_prob and down_prob > side_prob and down_prob > 0.40:
                 direction = 'down'
                 confidence = down_prob
                 strength = min(int(down_prob * 100), 100)
