@@ -188,6 +188,14 @@ def read_log_since(timestamp: float) -> list:
 
 
 def get_pid() -> Optional[int]:
+    # Если PID-файла нет — создаём из текущего процесса (защита рестарта)
+    if not os.path.exists(SYSTEM_PID_FILE):
+        try:
+            os.makedirs(os.path.dirname(SYSTEM_PID_FILE), exist_ok=True)
+            with open(SYSTEM_PID_FILE, 'w') as f:
+                f.write(str(os.getpid()))
+        except Exception:
+            pass
     try:
         with open(SYSTEM_PID_FILE) as f:
             pid = int(f.read().strip())
