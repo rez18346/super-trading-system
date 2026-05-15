@@ -1193,6 +1193,9 @@ class IndustrialTrader:
         """Мониторинг состояния системы"""
         while self.running:
             try:
+                # Синхронизация реального баланса с биржи (раз в 60 сек)
+                self._save_real_balance()
+                
                 # Обновление статистики
                 self.update_stats()
                 
@@ -1218,6 +1221,40 @@ class IndustrialTrader:
             except Exception as e:
                 logger.error(f"Ошибка мониторинга: {e}")
                 time.sleep(30)
+    
+    def _save_real_balance(self):
+        """Сохраняет реальный баланс с биржи в /tmp/real_balance.json
+        для дашборда (control_api). Раз в 60 сек."""
+        try:
+            balance = self.exchange.fetch_balance()
+            total_usdt = balance['total'].get('USDT', 0)
+            free_usdt = balance['free'].get('USDT', 0)
+            
+            # Стоимость позиций по текущей цене
+            pos_value = 0
+            pos_count = 0
+            for currency, amount in balance['total'].items():
+                if currency != 'USDT' and amount > 0.000001:
+                    try:
+                        ticker = self.exchange.fetch_ticker(f"{currency}/USDT")
+                        value_usdt = amount * ticker['last']
+                        if value_usdt > 1.0:
+                            pos_value += value_usdt
+                            pos_count += 1
+                    except Exception:
+                        pass
+            
+            data = {
+                'total': round(total_usdt + pos_value, 2),
+                'free_usdt': round(free_usdt, 2),
+                'in_positions': round(pos_value, 2),
+                'positions_count': pos_count,
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+            }
+            with open('/tmp/real_balance.json', 'w') as f:
+                json.dump(data, f)
+        except Exception as e:
+            logger.debug(f"Balance save: {e}")
     
     def update_stats(self):
         """Обновление статистики"""

@@ -87,28 +87,42 @@ _init_capital_table()
 # ─── ФОНОВЫЙ СБОРЩИК КАПИТАЛА ───────────────────────────────────────────────
 
 def _snapshot_worker():
-    """Фоновый поток: каждые 60 сек снэпшот капитала."""
+    """Фоновый поток: каждые 60 сек снэпшот капитала.
+    Берёт реальные данные из /tmp/real_balance.json (пишется трейдером раз в 60 сек).
+    """
     while True:
         try:
             pid = None
             try:
                 with open(SYSTEM_PID_FILE) as f:
                     pid = int(f.read().strip())
-                os.kill(pid, 0)  # проверка живости
+                os.kill(pid, 0)
             except Exception:
                 pid = None
 
             if pid:
-                positions = db.get_all_positions()
-                pos_value = sum(p['quantity'] * p['entry_price'] for p in positions.values())
-                count = len(positions)
+                # Читаем реальный баланс с биржи
+                try:
+                    with open('/tmp/real_balance.json') as f:
+                        real = json.load(f)
+                    total = real['total']
+                    pos_value = real['in_positions']
+                    free_usdt = real['free_usdt']
+                    count = real['positions_count']
+                except Exception:
+                    # Фолбэк: считаем по entry_price (неточно)
+                    positions = db.get_all_positions()
+                    pos_value = sum(p['quantity'] * p['entry_price'] for p in positions.values())
+                    count = len(positions)
+                    total = 0
+                    free_usdt = 0
 
                 conn = sqlite3.connect(CAPITAL_DB)
                 try:
                     conn.execute(
                         "INSERT INTO capital_snapshots (total, positions_value, free_usdt, positions_count) "
                         "VALUES (?, ?, ?, ?)",
-                        (round(pos_value + 270, 2), round(pos_value, 2), 270, count)
+                        (round(total, 2), round(pos_value, 2), round(free_usdt, 2), count)
                     )
                     conn.commit()
                 finally:
@@ -297,10 +311,27 @@ def get_status_snapshot() -> dict:
         pnl = {"total_pnl": 0, "total_trades": 0, "win_rate": 0}
 
     total_in_positions = sum(p['quantity'] * p['entry_price'] for p in positions.values())
-    balance_info = {
-        'in_positions': round(total_in_positions, 2),
-        'positions_count': len(positions),
-    }
+    
+    # Реальный баланс с биржи (если доступен)
+    real_balance = None
+    try:
+        with open('/tmp/real_balance.json') as f:
+            real_balance = json.load(f)
+    except Exception:
+        pass
+    
+    if real_balance:
+        balance_info = {
+            'in_positions': round(real_balance['in_positions'], 2),
+            'positions_count': real_balance['positions_count'],
+            'free_usdt': round(real_balance['free_usdt'], 2),
+            'total': round(real_balance['total'], 2),
+        }
+    else:
+        balance_info = {
+            'in_positions': round(total_in_positions, 2),
+            'positions_count': len(positions),
+        }
 
     trades_history = []
     try:
