@@ -407,8 +407,8 @@ def get_status_snapshot() -> dict:
     try:
         log_lines = read_log_tail(1000)
         for line in reversed(log_lines):
-            # 🔮 BTC Direction: side (conf=50%, strength=50, up=33% down=33%)
-            dm = re.search(r'BTC Direction: (\w+) \(conf=(\d+)%, strength=(\d+), up=(\d+)% down=(\d+)%\)', line)
+            # 🔮 BTC Direction: side (conf=50%, strength=50, up=33% down=33%) или с side=
+            dm = re.search(r'BTC Direction: (\w+) \(conf=(\d+)%, strength=(\d+), up=(\d+)% down=(\d+)%', line)
             if dm:
                 btc_direction = {
                     'direction': dm.group(1),
