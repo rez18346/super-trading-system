@@ -39,10 +39,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, classification_report, precision_score, recall_score, f1_score
 from sklearn.ensemble import VotingClassifier
 
-# Борьба с дисбалансом классов
-from imblearn.over_sampling import SMOTE
-from imblearn.combine import SMOTEENN
-
 logger = logging.getLogger('btc_direction')
 
 # ─────────────────────────────────────────────
