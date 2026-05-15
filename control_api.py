@@ -33,10 +33,11 @@ from typing import Optional, AsyncGenerator
 from pathlib import Path
 
 import re
+import traceback
 import db
 import uvicorn
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 
 log = logging.getLogger('control_api')
 
@@ -47,6 +48,14 @@ SYSTEM_LOG_FILE = "/tmp/system_v4.log"
 CAPITAL_DB = db.get_db_path()  # используем ту же БД
 
 app = FastAPI(title="Super System Dashboard", version="1.0.0")
+
+
+# ─── ГЛОБАЛЬНЫЙ ОБРАБОТЧИК ОШИБОК ────────────────────────────────────────────
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Перехватывает все необработанные исключения, логирует и возвращает generic-сообщение."""
+    log.error(f"Unhandled exception ({request.url.path}): {exc}\n{traceback.format_exc()}")
+    return JSONResponse(status_code=500, content={"error": "Внутренняя ошибка сервера"})
 
 
 # ─── ИНИЦИАЛИЗАЦИЯ ───────────────────────────────────────────────────────────
@@ -437,7 +446,9 @@ async def api_trade_history():
             for r in rows
         ]}
     except Exception as e:
-        return {'trades': [], 'error': str(e)}
+        log.error(f"trade-history: {e}")
+        log.debug(traceback.format_exc())
+        return {'trades': [], 'error': 'Internal server error'}
 
 
 CHANGELOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'workspace', 'memory', '2026-05-01.md')
@@ -459,7 +470,9 @@ async def api_changelog():
             'lines': ''.join(tail)
         }
     except Exception as e:
-        return {'file': None, 'lines': f'Файл изменений не найден: {e}', 'total_lines': 0}
+        log.error(f"changelog: {e}")
+        log.debug(traceback.format_exc())
+        return {'file': None, 'lines': 'Файл изменений не найден', 'total_lines': 0}
 
 
 @app.get("/api/capital-history")
@@ -475,7 +488,9 @@ async def api_capital_history():
         conn.close()
         return {'points': [{'t': r['created_at'], 'v': r['total']} for r in rows]}
     except Exception as e:
-        return {'points': [], 'error': str(e)}
+        log.error(f"capital-history: {e}")
+        log.debug(traceback.format_exc())
+        return {'points': [], 'error': 'Internal server error'}
 
 
 @app.get("/api/events")
@@ -807,7 +822,9 @@ async def api_veto_history(limit: int = 15):
         vetol = veto[-limit:]
         return {"entries": list(reversed(vetol)), "total": len(vetol)}
     except Exception as e:
-        return {"error": str(e), "entries": [], "total": 0}
+        log.error(f"veto-history: {e}")
+        log.debug(traceback.format_exc())
+        return {"error": "Internal server error", "entries": [], "total": 0}
 
 
 @app.get("/api/vote-history")
@@ -824,7 +841,9 @@ async def api_vote_history(symbol: str = "", limit: int = 50):
         history = history[-limit:]
         return {"entries": list(reversed(history)), "total": len(history)}
     except Exception as e:
-        return {"error": str(e), "entries": [], "total": 0}
+        log.error(f"vote-history: {e}")
+        log.debug(traceback.format_exc())
+        return {"error": "Internal server error", "entries": [], "total": 0}
 
 
 @app.get("/api/last-trade")
