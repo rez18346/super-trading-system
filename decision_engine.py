@@ -1018,6 +1018,7 @@ class DecisionEngine:
         
         # ═══ BTC DIRECTION PREDICTOR ═══════════════════════════════════════
         btc_bonus = 0
+        threshold = 0  # Инициализация на случай раннего return
         try:
             if self._btc_predictor is None:
                 from btc_direction import BTCDirectionPredictor
@@ -1050,6 +1051,8 @@ class DecisionEngine:
             adv_score=scores['advisor']['score'],
             vsa_score=scores['vsa']['score']
         )
+        
+        logger.debug(f"[threshold] symbol={symbol} threshold={threshold} strong={strong_votes} liq={scores['liquidity']['score']} adv={scores['advisor']['score']} vsa={scores['vsa']['score']} final_score={final_score}")
         
         # Разбивка голосов для логов/дашборда
         votes_str = (
