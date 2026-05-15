@@ -96,6 +96,11 @@ class BTCDirectionPredictor:
         self._last_fetch_time = 0
         self._fetch_cooldown = 300  # 5 минут между обновлением кеша
         
+        # Funding Rate / Open Interest (опционально)
+        self.fr_oi_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'data', 'btc_fr_oi.csv')
+        self._fr_oi_data = None  # Кеш FR/OI DataFrame
+        
         # Статистика
         self.stats = {
             'predictions': 0,
@@ -149,6 +154,50 @@ class BTCDirectionPredictor:
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df.set_index('timestamp', inplace=True)
         return df
+    
+    def _load_fr_oi(self) -> Optional[pd.DataFrame]:
+        """Загрузить funding rate + open interest из CSV.
+        
+        Возвращает DataFrame с колонками:
+          fr_rate, oi_amount, oi_value
+        Индекс — datetime (UTC).
+        """
+        if self._fr_oi_data is not None:
+            return self._fr_oi_data
+        
+        if not os.path.exists(self.fr_oi_path):
+            logger.warning("⚠️ FR/OI CSV не найден — пропускаем")
+            return None
+        
+        try:
+            df = pd.read_csv(self.fr_oi_path)
+            df['timestamp'] = pd.to_datetime(pd.to_numeric(df['timestamp']), unit='ms')
+            df.set_index('timestamp', inplace=True)
+            
+            # Конвертируем в числа (пустые строки → NaN)
+            df['funding_rate'] = pd.to_numeric(df['funding_rate'], errors='coerce')
+            df['open_interest'] = pd.to_numeric(df['open_interest'], errors='coerce')
+            df['open_interest_value'] = pd.to_numeric(df['open_interest_value'], errors='coerce')
+            
+            # Переименуем для краткости
+            df.rename(columns={
+                'funding_rate': 'fr_rate',
+                'open_interest': 'oi_amount',
+                'open_interest_value': 'oi_value',
+            }, inplace=True)
+            
+            # Сортируем по времени
+            df.sort_index(inplace=True)
+            
+            # Убираем дубли по индексу (если FR и OI пришли отдельно для одного ts)
+            df = df[~df.index.duplicated(keep='first')]
+            
+            self._fr_oi_data = df
+            logger.info(f"📊 FR/OI: загружено {len(df)} записей (FR={df['fr_rate'].notna().sum()}, OI={df['oi_amount'].notna().sum()})")
+            return df
+        except Exception as e:
+            logger.warning(f"⚠️ FR/OI загрузка: {e}")
+            return None
     
     # ════════════════════════════════════════
     # 2. FEATURE ENGINEERING (30+ фич)
@@ -289,6 +338,39 @@ class BTCDirectionPredictor:
         for lag in [1, 2, 3, 6, 12, 24]:
             df[f'close_lag_{lag}'] = df['close'].shift(lag)
             df[f'volume_lag_{lag}'] = df['volume'].shift(lag)
+        
+        # ─── Funding Rate / Open Interest ═══════════
+        fr_oi = self._load_fr_oi()
+        if fr_oi is not None and len(fr_oi) > 0:
+            # Merge_asof: каждой 1H свече — последний известный FR (8H) и OI (1H)
+            df_aligned = pd.merge_asof(
+                df[[]], fr_oi[['fr_rate', 'oi_amount', 'oi_value']],
+                left_index=True, right_index=True,
+                direction='backward', tolerance=pd.Timedelta('8h')
+            )
+            df['fr_rate'] = df_aligned['fr_rate']
+            df['oi_amount'] = df_aligned['oi_amount']
+            df['oi_value'] = df_aligned['oi_value']
+            
+            # Forward-fill: FR действителен до следующего funding
+            df['fr_rate'] = df['fr_rate'].ffill(limit=8)
+            
+            # Производные признаки
+            df['fr_change_8h'] = df['fr_rate'].diff(8) * 10000  # в б.п.
+            df['oi_change_24h'] = df['oi_amount'].pct_change(24) * 100
+            df['oi_change_4h'] = df['oi_amount'].pct_change(4) * 100
+            
+            # Заполняем NaN для старых свечей (где нет OI)
+            for col in ['fr_rate', 'oi_amount', 'oi_value', 'fr_change_8h', 'oi_change_24h', 'oi_change_4h']:
+                df[col] = df[col].fillna(0)
+        else:
+            # Нет данных — нулевые значения
+            df['fr_rate'] = 0.0
+            df['oi_amount'] = 0.0
+            df['oi_value'] = 0.0
+            df['fr_change_8h'] = 0.0
+            df['oi_change_24h'] = 0.0
+            df['oi_change_4h'] = 0.0
         
         # ─── Таргет ════════════════════
         future_close = df['close'].shift(-TARGET_HOURS_AHEAD)
