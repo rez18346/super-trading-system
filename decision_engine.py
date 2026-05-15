@@ -1033,9 +1033,9 @@ class DecisionEngine:
         if btc_bonus <= -999:
             return {
                 'approved': False,
-                'reason': f"VETO: BTC падает >2% за 6ч",
+                'reason': 'VETO: BTC падает >2% за 6ч',
                 'final_score': 0,
-                'threshold': threshold,
+                'threshold': 0,
                 'votes': {},
             }
         
