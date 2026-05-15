@@ -514,9 +514,11 @@ async def api_capital_history():
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT total, created_at FROM capital_snapshots "
-            "ORDER BY id ASC LIMIT 500"
+            "ORDER BY id DESC LIMIT 500"
         ).fetchall()
         conn.close()
+        # Разворачиваем в хронологическом порядке
+        rows.reverse()
         return {'points': [{'t': r['created_at'], 'v': r['total']} for r in rows]}
     except Exception as e:
         log.error(f"capital-history: {e}")
@@ -780,7 +782,7 @@ function updBar(d){
   document.getElementById('stRunning').innerHTML=r?'🟢 В работе':'🔴 Остановлена';
   document.getElementById('stRunning').className='value '+(r?'green':'red');
   document.getElementById('stPositions').textContent=Object.keys(d.positions||{}).length+'/5';
-  document.getElementById('stCapital').innerHTML=(d.balance?fmtP(d.balance.in_positions+270):'$0')+' <span style="font-size:12px;color:#8b949e">(всего)</span>';
+  document.getElementById('stCapital').innerHTML=(d.balance?fmtP(d.balance.total):'$0')+' <span style="font-size:12px;color:#8b949e">(всего)</span>';
   document.getElementById('stTrades').textContent=d.pnl?.total_trades||0;
   const btcR=d.btc_regime||{regime:'—',recommendation:''};
   const regimeEl=document.getElementById('stBtcRegime');
