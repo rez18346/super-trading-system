@@ -322,18 +322,10 @@ class BTCDirectionPredictor:
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
             
-            # ─── SMOTE — oversampling редких классов ═══════════════
-            try:
-                smote = SMOTE(
-                    sampling_strategy={0: 300, 1: 500, 2: 300},  # минимум 300 каждого класса
-                    k_neighbors=5,
-                    random_state=42
-                )
-                X_train_bal, y_train_bal = smote.fit_resample(X_train_scaled, y_train)
-                logger.info(f"   → SMOTE: {len(y_train)}→{len(y_train_bal)} (UP={sum(y_train_bal==2)} DOWN={sum(y_train_bal==0)} SIDE={sum(y_train_bal==1)})")
-            except Exception as e:
-                logger.warning(f"   SMOTE не сработал: {e}, используем оригинальные данные")
-                X_train_bal, y_train_bal = X_train_scaled, y_train
+            # ─── Без SMOTE — используем оригинальные данные с агрессивными весами ═══
+            # SMOTE понижает точность на тесте (тестовые данные не сбалансированы)
+            # Вместо этого — сильные веса для UP/DOWN
+            X_train_bal, y_train_bal = X_train_scaled, y_train
             
             # ─── LightGBM ═════════════════════
             lgbm = LGBMClassifier(
@@ -365,8 +357,8 @@ class BTCDirectionPredictor:
             )
             
             # ─── Веса классов для повышения чувствительности к UP/DOWN ═══
-            # DOWN=3x, SIDE=1x, UP=4x — редко встречающиеся классы важнее
-            class_weights = {0: 3.0, 1: 1.0, 2: 4.0}
+            # Агрессивные веса: UP=5x, DOWN=3x (UP важнее не пропустить)
+            class_weights = {0: 3.0, 1: 1.0, 2: 5.0}
             sample_weight_arr = np.ones(len(X_train_bal))
             for cls, w in class_weights.items():
                 sample_weight_arr[y_train_bal == cls] = w
