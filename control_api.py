@@ -438,6 +438,40 @@ def get_status_snapshot() -> dict:
     except Exception:
         pass
     
+    # BTC Liquidity — ордерблоки и поток из лога
+    btc_liquidity = {}
+    try:
+        log_lines = read_log_tail(1000)
+        for line in reversed(log_lines):
+            if 'BTC/USDT' in line and 'Liq:' in line:
+                # Парсим Liq:score(POC=...)
+                lm = re.search(r'Liq:(\d+)\(POC=([\d.]+) VAH=([\d.]+) VAL=([\d.]+) q=([\d.]+) fvg↑=(\d+) fvg↓=(\d+)', line)
+                if lm:
+                    btc_liquidity = {
+                        'score': int(lm.group(1)),
+                        'poc': float(lm.group(2)),
+                        'vah': float(lm.group(3)),
+                        'val': float(lm.group(4)),
+                        'quality': float(lm.group(5)),
+                        'fvg_above': int(lm.group(6)),
+                        'fvg_below': int(lm.group(7)),
+                    }
+                    # Добавляем OB и POC тренд
+                    ob_match = re.search(r'OB(\d+) (\w+) (\w+)', line)
+                    if ob_match:
+                        btc_liquidity['ob_count'] = int(ob_match.group(1))
+                        btc_liquidity['ob_type'] = ob_match.group(2)
+                        btc_liquidity['ob_direction'] = ob_match.group(3)
+                    if 'POC↑' in line:
+                        btc_liquidity['poc_trend'] = 'up'
+                    elif 'POC↓' in line:
+                        btc_liquidity['poc_trend'] = 'down'
+                    else:
+                        btc_liquidity['poc_trend'] = 'flat'
+                    break
+    except Exception:
+        pass
+    
     return {
         'running': running,
         'pid': pid,
@@ -449,6 +483,7 @@ def get_status_snapshot() -> dict:
         'btc_regime': btc_regime,
         'btc_direction': btc_direction,
         'btc_analysis': btc_analysis,
+        'btc_liquidity': btc_liquidity,
         'log_tail': read_log_tail(5),
     }
 
@@ -594,7 +629,8 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
   <div class="status-card"><h3>Сделок</h3><div class="value" id="stTrades">0</div></div>
   <div class="status-card"><h3>BTC Режим</h3><div class="value" id="stBtcRegime">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2"><h3>BTC Направление</h3><div class="value" id="stBtcDirection" style="font-size:13px">загрузка...</div></div>
-  <div class="status-card"><h3>BTC Анализ</h3><div class="value" id="stBtcAnalysis">загрузка...</div></div>
+  <div class="status-card" style="grid-column:span 2"><h3>BTC Анализ</h3><div class="value" id="stBtcAnalysis">загрузка...</div></div>
+  <div class="status-card" style="grid-column:span 2"><h3>📊 BTC Order Flow</h3><div class="value" id="stBtcLiquidity" style="font-size:12px">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2"><h3>🚀 Последняя сделка</h3><div class="value" id="stLastTrade" style="font-size:12px">загрузка...</div></div>
 </div>
 
@@ -793,6 +829,26 @@ function updBar(d){
   const btcA=d.btc_analysis||{};
   const aEl=document.getElementById('stBtcAnalysis');
   if(aEl){aEl.innerHTML=btcA.price?'$'+fmtP(btcA.price)+' | '+btcA.trend+' | RSI='+btcA.rsi:'загрузка...';aEl.className='value '+(btcA.trend==='bullish'?'green':btcA.trend==='bearish'?'red':'');}
+  
+  // 🧊 BTC Order Flow / Liquidity
+  const btcL=d.btc_liquidity||{};
+  const lEl=document.getElementById('stBtcLiquidity');
+  if(lEl){
+    if(btcL.score!=null){
+      const liqColor=btcL.score>=75?'green':btcL.score>=50?'#d29922':'red';
+      const obInfo=btcL.ob_count?((btcL.ob_direction==='bullish'?'🟢':'🔴')+' OB'+btcL.ob_count+' '+btcL.ob_type+' '+btcL.ob_direction):'—';
+      const pocDir={'up':'▲','down':'▼','flat':'→'}[btcL.poc_trend]||'→';
+      const fvgInfo=(btcL.fvg_above||0)+'↑ '+(btcL.fvg_below||0)+'↓';
+      lEl.innerHTML='<b style="color:'+liqColor+'">Liq Score: '+btcL.score+'</b> | POC=$'+fmtP(btcL.poc)+' '+pocDir+
+        ' | VAH=$'+fmtP(btcL.vah)+' | VAL=$'+fmtP(btcL.val)+
+        ' | FVG: '+fvgInfo+
+        ' | OB: '+obInfo;
+      lEl.className='value';
+    }else{
+      lEl.innerHTML='Нет данных — BTC не в активной оценке';
+      lEl.className='value';
+    }
+  }
   
   // 🚀 Последняя сделка
   fetch('/api/last-trade').then(r=>r.json()).then(t=>{
