@@ -35,8 +35,12 @@ from lightgbm import LGBMClassifier
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, precision_score, recall_score, f1_score
 from sklearn.ensemble import VotingClassifier
+
+# Борьба с дисбалансом классов
+from imblearn.over_sampling import SMOTE
+from imblearn.combine import SMOTEENN
 
 logger = logging.getLogger('btc_direction')
 
@@ -44,16 +48,16 @@ logger = logging.getLogger('btc_direction')
 # КОНСТАНТЫ
 # ─────────────────────────────────────────────
 LOOKBACK_HOURS = 1000          # Сколько свечей 1H для обучения
-TARGET_HOURS_AHEAD = 4         # На сколько часов вперёд предсказываем
+TARGET_HOURS_AHEAD = 2         # На сколько часов вперёд предсказываем (было 4 — слишком долго для биткоина)
 MIN_TRAIN_SAMPLES = 200        # Минимальное количество для обучения
 MODEL_PATH = os.path.join(os.path.dirname(__file__), 'data', 'btc_direction.pkl')
 SCALER_PATH = os.path.join(os.path.dirname(__file__), 'data', 'btc_scaler.pkl')
 FEATURES_PATH = os.path.join(os.path.dirname(__file__), 'data', 'btc_features.json')
 
 # Параметры для классификации направления
-UP_THRESHOLD = 0.010     # +1.0% за TARGET_HOURS_AHEAD = UP (было 0.5% — много шума, 1.5% — мало примеров)
-DOWN_THRESHOLD = -0.005  # -0.5% = DOWN (оставляем старый — падения важнее не пропустить)
-SIDE_ZONE = 0.003      # ±0.3% вокруг нуля = SIDE
+UP_THRESHOLD = 0.005     # +0.5% за TARGET_HOURS_AHEAD = UP (было 1.0% — слишком мало примеров)
+DOWN_THRESHOLD = -0.004  # -0.4% = DOWN (было -0.5% — чуть снизили для большего покрытия)
+SIDE_ZONE = 0.0015     # ±0.15% вокруг нуля = SIDE (было 0.3% — слишком широкая слепая зона)
 
 
 class BTCDirectionPredictor:
@@ -318,36 +322,54 @@ class BTCDirectionPredictor:
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
             
+            # ─── SMOTE — oversampling редких классов ═══════════════
+            try:
+                smote = SMOTE(
+                    sampling_strategy={0: 300, 1: 500, 2: 300},  # минимум 300 каждого класса
+                    k_neighbors=5,
+                    random_state=42
+                )
+                X_train_bal, y_train_bal = smote.fit_resample(X_train_scaled, y_train)
+                logger.info(f"   → SMOTE: {len(y_train)}→{len(y_train_bal)} (UP={sum(y_train_bal==2)} DOWN={sum(y_train_bal==0)} SIDE={sum(y_train_bal==1)})")
+            except Exception as e:
+                logger.warning(f"   SMOTE не сработал: {e}, используем оригинальные данные")
+                X_train_bal, y_train_bal = X_train_scaled, y_train
+            
             # ─── LightGBM ═════════════════════
             lgbm = LGBMClassifier(
-                n_estimators=300,
+                n_estimators=500,
                 max_depth=8,
-                learning_rate=0.05,
+                learning_rate=0.03,
                 num_leaves=31,
                 subsample=0.8,
                 colsample_bytree=0.8,
+                min_child_samples=20,
                 class_weight='balanced',
                 random_state=42,
                 verbose=-1
             )
             
             # ─── XGBoost ═════════════════════
+            up_ratio = max(class_counts.get(2, 1), 1) / max(class_counts.get(0, 1), 1)
             xgb = XGBClassifier(
-                n_estimators=400,
+                n_estimators=500,
                 max_depth=6,
-                learning_rate=0.05,
+                learning_rate=0.03,
                 subsample=0.8,
                 colsample_bytree=0.8,
-                scale_pos_weight=2.0,
+                min_child_weight=5,
+                reg_alpha=0.1,
+                reg_lambda=0.1,
                 random_state=42,
                 verbosity=0
             )
             
             # ─── Веса классов для повышения чувствительности к UP/DOWN ═══
-            class_weights = {0: 2.0, 1: 1.0, 2: 2.5}  # DOWN=2x, SIDE=1x, UP=2.5x
-            sample_weight_arr = np.ones(len(X_train_scaled))
+            # DOWN=3x, SIDE=1x, UP=4x — редко встречающиеся классы важнее
+            class_weights = {0: 3.0, 1: 1.0, 2: 4.0}
+            sample_weight_arr = np.ones(len(X_train_bal))
             for cls, w in class_weights.items():
-                sample_weight_arr[y_train == cls] = w
+                sample_weight_arr[y_train_bal == cls] = w
             
             # ─── Ансамбль ════════════════════
             ensemble = VotingClassifier(
@@ -356,7 +378,7 @@ class BTCDirectionPredictor:
             )
             
             # Обучение
-            ensemble.fit(X_train_scaled, y_train, sample_weight=sample_weight_arr)
+            ensemble.fit(X_train_bal, y_train_bal, sample_weight=sample_weight_arr)
             
             # Оценка на тесте
             y_pred = ensemble.predict(X_test_scaled)
@@ -366,10 +388,18 @@ class BTCDirectionPredictor:
             report = classification_report(y_test, y_pred, target_names=['DOWN', 'SIDE', 'UP'],
                                            output_dict=True, zero_division=0)
             up_precision = report.get('UP', {}).get('precision', 0)
+            up_recall = report.get('UP', {}).get('recall', 0)
             down_precision = report.get('DOWN', {}).get('precision', 0)
+            down_recall = report.get('DOWN', {}).get('recall', 0)
+            side_precision = report.get('SIDE', {}).get('precision', 0)
+            side_recall = report.get('SIDE', {}).get('recall', 0)
             
             logger.info(f"🎯 BTC Direction: accuracy={accuracy:.1%}, "
-                       f"UP precision={up_precision:.1%}, DOWN precision={down_precision:.1%}")
+                       f"UP precision={up_precision:.1%} recall={up_recall:.1%}, "
+                       f"DOWN precision={down_precision:.1%} recall={down_recall:.1%}, "
+                       f"SIDE precision={side_precision:.1%} recall={side_recall:.1%}")
+            
+
             
             # Сохраняем модель
             self.model = ensemble
@@ -450,12 +480,13 @@ class BTCDirectionPredictor:
             down_prob = probs[0] if len(probs) > 0 else 0.33
             side_prob = probs[1] if len(probs) > 1 else 0.33
             
-            # Определяем направление — порог снижен до 0.40 для лучшей чувствительности
-            if up_prob > down_prob and up_prob > side_prob and up_prob > 0.40:
+            # Определяем направление — порог 0.35 даёт больше сигналов
+            # После SMOTE модель должна увереннее различать UP/DOWN
+            if up_prob > down_prob and up_prob > side_prob and up_prob > 0.35:
                 direction = 'up'
                 confidence = up_prob
                 strength = min(int(up_prob * 100), 100)
-            elif down_prob > up_prob and down_prob > side_prob and down_prob > 0.40:
+            elif down_prob > up_prob and down_prob > side_prob and down_prob > 0.35:
                 direction = 'down'
                 confidence = down_prob
                 strength = min(int(down_prob * 100), 100)
