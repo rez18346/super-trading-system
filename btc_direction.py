@@ -7,8 +7,9 @@ btc_direction.py — BTC Direction Predictor.
 
 Архитектура:
   1. Data Pipeline: 1000+ свечей 1H BTC
-  2. Feature Engineering: 30+ фич (RSI, MACD, EMA, Volume, HMM, ATR, Liq)
-  3. LightGBM + XGBoost ансамбль для прогноза UP/DOWN/SIDE
+  2. Feature Engineering: 60+ фич (RSI, MACD, EMA, Volume, HMM, ATR,
+     VWAP, MFI, OBV, Time-сессии, свечные паттерны)
+  3. LightGBM + XGBoost + RandomForest + ExtraTrees ансамбль
   4. Выход: сигнал силы и направления → DecisionEngine
 
 Интеграция:
@@ -247,6 +248,38 @@ class BTCDirectionPredictor:
         df['red_streak'] = (1 - df['green_candle']).groupby(
             (df['green_candle'] == df['green_candle'].shift()).cumsum()).cumsum()
         
+        # ─── VWAP — ключевой институциональный уровень ════
+        vwap = (df['volume'] * (df['high'] + df['low'] + df['close']) / 3).rolling(24).sum() / df['volume'].rolling(24).sum()
+        df['vwap'] = vwap
+        df['vwap_dist'] = (df['close'] - vwap) / vwap * 100  # % от VWAP
+        df['vwap_cross'] = ((df['close'] > vwap) & (df['close'].shift(1) <= vwap.shift(1))).astype(int)
+        df['vwap_slope'] = vwap.diff(4) / vwap * 100  # наклон VWAP за 4ч
+        
+        # ─── MFI — Money Flow Index (объём + цена) ════════
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        money_flow = typical_price * df['volume']
+        positive_flow = money_flow.where(typical_price > typical_price.shift(1), 0).rolling(14).sum()
+        negative_flow = money_flow.where(typical_price < typical_price.shift(1), 0).rolling(14).sum()
+        mfi_ratio = positive_flow / negative_flow.replace(0, np.nan)
+        df['mfi_14'] = 100 - (100 / (1 + mfi_ratio))
+        df['mfi_14'] = df['mfi_14'].fillna(50)
+        df['mfi_divergence'] = df['mfi_14'] - df['rsi_14']  # расхождение объёма и цены
+        
+        # ─── OBV — On-Balance Volume тренд ═══════════════
+        obv = (df['volume'] * ((df['close'] > df['close'].shift(1)).astype(int) * 2 - 1)).cumsum()
+        df['obv'] = obv
+        df['obv_ema'] = obv.ewm(span=20).mean()
+        df['obv_slope'] = (obv - obv.shift(12)) / obv.shift(12).abs() * 100
+        
+        # ─── Время — внутридневные паттерны BTC ════════════
+        hour = df.index.hour
+        df['hour_sin'] = np.sin(2 * np.pi * hour / 24)
+        df['hour_cos'] = np.cos(2 * np.pi * hour / 24)
+        # Азиатская/Европейская/Американская сессия
+        df['session_asia'] = ((hour >= 0) & (hour < 8)).astype(int)
+        df['session_europe'] = ((hour >= 8) & (hour < 16)).astype(int) 
+        df['session_usa'] = ((hour >= 16) & (hour < 24)).astype(int)
+        
         # ─── HMM режим ═════════════════
         # Простая proxy-оценка волатильности по ценам
         vol_20 = df['returns_1h'].rolling(20).std().fillna(0.5)
@@ -363,9 +396,31 @@ class BTCDirectionPredictor:
             for cls, w in class_weights.items():
                 sample_weight_arr[y_train_bal == cls] = w
             
-            # ─── Ансамбль ════════════════════
+            # ─── RandomForest — ловит нелинейные паттерны ═════
+            from sklearn.ensemble import RandomForestClassifier
+            rf = RandomForestClassifier(
+                n_estimators=300,
+                max_depth=8,
+                min_samples_leaf=10,
+                class_weight='balanced',
+                random_state=42,
+                n_jobs=4
+            )
+            
+            # ─── ExtraTrees — альтернативный взгляд ════════════
+            from sklearn.ensemble import ExtraTreesClassifier
+            et = ExtraTreesClassifier(
+                n_estimators=300,
+                max_depth=8,
+                min_samples_leaf=10,
+                class_weight='balanced',
+                random_state=42,
+                n_jobs=4
+            )
+            
+            # ─── Ансамбль (4 модели) — разнообразие = стабильность ═══
             ensemble = VotingClassifier(
-                estimators=[('lgbm', lgbm), ('xgb', xgb)],
+                estimators=[('lgbm', lgbm), ('xgb', xgb), ('rf', rf), ('et', et)],
                 voting='soft'
             )
             
