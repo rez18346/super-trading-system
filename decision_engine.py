@@ -276,9 +276,9 @@ class DecisionEngine:
     # ⚡ ЗАЛОЖЕНО ПОД ШОРТ: side='short' инвертирует уровни
 
     _SL_TP_BY_REGIME = {
-        0: {'sl': 3.0, 'tp': 8.0,   'trail_act': 2.0, 'trail_dist': 1.2},  # CALM
-        1: {'sl': 5.0, 'tp': 10.0,  'trail_act': 2.5, 'trail_dist': 1.5},  # NORMAL
-        2: {'sl': 8.0, 'tp': 14.0,  'trail_act': 3.0, 'trail_dist': 2.0},  # VOLATILE
+        0: {'sl': 2.5, 'tp': 8.0,   'trail_act': 2.0, 'trail_dist': 1.2},  # CALM
+        1: {'sl': 2.5, 'tp': 10.0,  'trail_act': 2.5, 'trail_dist': 1.5},  # NORMAL
+        2: {'sl': 2.5, 'tp': 14.0,  'trail_act': 3.0, 'trail_dist': 2.0},  # VOLATILE
     }
 
     def get_sl_tp_params(self, side: str = 'long') -> dict:
