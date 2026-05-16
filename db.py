@@ -189,7 +189,8 @@ def sync_positions_from_exchange(exchange, enabled_pairs: List[str],
         try:
             ticker = exchange.fetch_ticker(pair)
             current_price = ticker['last'] or ticker['ask'] or 0
-        except:
+        except Exception as _e:
+            logger and logger.debug("bare except in db: %s", _e) if "logger" in dir() else None
             current_price = 0
 
         # Считаем weighted average из trade_history
@@ -432,7 +433,8 @@ def sync_orders_from_exchange(exchange, db_path=None):
         try:
             import logging
             logger = logging.getLogger('db')
-        except:
+        except Exception as _e:
+            logger and logger.debug("bare except in db: %s", _e) if "logger" in dir() else None
             pass
         if logger and count > 0:
             logger.info(f"[DB] Синхронизировано {count} ордеров с биржи")
@@ -440,7 +442,8 @@ def sync_orders_from_exchange(exchange, db_path=None):
         try:
             import logging
             logging.getLogger('db').warning(f"[DB] Ошибка синхронизации ордеров: {e}")
-        except:
+        except Exception as _e:
+            logger and logger.debug("bare except in db: %s", _e) if "logger" in dir() else None
             pass
     return count
 

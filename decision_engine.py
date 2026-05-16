@@ -12,14 +12,17 @@ decision_engine.py — Единый центр принятия торговых
 
 Голоса на вход (DecisionEngine._evaluate_entry_ensemble):
   1. MLProfessionalV2 (LightGBM, 27/16 признаков, 5M+1H+4H)  — 20%
-  2. MLAdvisor (RandomForest, 9 признаков, паттерны+VWAP+D1) — 10%
-  3. HMM Режим + Cогласованность трендов (5M/1H/4H)         — 25%
+  2. MLAdvisor (RandomForest, 9 признаков, паттерны+VWAP+D1) — 35%  🏆 усилен (забрал голос RVB)
+  3. RSI/Vol/BTC (RSI<30 oversold + объёмный spike)          — 0%   ❌ отключён (дублирует Advisor)
   4. LiquidityCluster v2 (Order Flow/Block/Sweep)            — 25%
   5. Volume/VWAP (VWAP реверсия + Volume Spike)              — 20%
   ──────────────────────────────────────────────────────────
-  RSI/Vol/BTC — 0% (отключён, зарезервирован)
-  Порог входа: 65 (адаптивный: CALM=57, NORMAL=65, VOLATILE=70)
-  Жёсткое вето: 1H или 4H bearish + BTC падает → блокировка
+  MTF — 0% (информационно, без веса)
+  VSA — 0% (информационно, без веса)
+  VSA — 0% (информационно, без веса)
+  Порог входа: 60 (адаптивный: CALM=52, NORMAL=60, VOLATILE=65)
+  VETO: макс(1H=-15, 4H=-25) + BTC(до -25) — не складываем таймфреймы
+  Override VETO: Liq≥75 + VV≥70 + Adv≥80 → игнорировать VETO
 
 Приоритеты на выход: SL > TP > трейлинг > 48ч таймаут
 """
@@ -471,43 +474,51 @@ class DecisionEngine:
                     reason=reason
                 )
         
-        # 3. BTC-корреляция: не входить если BTC падает
+        # 3. BTC-корреляция: штраф вместо блокировки
+        veto_penalty = 0
+        veto_reasons = []
+        
         if btc_p is not None and self._btc_reference_price is not None:
             btc_change_4h = (btc_p - self._btc_reference_price) / self._btc_reference_price * 100
             if btc_change_4h < -1.5:
-                reason = f"VETO: BTC упал на {btc_change_4h:.1f}% за период"
+                penalty = min(25, int(abs(btc_change_4h) * 10))
+                veto_penalty += penalty
+                veto_reasons.append(f"BTC-{btc_change_4h:.1f}%")
                 self.stats['veto_btc_drop'] += 1
-                self._save_veto_vote(symbol, current_price, reason, side)
-                return Decision(symbol, 'hold', side=side, reason=reason)
         
-        # 4. Multi-timeframe veto: не входить против старшего ТФ
+        # 4. Multi-timeframe veto: штраф к score вместо блокировки
+        # Берём максимум из двух, не складываем (1H=-15, 4H=-25, оба=-25)
         # ⚡ ЗАЛОЖЕНО ПОД ШОРТ: для short — блокировка при bullish
         veto_trends_long = ('strong_bearish',)      # Long: не входить на медвежьем ТФ
         veto_trends_short = ('strong_bullish',)     # Short: не входить на бычьем ТФ
         veto_trends = veto_trends_short if is_short else veto_trends_long
         veto_label = 'bullish' if is_short else 'bearish'
         
+        max_tf_penalty = 0
         if c1h is not None and len(c1h) > 0:
             try:
                 trend_1h = self._calc_trend_from_candles(c1h)
                 if trend_1h in veto_trends:
-                    reason = f"VETO: 1H тренд {veto_label}"
+                    max_tf_penalty = 15
                     self.stats['veto_mtf_conflict'] += 1
-                    self._save_veto_vote(symbol, current_price, reason, side)
-                    return Decision(symbol, 'hold', side=side, reason=reason)
-            except:
-                pass
+            except Exception as _e:
+                logger.debug(f"[VETO] calc_trend 1h: {_e}")
         
         if c4h is not None and len(c4h) > 0:
             try:
                 trend_4h = self._calc_trend_from_candles(c4h)
                 if trend_4h in veto_trends:
-                    reason = f"VETO: 4H тренд {veto_label}"
+                    max_tf_penalty = 25
                     self.stats['veto_mtf_conflict'] += 1
-                    self._save_veto_vote(symbol, current_price, reason, side)
-                    return Decision(symbol, 'hold', side=side, reason=reason)
-            except:
-                pass
+            except Exception as _e:
+                logger.debug(f"[VETO] calc_trend 4h: {_e}")
+        
+        if max_tf_penalty > 0:
+            veto_penalty += max_tf_penalty
+            veto_reasons.append("TF")
+        
+        # BTC штраф остаётся отдельно (до -25)
+        # Всего: макс TF(-15..-25) + BTC(0..-25) = до -50
         
         # ═══ АНСАМБЛЬ ГОЛОСОВ ═══════════════════════════════════════════════
         
@@ -516,6 +527,29 @@ class DecisionEngine:
             candles_5m=candles_5m, candles_1h=c1h, candles_4h=c4h,
             side=side
         )
+        
+        # ═══ ПРИМЕНЕНИЕ VETO-ШТРАФА ═══════════════════════════════════════
+        if veto_penalty > 0:
+            # Override: Liq≥75 + VV≥70 + Adv≥80 → сигнал сильнее VETO
+            liq_score = entry_checks.get('liquidity_score', 0)
+            adv_score = entry_checks.get('advisor_score', 0)
+            vv_votes = entry_checks.get('votes', {}).get('volume_vwap', {})
+            vv_score = vv_votes.get('score', 50) if isinstance(vv_votes, dict) else 50
+            
+            if liq_score >= 75 and vv_score >= 70 and adv_score >= 80:
+                logger.info(f"⚠️ [DE→VETO_OVERRIDE] {symbol}: VETO {'/'.join(veto_reasons)} проигнорирован — сильный объёмный сигнал (Liq={liq_score} VV={vv_score} Adv={adv_score})")
+            else:
+                score = entry_checks.get('final_score', 65)
+                score -= veto_penalty
+                entry_checks['final_score'] = score
+                veto_reason_str = '/'.join(veto_reasons)
+                entry_checks['reason'] += f" | VETO({veto_reason_str}): -{veto_penalty}pts score={score:.0f}"
+                if score < entry_checks.get('threshold', 65):
+                    entry_checks['approved'] = False
+                logger.debug(f"[DE→VETO] {symbol}: штраф -{veto_penalty} ({veto_reason_str})")
+            
+            # Сохраняем VETO-голос для дашборда
+            self._save_veto_vote(symbol, current_price, f"VETO: {'/'.join(veto_reasons)} -{veto_penalty}pts", side)
         
         if entry_checks['approved']:
             self.stats['entry_decisions'] += 1
@@ -577,7 +611,8 @@ class DecisionEngine:
                 try:
                     with open(vote_log_path, 'r') as f:
                         history = json.load(f)
-                except:
+                except Exception as _e:
+                    logger.debug(f"[vote_log] load: {_e}")
                     history = []
             history.append(vote_record)
             if len(history) > 10000:
@@ -622,7 +657,7 @@ class DecisionEngine:
     # АНСАМБЛЬ ГОЛОСОВ
     # ═══════════════════════════════════════════════════════════════════════
     
-    _ENTRY_THRESHOLD = 65.0
+    _ENTRY_THRESHOLD = 60.0
     
     def _get_entry_threshold(self, strong_votes: int = 0, liq_score: float = 0,
                               adv_score: float = 0, vsa_score: float = 0) -> float:
@@ -690,14 +725,14 @@ class DecisionEngine:
         # ⚡ БАЗОВЫЕ ВЕСА
         BASE_WEIGHTS = {
             'ml_v2': 0.20,
-            'advisor': 0.10,
-            'mtf': 0.20,   # было 0.35 — сумма была 1.15, теперь 1.0
-            'rsi_vol_btc': 0.00,
+            'advisor': 0.35,
+            'mtf': 0.00,   # информационно, без веса
+            'rsi_vol_btc': 0.00,  # отключён — дублирует Advisor (LightGBM уже использует RSI)
             'liquidity': 0.25,
-            'volume_vwap': 0.15,
-            'vsa': 0.10,
+            'volume_vwap': 0.20,
+            'vsa': 0.00,   # информационно, без веса
         }
-        # Сумма весов = 1.0 (0.20+0.10+0.20+0.00+0.25+0.15+0.10)
+        # Сумма весов = 1.0 (0.20+0.20+0.00+0.15+0.25+0.20+0.00)
 
         scores = {}
         for k, w in BASE_WEIGHTS.items():
@@ -744,7 +779,8 @@ class DecisionEngine:
                     try:
                         import pandas as _pd
                         adv_df = _pd.DataFrame(candles_5m)
-                    except:
+                    except Exception as _e:
+                        logger.debug(f"[Advisor] df build: {_e}")
                         adv_df = None
                 adv = self._ml_advisor.evaluate(
                     symbol, current_price, rsi, trend, confidence,
@@ -1105,7 +1141,8 @@ class DecisionEngine:
                     try:
                         with open(vote_log_path, 'r') as f:
                             history = json.load(f)
-                    except:
+                    except Exception as _e:
+                        logger.debug(f"[vote_log2] load: {_e}")
                         history = []
                 history.append(vote_record)
                 # Держим последние 10000 записей

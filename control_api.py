@@ -953,7 +953,8 @@ async def api_last_trade():
                 data = json.load(f)
             # Не стираем — дашборд сам решит когда обновить
             return data
-        except:
+        except Exception as _e:
+            logger.debug("bare except in control_api: %s", _e)
             return {"symbol": None, "side": None, "price": 0, "timestamp": 0}
     return {"symbol": None, "side": None, "price": 0, "timestamp": 0}
 

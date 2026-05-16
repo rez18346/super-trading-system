@@ -92,6 +92,9 @@ class BTCDirectionPredictor:
         self._last_fetch_time = 0
         self._fetch_cooldown = 300  # 5 минут между обновлением кеша
         
+        # Кеш для calculate_bonus (HTTP запрос только раз в 60с)
+        self._bonus_cache = {'result': 0, 'timestamp': 0}
+        
         # Funding Rate / Open Interest (опционально)
         self.fr_oi_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), 'data', 'btc_fr_oi.csv')
@@ -572,7 +575,8 @@ class BTCDirectionPredictor:
             
             try:
                 X_scaled = self.scaler.transform(X)
-            except:
+            except Exception as _e:
+                logger.debug(f"[BTCDirection] scaler.transform: {_e}")
                 return self._default_signal()
             
             # Прогноз вероятностей
@@ -730,6 +734,13 @@ class BTCDirectionPredictor:
         Returns:
             Модификация Score (может быть отрицательной)
         """
+        # ═══ КЭШ HTTP-ЗАПРОСОВ ═══
+        # calculate_bonus вызывается на КАЖДУЮ монету в цикле (20-30 раз за итерацию).
+        # Данные BTC меняются раз в 5 минут — нет смысла долбить API каждые 2 секунды.
+        now = time.time()
+        if now - self._bonus_cache['timestamp'] < 60:
+            return self._bonus_cache['result']
+        
         # ═══ BTC ДИНАМИЧЕСКИЙ ФИЛЬТР ═══
         # Следим за изменением BTC за разные окна через биржу.
         # Если не можем получить данные — пропускаем (безопасный режим).
@@ -745,12 +756,14 @@ class BTCDirectionPredictor:
             ).json()
             
             if 'result' not in d or 'list' not in d['result']:
+                self._bonus_cache = {'result': 0, 'timestamp': now}
                 return 0
             
             candles = d['result']['list']
             closes = np.array([float(c[4]) for c in candles], dtype=float)
             
             if len(closes) < 72:
+                self._bonus_cache = {'result': 0, 'timestamp': now}
                 return 0
             
             # Рассчитываем изменения за разные окна
@@ -766,6 +779,7 @@ class BTCDirectionPredictor:
             # 1. Блокировка при сильном падении
             if change_6h < -2.0:
                 # Вето на все лонги — BTC упал >2% за 6 часов
+                self._bonus_cache = {'result': -999, 'timestamp': now}
                 return -999
             
             # 2. Штраф при падении
@@ -797,9 +811,11 @@ class BTCDirectionPredictor:
                     logger.debug(f"   ↑ объёмный отскок (x{vol_ratio:.1f}): бонус усилен до {bonus:+.0f}")
             
             logger.debug(f"BTC bonus: 3h={change_3h:+.1f}% 6h={change_6h:+.1f}% → bonus={bonus:+.0f}")
+            self._bonus_cache = {'result': bonus, 'timestamp': now}
             return bonus
         except Exception as e:
             logger.debug(f"BTC bonus error: {e}")
+            self._bonus_cache = {'result': 0, 'timestamp': now}
             return 0
 
 

@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 VWAP_LOOKBACK_1H = 12           # Скользящий VWAP на 12 часов
 VWAP_LOOKBACK_1D = 24           # Дневной VWAP
-SPIKE_STD_THRESHOLD = 1.8       # Аномалия: >1.8σ от среднего объёма (было 2.0)
-VWAP_REVERSION_THRESHOLD = 0.012  # 1.2% от VWAP (было 1.5%) — раньше видим зону
+SPIKE_STD_THRESHOLD = 1.5       # Аномалия: >1.5σ от среднего объёма — чувствительнее к всплескам
+VWAP_REVERSION_THRESHOLD = 0.008  # 0.8% от VWAP (было 1.2%) — раньше видим зону реверсии
 VWAP_BREAKOUT_THRESHOLD = 0.003  # 0.3% — пробой VWAP (было 0.2%)
 VOLUME_LOOKBACK = 20            # Окно среднего объёма
 VOLUME_LOW_MARKET_FACTOR = 0.7  # Коэффициент снижения порога на тихом рынке

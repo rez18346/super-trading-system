@@ -47,6 +47,25 @@ def _get_exchange():
         import ccxt
         with open(CONFIG_PATH) as f:
             cfg = json.load(f)
+        
+        # 🔐 Переопределение из .env
+        env_path = os.path.join(os.path.dirname(__file__), '.env')
+        if os.path.exists(env_path):
+            try:
+                with open(env_path) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('#') or '=' not in line:
+                            continue
+                        key, val = line.split('=', 1)
+                        key, val = key.strip(), val.strip().strip("'\"")
+                        if key == 'BYBIT_API_KEY' and val:
+                            cfg['bybit']['api_key'] = val
+                        elif key == 'BYBIT_SECRET' and val:
+                            cfg['bybit']['secret'] = val
+            except Exception as e:
+                logger.warning(f"⚠️ .env load error: {e}")
+        
         _EXCHANGE = ccxt.bybit({
             'apiKey': cfg['bybit']['api_key'],
             'secret': cfg['bybit']['secret'],
@@ -113,7 +132,8 @@ class MLAdvisor:
             with open(CONFIG_PATH) as f:
                 cfg = json.load(f)
             self.pairs = cfg['trading']['enabled_pairs']
-        except:
+        except Exception as _e:
+            logger.debug("bare except in ml_advisor: %s", _e)
             self.pairs = []
 
         logger.info(f"🧠 ML-Советник v2 (XGBoost) инициализирован (модель: {'готова' if self.is_trained else 'ожидает обучения'})")
@@ -269,7 +289,8 @@ class MLAdvisor:
             if df_btc is not None and len(df_btc) > 3:
                 btc_closes = df_btc['close'].values
                 features['btc_change_1h'] = (btc_closes[-1] - btc_closes[-2]) / btc_closes[-2]
-        except:
+        except Exception as _e:
+            logger.debug("bare except in ml_advisor: %s", _e)
             pass
 
         # MultiTF из D1 и SMA20
@@ -282,7 +303,8 @@ class MLAdvisor:
                 
                 sma20 = np.mean(closes_d1[-20:])
                 features['price_above_sma20'] = 1.0 if current_price > sma20 else 0.0
-        except:
+        except Exception as _e:
+            logger.debug("bare except in ml_advisor: %s", _e)
             pass
 
         # VWAP из 1H
@@ -293,7 +315,8 @@ class MLAdvisor:
                 volumes_1h = df_1h['volume'].values
                 vwap = np.sum(closes_1h[-12:] * volumes_1h[-12:]) / (np.sum(volumes_1h[-12:]) + 0.0001)
                 features['vwap_dist'] = (current_price - vwap) / vwap
-        except:
+        except Exception as _e:
+            logger.debug("bare except in ml_advisor: %s", _e)
             pass
 
         return [features['rsi'], features['trend'], features['volatility'],

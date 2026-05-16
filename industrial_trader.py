@@ -8,6 +8,7 @@
 import json
 import time
 import logging
+import os
 from datetime import datetime, timezone
 import ccxt
 import pandas as pd
@@ -205,11 +206,37 @@ class IndustrialTrader:
             return None, None
     
     def load_config(self, config_path: str):
-        """Загрузка конфигурации из JSON файла"""
+        """Загрузка конфигурации из JSON файла + переопределение из .env"""
         try:
             with open(config_path, 'r') as f:
                 self.config = json.load(f)
             logger.info(f"Конфигурация загружена из {config_path}")
+            
+            # 🔐 Переопределение API-ключей из .env (безопаснее, чем в JSON)
+            env_path = os.path.join(os.path.dirname(__file__), '.env')
+            if os.path.exists(env_path):
+                try:
+                    with open(env_path) as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line or line.startswith('#') or '=' not in line:
+                                continue
+                            key, val = line.split('=', 1)
+                            key, val = key.strip(), val.strip().strip("'\"")
+                            if key == 'BYBIT_API_KEY' and val:
+                                self.config['bybit']['api_key'] = val
+                                logger.debug(f".env: BYBIT_API_KEY загружен")
+                            elif key == 'BYBIT_SECRET' and val:
+                                self.config['bybit']['secret'] = val
+                                logger.debug(f".env: BYBIT_SECRET загружен")
+                            elif key == 'BYBIT_PASSWORD' and val:
+                                self.config['bybit']['password'] = val
+                                logger.debug(f".env: BYBIT_PASSWORD загружен")
+                    logger.info("🔐 API-ключи из .env применены")
+                except Exception as e:
+                    logger.warning(f"⚠️ Ошибка чтения .env: {e}")
+            else:
+                logger.warning(f"⚠️ .env не найден ({env_path}) — используются ключи из JSON")
         except Exception as e:
             logger.error(f"Ошибка загрузки конфигурации: {e}")
             raise
@@ -329,8 +356,8 @@ class IndustrialTrader:
             }
             with open('/tmp/trade_alert.json', 'w') as f:
                 json.dump(alert, f)
-        except:
-            pass
+        except Exception as _e:
+            logger.debug(f"[_notify_trade] alert save: {_e}")
 
     def check_risk_limits(self) -> bool:
         """Проверка лимитов риска"""
@@ -389,7 +416,10 @@ class IndustrialTrader:
         logger.info(f"Размер позиции для {symbol}: ${position_size:.2f} ({tier}, score={score:.0f}), {quantity:.6f} units")
         return quantity
     
-    def execute_trade(self, symbol: str, side: str, quantity: float, price: float) -> Optional[Dict]:
+    def execute_trade(self, symbol: str, side: str, quantity: float, price: float,
+                      sl_price: Optional[float] = None, tp_price: Optional[float] = None,
+                      trail_act: Optional[bool] = None, trail_dist: Optional[float] = None,
+                      max_hold_h: Optional[int] = None) -> Optional[Dict]:
         """Выполнение торговой операции"""
         try:
             # В режиме бумажной торговли только симулируем
@@ -538,13 +568,23 @@ class IndustrialTrader:
                                 'entry_price': real_entry,
                                 'entry_time': datetime.now().isoformat(),
                                 'max_profit': 0.0,
-                                '_created_at': time.time()  # 🛡️ Для защиты от sync-удаления
+                                '_created_at': time.time(),  # 🛡️ Для защиты от sync-удаления
+                                '_sl_price': sl_price,
+                                '_tp_price': tp_price,
+                                '_trail_act': trail_act,
+                                '_trail_dist': trail_dist,
+                                '_max_hold_h': max_hold_h,
                             }
                         else:
                             self.positions[symbol]['quantity'] = actual_qty
                             self.positions[symbol]['entry_price'] = real_entry
                             self.positions[symbol]['entry_time'] = datetime.now().isoformat()
                             self.positions[symbol]['_created_at'] = time.time()
+                            self.positions[symbol]['_sl_price'] = sl_price
+                            self.positions[symbol]['_tp_price'] = tp_price
+                            self.positions[symbol]['_trail_act'] = trail_act
+                            self.positions[symbol]['_trail_dist'] = trail_dist
+                            self.positions[symbol]['_max_hold_h'] = max_hold_h
                         # 💰 Обновляем доступный капитал сразу (предотвращает двойные BUY)
                         order_cost = actual_qty * real_entry
                         self.available_capital = max(0, self.available_capital - order_cost)
@@ -728,8 +768,8 @@ class IndustrialTrader:
                     try:
                         btc_ticker = self.exchange.fetch_ticker('BTC/USDT')
                         btc_price = btc_ticker['last']
-                    except:
-                        pass
+                    except Exception as _e:
+                        logger.debug(f"[trading_cycle] btc fetch: {_e}")
                 
                 # Инициализация DecisionEngine (синглтон — один на весь процесс)
                 if not hasattr(self, '_de'):
@@ -924,13 +964,27 @@ class IndustrialTrader:
                                         logger.warning(f"🛡️ {symbol}: кулдаун {remain/60:.0f}мин (SL защита). Пропускаю BUY.")
                                         continue
                                 
-                                # 🛡️ ЗАЩИТА ОТ ДВОЙНЫХ входов: если символ уже куплен в последние 30с
+                                # 🛡️ ЗАЩИТА ОТ ДВОЙНЫХ входов: 5 мин кулдаун + БД проверка
                                 _buy_lock = getattr(self, '_buy_locks', {})
                                 last_buy = _buy_lock.get(symbol, 0.0)
-                                if time.time() - last_buy < 30:
-                                    remaining = int(30 - (time.time() - last_buy))
+                                if time.time() - last_buy < 300:
+                                    remaining = int(300 - (time.time() - last_buy))
                                     logger.warning(f"🔒 {symbol}: блокировка повторного BUY ({remaining}с)")
                                     continue
+                                # Дополнительная проверка: есть ли уже позиция в БД
+                                import sqlite3
+                                try:
+                                    db_path = self.db_path
+                                    _conn = sqlite3.connect(db_path)
+                                    _c = _conn.cursor()
+                                    _c.execute('SELECT COUNT(*) FROM positions WHERE symbol=? AND quantity>0', (symbol,))
+                                    if _c.fetchone()[0] > 0:
+                                        logger.warning(f"🛡️ {symbol}: уже есть в БД, пропускаю повторный BUY")
+                                        _conn.close()
+                                        continue
+                                    _conn.close()
+                                except Exception as _e:
+                                    logger.debug(f"[buy_lock] DB check: {_e}")
                                 _buy_lock[symbol] = time.time()
                                 self._buy_locks = _buy_lock
                                 
@@ -940,12 +994,10 @@ class IndustrialTrader:
                                 quantity = base_qty * size_mult
                                 if quantity * de_price <= self.available_capital:
                                     # ✅ ЗАПОМИНАЕМ SL/TP УРОВНИ ОТ DE в позиции
-                                    sl_price = decision.sl_price
-                                    tp_price = decision.tp_price
-                                    trail_act = decision.trail_act
-                                    trail_dist = decision.trail_dist
-                                    max_hold_h = decision.max_hold_h
-                                    self.execute_trade(symbol, 'buy', quantity, de_price)
+                                    self.execute_trade(symbol, 'buy', quantity, de_price,
+                                        sl_price=decision.sl_price, tp_price=decision.tp_price,
+                                        trail_act=decision.trail_act, trail_dist=decision.trail_dist,
+                                        max_hold_h=decision.max_hold_h)
                                 else:
                                     logger.warning(f"⏭️ [DE] {symbol}: недостаточно капитала")
                             else:
@@ -1124,11 +1176,10 @@ class IndustrialTrader:
                                 try:
                                     from ml_advisor import ml_add_result, ml_train
                                     pos = self.positions[symbol]
+                                    # analysis гарантированно определена (строки 856-857 до if/else)
                                     ml_add_result(symbol, pos['entry_price'], current_price,
-                                                  analysis['rsi'] if 'analysis' in dir() else 50,
-                                                  analysis['trend'] if 'analysis' in dir() else 'neutral',
-                                                  analysis['confidence'] if 'analysis' in dir() else 0.5,
-                                                  0.1, sell_reason)
+                                                  analysis['rsi'], analysis['trend'],
+                                                  analysis['confidence'], 0.1, sell_reason)
                                     ml_train()
                                 except Exception as e:
                                     logger.warning(f"ML обучение: {e}")

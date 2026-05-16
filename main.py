@@ -94,6 +94,28 @@ class TradingSystem:
         with open(config_path) as f:
             self.config = json.load(f)
         
+        # 🔐 Загрузка API-ключей из .env (безопаснее, чем в JSON)
+        env_path = os.path.join(os.path.dirname(__file__), '.env')
+        if os.path.exists(env_path):
+            try:
+                import re
+                with open(env_path) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith('#') or '=' not in line:
+                            continue
+                        key, val = line.split('=', 1)
+                        key, val = key.strip(), val.strip().strip("'\"")
+                        if key == 'BYBIT_API_KEY' and val:
+                            self.config['bybit']['api_key'] = val
+                        elif key == 'BYBIT_SECRET' and val:
+                            self.config['bybit']['secret'] = val
+                        elif key == 'BYBIT_PASSWORD' and val:
+                            self.config['bybit']['password'] = val
+                logger.info("🔐 API-ключи из .env применены")
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка чтения .env: {e}")
+        
         # Инициализация БД (создаёт таблицы если нет)
         db.init_db()
         
@@ -287,7 +309,8 @@ class TradingSystem:
                     total += val
                     pnl_pct = (ticker['last'] - pos['entry_price']) / pos['entry_price'] * 100
                     pos_lines.append(f"{sym}: ${val:.2f} @ ${ticker['last']:.4f} ({pnl_pct:+.2f}%)")
-                except:
+                except Exception as _e:
+                    logger.debug("bare except in main: %s", _e)
                     pos_lines.append(f"{sym}: ${pos['quantity'] * pos['entry_price']:.2f}")
             
             logger.info("=" * 45)
@@ -328,7 +351,8 @@ def main():
         try:
             if os.path.exists(PID_FILE):
                 os.remove(PID_FILE)
-        except:
+        except Exception as _e:
+            logger.debug("bare except in main: %s", _e)
             pass
         sys.exit(0)
     
