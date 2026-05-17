@@ -1049,21 +1049,25 @@ class DecisionEngine:
         scores['_reversal_bonus'] = {'score': reversal_bonus, 'weight': 1.0}
         scores['_price_bonus'] = {'score': price_bonus, 'weight': 1.0}
         
-        # ═══ ИТОГОВЫЙ СКОР ═════════════════════════════════════════════════
-        final_score = sum(v['score'] * v['weight'] for v in scores.values())
-        
         # ═══ BTC DIRECTION PREDICTOR ═══════════════════════════════════════
+        # Вычисляем ДО final_score, чтобы штраф/бонус BTC влиял на итоговую оценку
         btc_bonus = 0
         threshold = 0  # Инициализация на случай раннего return
         try:
             if self._btc_predictor is None:
                 from btc_direction import BTCDirectionPredictor
                 self._btc_predictor = BTCDirectionPredictor()
-            btc_bonus = self._btc_predictor.calculate_bonus(final_score)
+            # Предварительный score (без бонуса) для расчёта масштаба штрафа
+            preliminary_score = sum(v['score'] * v['weight'] for v in scores.values())
+            btc_bonus = self._btc_predictor.calculate_bonus(preliminary_score)
             scores['_btc_bonus'] = {'score': btc_bonus, 'weight': 1.0}
         except Exception as e:
             scores['_btc_bonus'] = {'score': 0, 'weight': 1.0}
             logger.debug(f"BTC Direction: ошибка: {e}")
+        
+        # ═══ ИТОГОВЫЙ СКОР ═════════════════════════════════════════════════
+        # Теперь в scores есть все компоненты, включая btc_bonus
+        final_score = sum(v['score'] * v['weight'] for v in scores.values())
         
         # ═══ БЛОКИРОВКА ОТ BTC ═══════════════════════════════════════════
         # Если btc_bonus == -999 — жёсткое veto на лонги (BTC падает >2% за 6ч)
