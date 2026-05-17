@@ -23,6 +23,7 @@ import sys
 import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, 'data')
 sys.path.insert(0, BASE_DIR)
 
 import json
@@ -30,8 +31,10 @@ import time
 import logging
 import threading
 import ssl
+import csv
+import pandas as pd
 from typing import Dict, List, Optional, Callable, Set
-from collections import defaultdict
+from collections import defaultdict, deque
 from enum import Enum
 
 logger = logging.getLogger('ws_client')
@@ -75,18 +78,21 @@ class BybitWebSocketClient:
     def __init__(self, symbols: List[str] = None,
                  price_cache: PriceCache = None,
                  ohlcv_cache: OHLCVCache = None,
-                 kline_intervals: List[str] = None):
+                 kline_intervals: List[str] = None,
+                 cvd_collector: Optional['CVDCollector'] = None):
         """
         Args:
             symbols: список символов (SOLUSDT, BTCUSDT и т.д.)
             price_cache: экземпляр PriceCache (или None — создаст сам)
             ohlcv_cache: экземпляр OHLCVCache (или None — создаст сам)
             kline_intervals: таймфреймы для свечей (['60', '240'])
+            cvd_collector: экземпляр CVDCollector (или None)
         """
         self.symbols = symbols or []
         self.price_cache = price_cache or PriceCache()
         self.ohlcv_cache = ohlcv_cache or OHLCVCache()
         self.kline_intervals = kline_intervals or ['60', '240']  # 1H, 4H
+        self.cvd_collector: Optional['CVDCollector'] = cvd_collector
         
         # Состояние соединения
         self.state = ConnectionState.DISCONNECTED
@@ -258,12 +264,14 @@ class BybitWebSocketClient:
                 logger.warning(f"⚠️ Ошибка подписки: {ret}")
             return
         
-        # Тематическое сообщение (ticker / kline)
+        # Тематическое сообщение (ticker / kline / trade)
         topic = data.get('topic', '')
         if topic.startswith('tickers.'):
             self._handle_ticker(data)
         elif topic.startswith('kline.'):
             self._handle_kline(data)
+        elif topic.startswith('publicTrade.'):
+            self._handle_trade(data)
     
     def _on_error(self, ws, error):
         """Ошибка WebSocket."""
@@ -289,6 +297,11 @@ class BybitWebSocketClient:
         """Подписаться на все каналы."""
         args = self._build_ticker_args() + self._build_kline_args()
         
+        # Добавляем publicTrade для CVD, если есть коллектор
+        if self.cvd_collector:
+            trade_args = ['publicTrade.BTCUSDT']
+            args += trade_args
+        
         if not args:
             logger.warning("Нет символов для подписки")
             return
@@ -302,9 +315,10 @@ class BybitWebSocketClient:
                 "args": batch
             }))
         
+        trade_count = len(trade_args) if self.cvd_collector else 0
         logger.info(f"📡 Подписан на {len(self.symbols)} ticker'ов + "
-                     f"{len(self.symbols) * len(self.kline_intervals)} kline'ов "
-                     f"({len(args)} args)")
+                     f"{len(self.symbols) * len(self.kline_intervals)} kline'ов + "
+                     f"{trade_count} trade(arg)")
     
     def _subscribe(self, symbols: List[str]):
         """Подписаться на новые символы."""
@@ -390,6 +404,32 @@ class BybitWebSocketClient:
             # Для append_candle последняя свеча с тем же start обновится
             self.ohlcv_cache.append_candle(normalized, interval, candle_tuple)
     
+    # ─── CVD TRADE ─────────────────────────────────────────────────────
+    
+    def _handle_trade(self, data: dict):
+        """Обработать publicTrade сообщение для CVD."""
+        if not self.cvd_collector:
+            return
+        
+        try:
+            trades = data.get('data', [])
+            if not isinstance(trades, list):
+                trades = [trades]
+            
+            for trade in trades:
+                if not isinstance(trade, dict):
+                    continue
+                # Bybit V5 format: T=trade_time_ms, S=Buy/Sell, p=price, v=volume
+                ts = int(trade.get('T') or trade.get('timestamp') or 0)
+                side = (trade.get('S') or trade.get('side') or 'Buy').upper()
+                price = self._safe_float(trade.get('p') or trade.get('price'))
+                volume = self._safe_float(trade.get('v') or trade.get('size') or trade.get('volume'))
+                
+                if price and volume and ts:
+                    self.cvd_collector.add_trade(price, volume, side, ts)
+        except Exception as e:
+            logger.debug(f"[CVD] _handle_trade error: {e}")
+    
     # ─── ВСПОМОГАТЕЛЬНЫЕ ───────────────────────────────────────────────
     
     @staticmethod
@@ -425,13 +465,151 @@ class BybitWebSocketClient:
                 logger.debug(f"State callback error: {e}")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# CVD Collector — Cumulative Volume Delta на 1-минутных агрегациях
+# ═══════════════════════════════════════════════════════════════════════════
+
+CVD_DATA_PATH = os.path.join(DATA_DIR, 'btc_cvd_1m.csv')
+
+
+class CVDCollector:
+    """
+    Сбор и агрегация CVD (Cumulative Volume Delta) из publicTrade потока.
+    
+    Берёт сделки из WebSocket (цена, объём, сторона), агрегирует в 1-минутные
+    корзины, сохраняет в CSV для последующей подачи в BTC модель.
+    
+    Данные доступны:
+      - .get_recent(n) — последние n минут CVD
+      - .save() — сброс на диск
+      - .load() — загрузка с диска
+    """
+    
+    def __init__(self, max_minutes: int = 1440):
+        self.max_minutes = max_minutes  # 24 часа данных в памяти
+        self.minutes: Dict[int, dict] = {}  # {unixtime_minute: {buy_vol, sell_vol, count}}
+        self._last_save_time = 0
+        self.load()
+    
+    def add_trade(self, price: float, volume: float, side: str, timestamp_ms: int):
+        """Добавить сделку в корзину."""
+        minute_key = (timestamp_ms // 60000) * 60  # округляем до минуты
+        
+        if minute_key not in self.minutes:
+            self.minutes[minute_key] = {
+                'ts': minute_key,
+                'buy_vol': 0.0,
+                'sell_vol': 0.0,
+                'buy_usd': 0.0,
+                'sell_usd': 0.0,
+                'count': 0,
+            }
+        
+        bucket = self.minutes[minute_key]
+        volume_usd = price * volume
+        
+        if side.upper() == 'BUY':
+            bucket['buy_vol'] += volume
+            bucket['buy_usd'] += volume_usd
+        else:
+            bucket['sell_vol'] += volume
+            bucket['sell_usd'] += volume_usd
+        bucket['count'] += 1
+        
+        # Автосохранение каждые 60 секунд
+        if time.time() - self._last_save_time > 60:
+            self.save()
+        
+        # Ограничение размера кеша
+        if len(self.minutes) > self.max_minutes * 1.1:
+            keys = sorted(self.minutes.keys())
+            for k in keys[:len(keys) - self.max_minutes]:
+                del self.minutes[k]
+    
+    def get_cvd(self, minute_key: int) -> Optional[float]:
+        """Вернуть чистый CVD (buy - sell) за указанную минуту."""
+        bucket = self.minutes.get(minute_key)
+        if not bucket:
+            return None
+        return bucket['buy_usd'] - bucket['sell_usd']
+    
+    def get_recent(self, n_minutes: int = 60) -> pd.DataFrame:
+        """Вернуть последние n минут CVD как DataFrame.
+        
+        Колонки:
+          - ts: timestamp (unix)
+          - cvd_net: buy_usd - sell_usd (чистый CVD в USD)
+          - cvd_ratio: buy_vol / sell_vol (отношение объёмов)
+          - buy_vol, sell_vol: объёмы
+          - buy_usd, sell_usd: объёмы в USD
+          - trade_count: количество сделок
+          - cvd_accum: накопленный CVD с начала сессии
+        """
+        keys = sorted(self.minutes.keys())
+        if not keys:
+            return pd.DataFrame()
+        
+        recent = [self.minutes[k] for k in keys[-n_minutes:]]
+        df = pd.DataFrame(recent)
+        if df.empty:
+            return df
+        
+        df['cvd_net'] = df['buy_usd'] - df['sell_usd']
+        df['cvd_ratio'] = df['buy_vol'] / (df['sell_vol'] + 1e-10)
+        df['cvd_accum'] = df['cvd_net'].cumsum()
+        df['ts_label'] = pd.to_datetime(df['ts'], unit='s', utc=True)
+        return df
+    
+    def save(self):
+        """Сохранить CVD данные в CSV."""
+        try:
+            os.makedirs(DATA_DIR, exist_ok=True)
+            keys = sorted(self.minutes.keys())
+            if not keys:
+                return
+            rows = []
+            for k in keys:
+                b = self.minutes[k]
+                rows.append({
+                    'ts': k,
+                    'buy_vol': round(b['buy_vol'], 6),
+                    'sell_vol': round(b['sell_vol'], 6),
+                    'buy_usd': round(b['buy_usd'], 2),
+                    'sell_usd': round(b['sell_usd'], 2),
+                    'count': b['count'],
+                })
+            df = pd.DataFrame(rows)
+            df.to_csv(CVD_DATA_PATH, index=False)
+            self._last_save_time = time.time()
+            logger.debug(f"[CVD] сохранено {len(rows)} минут")
+        except Exception as e:
+            logger.debug(f"[CVD] save error: {e}")
+    
+    def load(self):
+        """Загрузить CVD данные из CSV."""
+        try:
+            if not os.path.exists(CVD_DATA_PATH):
+                return
+            df = pd.read_csv(CVD_DATA_PATH)
+            for _, row in df.iterrows():
+                ts = int(row['ts'])
+                self.minutes[ts] = {
+                    'ts': ts,
+                    'buy_vol': float(row['buy_vol']),
+                    'sell_vol': float(row['sell_vol']),
+                    'buy_usd': float(row['buy_usd']),
+                    'sell_usd': float(row['sell_usd']),
+                    'count': int(row['count']),
+                }
+            logger.info(f"[CVD] загружено {len(df)} минут из CSV")
+        except Exception as e:
+            logger.debug(f"[CVD] load error: {e}")
+
+
 # ─── УДОБНАЯ ФУНКЦИЯ ДЛЯ ИНТЕГРАЦИИ С main.py ──────────────────────────────
 
 _global_ws_client: Optional[BybitWebSocketClient] = None
-
-
-# Глобальный экземпляр (устанавливается main.py)
-_global_ws_client: Optional[BybitWebSocketClient] = None
+_global_cvd: Optional[CVDCollector] = None
 
 
 def set_global_client(client: BybitWebSocketClient):
@@ -443,3 +621,15 @@ def set_global_client(client: BybitWebSocketClient):
 def get_ws_client() -> Optional[BybitWebSocketClient]:
     """Вернуть глобальный WebSocket-клиент."""
     return _global_ws_client
+
+
+def get_cvd_collector() -> Optional[CVDCollector]:
+    """Вернуть глобальный CVD Collector."""
+    return _global_cvd
+
+
+def init_cvd_collector() -> CVDCollector:
+    """Создать и сохранить глобальный CVD Collector."""
+    global _global_cvd
+    _global_cvd = CVDCollector()
+    return _global_cvd

@@ -79,7 +79,7 @@ from error_handler import ErrorHandler, RetryConfig
 from data_cache import (PriceCache, OHLCVCache, CachedDataFetcher,
                          get_fetcher,
                          patch_exchange_fetch_ticker, patch_exchange_create_order)
-from ws_client import BybitWebSocketClient, set_global_client
+from ws_client import BybitWebSocketClient, set_global_client, init_cvd_collector, get_cvd_collector
 from btc_direction import BTCDirectionPredictor
 
 
@@ -193,17 +193,21 @@ class TradingSystem:
                 logger.warning("Нет символов для WebSocket подписки")
                 return
             
+            # Инициализируем CVD Collector (Cumulative Volume Delta для BTC)
+            cvd = init_cvd_collector()
+            
             # Используем существующий кеш (передаём явно, чтобы был тот же синглтон)
             self.ws_client = BybitWebSocketClient(
                 symbols=symbols,
                 price_cache=self.price_cache,
                 ohlcv_cache=self.ohlcv_cache,
+                cvd_collector=cvd,
             )
             self.ws_client.start()
             # Сохраняем глобально для доступа из других модулей
             from ws_client import set_global_client
             set_global_client(self.ws_client)
-            logger.info(f"🌐 WebSocket запущен: {len(symbols)} символов")
+            logger.info(f"🌐 WebSocket запущен: {len(symbols)} символов + CVD")
         except Exception as e:
             logger.warning(f"⚠️ WebSocket не запущен (будет REST fallback): {e}")
             self.ws_client = None

@@ -446,16 +446,20 @@ def get_status_snapshot() -> dict:
     except Exception:
         pass
     
-    # BTC Liquidity — ордерблоки и поток из лога
+    # Liquidity — ордерблоки и Order Flow из лога
+    # Сначала ищем BTCLiq (реальные BTC данные от btc_direction._log_btc_liquidity),
+    # если нет — берём последний доступный Liq альткоина как proxy.
     btc_liquidity = {}
     try:
         log_lines = read_log_tail(1000)
+        
+        # Сначала ищем BTCLiq — реальные BTC данные
         for line in reversed(log_lines):
-            if 'BTC/USDT' in line and 'Liq:' in line:
-                # Парсим Liq:score(POC=...)
+            if 'BTCLiq' in line and 'Liq:' in line:
                 lm = re.search(r'Liq:(\d+)\(POC=([\d.]+) VAH=([\d.]+) VAL=([\d.]+) q=([\d.]+) fvg↑=(\d+) fvg↓=(\d+)', line)
                 if lm:
                     btc_liquidity = {
+                        'symbol': 'BTC',
                         'score': int(lm.group(1)),
                         'poc': float(lm.group(2)),
                         'vah': float(lm.group(3)),
@@ -463,13 +467,9 @@ def get_status_snapshot() -> dict:
                         'quality': float(lm.group(5)),
                         'fvg_above': int(lm.group(6)),
                         'fvg_below': int(lm.group(7)),
+                        'source': 'btc direct',
                     }
-                    # Добавляем OB и POC тренд
-                    ob_match = re.search(r'OB(\d+) (\w+) (\w+)', line)
-                    if ob_match:
-                        btc_liquidity['ob_count'] = int(ob_match.group(1))
-                        btc_liquidity['ob_type'] = ob_match.group(2)
-                        btc_liquidity['ob_direction'] = ob_match.group(3)
+                    # Добавляем POC тренд из BTCLiq
                     if 'POC↑' in line:
                         btc_liquidity['poc_trend'] = 'up'
                     elif 'POC↓' in line:
@@ -477,8 +477,66 @@ def get_status_snapshot() -> dict:
                     else:
                         btc_liquidity['poc_trend'] = 'flat'
                     break
+        
+        # Если BTCLiq не нашли — пробуем proxy с альткоинов
+        if not btc_liquidity:
+            for line in reversed(log_lines):
+                if 'Liq:' in line:
+                    lm = re.search(r'Liq:(\d+)\(POC=([\d.]+) VAH=([\d.]+) VAL=([\d.]+) q=([\d.]+) fvg↑=(\d+) fvg↓=(\d+)', line)
+                    if lm:
+                        sym_lm = re.search(r'([A-Z]+)/USDT', line)
+                        src_symbol = sym_lm.group(1) if sym_lm else '?'
+                        btc_liquidity = {
+                            'symbol': src_symbol,
+                            'score': int(lm.group(1)),
+                            'poc': float(lm.group(2)),
+                            'vah': float(lm.group(3)),
+                            'val': float(lm.group(4)),
+                            'quality': float(lm.group(5)),
+                            'fvg_above': int(lm.group(6)),
+                            'fvg_below': int(lm.group(7)),
+                            'source': 'altcoin proxy',
+                        }
+                        # Добавляем OB и POC тренд
+                        ob_match = re.search(r'OB(\d+) (\w+) (\w+)', line)
+                        if ob_match:
+                            btc_liquidity['ob_count'] = int(ob_match.group(1))
+                            btc_liquidity['ob_type'] = ob_match.group(2)
+                            btc_liquidity['ob_direction'] = ob_match.group(3)
+                        if 'POC↑' in line:
+                            btc_liquidity['poc_trend'] = 'up'
+                    elif 'POC↓' in line:
+                        btc_liquidity['poc_trend'] = 'down'
+                    else:
+                        btc_liquidity['poc_trend'] = 'flat'
+                    break
     except Exception:
         pass
+    
+    # EARN сигнал: на основе BTC Direction для ручного управления BTC в EARN
+    earn_signal = {'signal': 'HOLD', 'confidence': 'neutral', 'reason': 'Нет данных'}
+    if btc_direction:
+        direction = btc_direction.get('direction', 'side')
+        strength = btc_direction.get('strength', 50)
+        if direction == 'down' and strength >= 50:
+            earn_signal = {
+                'signal': 'SELL',
+                'confidence': 'medium' if strength >= 60 else 'low',
+                'reason': f'BTC ML=down({strength})'
+            }
+        elif direction == 'up' and strength >= 60:
+            earn_signal = {
+                'signal': 'BUY',
+                'confidence': 'medium' if strength >= 70 else 'low',
+                'reason': f'BTC ML=up({strength})'
+            }
+        else:
+            dir_text = {'up': 'UP', 'down': 'DOWN', 'side': 'SIDE'}.get(direction, '—')
+            earn_signal = {
+                'signal': 'HOLD',
+                'confidence': 'neutral',
+                'reason': f'BTC {dir_text}({strength}) — нет уверенного сигнала'
+            }
     
     return {
         'running': running,
@@ -492,6 +550,7 @@ def get_status_snapshot() -> dict:
         'btc_direction': btc_direction,
         'btc_analysis': btc_analysis,
         'btc_liquidity': btc_liquidity,
+        'earn_signal': earn_signal,
         'log_tail': read_log_tail(5),
     }
 
@@ -638,6 +697,7 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
   <div class="status-card"><h3>BTC Режим</h3><div class="value" id="stBtcRegime">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2"><h3>BTC Направление</h3><div class="value" id="stBtcDirection" style="font-size:13px">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2"><h3>BTC Анализ</h3><div class="value" id="stBtcAnalysis">загрузка...</div></div>
+  <div class="status-card" style="grid-column:span 2;border:1px solid #f0c040"><h3>🏦 EARN Сигнал</h3><div class="value" id="stEarnSignal" style="font-size:14px">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2"><h3>📊 BTC Order Flow</h3><div class="value" id="stBtcLiquidity" style="font-size:12px">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2"><h3>🚀 Последняя сделка</h3><div class="value" id="stLastTrade" style="font-size:12px">загрузка...</div></div>
 </div>
@@ -838,6 +898,17 @@ function updBar(d){
   const aEl=document.getElementById('stBtcAnalysis');
   if(aEl){aEl.innerHTML=btcA.price?'$'+fmtP(btcA.price)+' | '+btcA.trend+' | RSI='+btcA.rsi:'загрузка...';aEl.className='value '+(btcA.trend==='bullish'?'green':btcA.trend==='bearish'?'red':'');}
   
+  // 🏦 EARN сигнал
+  const earnEl=document.getElementById('stEarnSignal');
+  const earnSig=d.earn_signal||{signal:'HOLD',confidence:'neutral',reason:'—'};
+  if(earnEl){
+    const signalIcons={SELL:'🔴 SELL',BUY:'🟢 BUY',HOLD:'⚪ HOLD'};
+    const signalCls={SELL:'red',BUY:'green',HOLD:'value'};
+    const confStars={high:'★★★',medium:'★★☆',low:'★☆☆',neutral:'★☆☆'};
+    earnEl.innerHTML='<b>'+(signalIcons[earnSig.signal]||'❓')+'</b> | '+confStars[earnSig.confidence]+' | '+earnSig.reason;
+    earnEl.className='value '+(signalCls[earnSig.signal]||'');
+  }
+  
   // 🧊 BTC Order Flow / Liquidity
   const btcL=d.btc_liquidity||{};
   const lEl=document.getElementById('stBtcLiquidity');
@@ -847,10 +918,12 @@ function updBar(d){
       const obInfo=btcL.ob_count?((btcL.ob_direction==='bullish'?'🟢':'🔴')+' OB'+btcL.ob_count+' '+btcL.ob_type+' '+btcL.ob_direction):'—';
       const pocDir={'up':'▲','down':'▼','flat':'→'}[btcL.poc_trend]||'→';
       const fvgInfo=(btcL.fvg_above||0)+'↑ '+(btcL.fvg_below||0)+'↓';
+      const srcBadge=btcL.source==='btc direct'?' <span style="font-size:10px;color:#3fb950">●BTC</span>':' <span style="font-size:10px;color:#8b949e">proxy:'+btcL.symbol+'</span>';
       lEl.innerHTML='<b style="color:'+liqColor+'">Liq Score: '+btcL.score+'</b> | POC=$'+fmtP(btcL.poc)+' '+pocDir+
         ' | VAH=$'+fmtP(btcL.vah)+' | VAL=$'+fmtP(btcL.val)+
         ' | FVG: '+fvgInfo+
-        ' | OB: '+obInfo;
+        ' | OB: '+obInfo+
+        srcBadge;
       lEl.className='value';
     }else{
       lEl.innerHTML='Нет данных — BTC не в активной оценке';
