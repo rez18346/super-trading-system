@@ -540,7 +540,7 @@ def get_status_snapshot() -> dict:
                 'reason': f'BTC {dir_text}({strength}) — нет уверенного сигнала'
             }
     
-    return {
+    result = {
         'running': running,
         'pid': pid,
         'timestamp': time.time(),
@@ -555,6 +555,43 @@ def get_status_snapshot() -> dict:
         'earn_signal': earn_signal,
         'log_tail': read_log_tail(5),
     }
+    
+    # Добавляем OI уровни ликвидаций
+    try:
+        from collect_oi import get_oi_collector
+        oi = get_oi_collector()
+        oi_levels = {}
+        for sym in oi.data:
+            levels = oi.get_liq_levels(sym, 0)
+            if levels.get('heat', 0) > 0:
+                current_price = enriched_positions.get(sym, {}).get('current_price', 0)
+                if not current_price and sym in votes:
+                    current_price = votes[sym].get('price', 0)
+                oi_levels[sym] = {
+                    'heat': levels['heat'],
+                    'bonus': levels.get('bonus', 0),
+                    'current_price': current_price,
+                    'liq_long_min': levels.get('liq_long_min', 0),
+                    'liq_long_max': levels.get('liq_long_max', 0),
+                    'liq_short_min': levels.get('liq_short_min', 0),
+                    'liq_short_max': levels.get('liq_short_max', 0),
+                    'price_at_zone_long': (current_price >= levels['liq_long_min'] and current_price <= levels['liq_long_max']) if current_price else False,
+                    'price_at_zone_short': (current_price >= levels['liq_short_min'] and current_price <= levels['liq_short_max']) if current_price else False,
+                }
+                if 'levels' in levels:
+                    oi_levels[sym]['levels_detail'] = []
+                    for lev in levels['levels']:
+                        oi_levels[sym]['levels_detail'].append({
+                            'name': lev['name'],
+                            'long': lev['long'],
+                            'short': lev['short'],
+                        })
+        result['oi_liquidation_levels'] = oi_levels if oi_levels else {}
+    except Exception as e:
+        log.warning(f"[OI] не удалось получить уровни: {e}")
+        result['oi_liquidation_levels'] = {}
+    
+    return result
 
 
 # ─── ЭНДПОИНТЫ ──────────────────────────────────────────────────────────────
@@ -701,6 +738,7 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
   <div class="status-card" style="grid-column:span 2"><h3>BTC Анализ</h3><div class="value" id="stBtcAnalysis">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2;border:1px solid #f0c040"><h3>🏦 EARN Сигнал</h3><div class="value" id="stEarnSignal" style="font-size:14px">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2"><h3>📊 BTC Order Flow</h3><div class="value" id="stBtcLiquidity" style="font-size:12px">загрузка...</div></div>
+  <div class="status-card" style="grid-column:span 2"><h3>🔥 OI Liquidation Zones</h3><div class="value" id="stOiLevels" style="font-size:12px;line-height:1.6">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2"><h3>🚀 Последняя сделка</h3><div class="value" id="stLastTrade" style="font-size:12px">загрузка...</div></div>
 </div>
 
@@ -932,6 +970,37 @@ function updBar(d){
       lEl.innerHTML='Нет данных — BTC не в активной оценке';
       lEl.className='value';
     }
+  }
+  
+  // 🔥 OI Liquidation Zones
+  const oiLvls=d.oi_liquidation_levels||{};
+  const oiEl=document.getElementById('stOiLevels');
+  if(oiEl){
+    const keys=Object.keys(oiLvls);
+    if(keys.length>0){
+      let html='';
+      keys.forEach(sym=>{
+        const o=oiLvls[sym];
+        const heatEmojis=['','🟡','🟠','🔴'];
+        const heatStr=heatEmojis[o.heat]||'🟡';
+        const inLong=o.price_at_zone_long?' ⚠️LONG':'';
+        const inShort=o.price_at_zone_short?' ⚠️SHORT':'';
+        html+='<div style="margin-bottom:6px;padding:4px 6px;background:#1c2128;border-radius:4px">';
+        html+='<b>'+sym.split('/')[0]+'</b> '+heatStr+' heat='+o.heat+' (+'+o.bonus+' pts)';
+        html+='<br><span style="font-size:11px;color:#8b949e">';
+        html+='🟢 Long liq: <span style="color:#3fb950">$'+fmtP(o.liq_long_min)+'..$'+fmtP(o.liq_long_max)+'</span>'+inLong;
+        html+=' &nbsp;|&nbsp; 🔴 Short liq: <span style="color:#f85149">$'+fmtP(o.liq_short_min)+'..$'+fmtP(o.liq_short_max)+'</span>'+inShort;
+        if(o.levels_detail && o.levels_detail.length>0){
+          html+='<br>Уровни: '+o.levels_detail.map(l=>'<span title="'+l.name+'">$'+fmtP(l.long)+'/'+fmtP(l.short)+'</span>').join(' ');
+        }
+        html+='<br>Текущая: $'+fmtP(o.current_price);
+        html+='</span></div>';
+      });
+      oiEl.innerHTML=html;
+    }else{
+      oiEl.innerHTML='<span style="color:#555">Нет активных OI-уровней</span>';
+    }
+    oiEl.className='value';
   }
   
   // 🚀 Последняя сделка
