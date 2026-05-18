@@ -598,7 +598,7 @@ def get_status_snapshot() -> dict:
                     oi_levels[sym]['levels_detail'] = []
                     for lev in levels['levels']:
                         oi_levels[sym]['levels_detail'].append({
-                            'name': lev.get('name', '?'),
+                            'name': lev.get('level', '?'),
                             'long': lev.get('liq_long', 0),
                             'short': lev.get('liq_short', 0),
                         })
@@ -755,7 +755,7 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
   <div class="status-card" style="grid-column:span 2"><h3>BTC Анализ</h3><div class="value" id="stBtcAnalysis">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2;border:1px solid #f0c040"><h3>🏦 EARN Сигнал</h3><div class="value" id="stEarnSignal" style="font-size:14px">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2"><h3>📊 BTC Order Flow</h3><div class="value" id="stBtcLiquidity" style="font-size:12px">загрузка...</div></div>
-  <div class="status-card" style="grid-column:span 2"><h3>🔥 OI Liquidation Zones</h3><div class="value" id="stOiLevels" style="font-size:12px;line-height:1.6">загрузка...</div></div>
+  <div class="status-card" style="grid-column:span 2"><h3>🔥 OI Liquidation Zones</h3><div class="value" id="stOiLevels" style="font-size:12px;line-height:1.6;max-height:280px;overflow-y:auto">загрузка...</div></div>
   <div class="status-card" style="grid-column:span 2"><h3>🚀 Последняя сделка</h3><div class="value" id="stLastTrade" style="font-size:12px">загрузка...</div></div>
 </div>
 
@@ -1002,16 +1002,15 @@ function updBar(d){
         const heatStr=heatEmojis[o.heat]||'🟡';
         const inLong=o.price_at_zone_long?' ⚠️LONG':'';
         const inShort=o.price_at_zone_short?' ⚠️SHORT':'';
-        html+='<div style="margin-bottom:6px;padding:4px 6px;background:#1c2128;border-radius:4px">';
-        html+='<b>'+sym.split('/')[0]+'</b> '+heatStr+' heat='+o.heat+' (+'+o.bonus+' pts)';
-        html+='<br><span style="font-size:11px;color:#8b949e">';
-        html+='🟢 Long liq: <span style="color:#3fb950">$'+fmtP(o.liq_long_min)+'..$'+fmtP(o.liq_long_max)+'</span>'+inLong;
-        html+=' &nbsp;|&nbsp; 🔴 Short liq: <span style="color:#f85149">$'+fmtP(o.liq_short_min)+'..$'+fmtP(o.liq_short_max)+'</span>'+inShort;
+        const warnLong=o.price_at_zone_long?'color:#3fb950;font-weight:bold':'color:#3fb950';
+        const warnShort=o.price_at_zone_short?'color:#f85149;font-weight:bold':'color:#f85149';
+        html+='<div style="margin-bottom:4px;padding:3px 5px;background:#1c2128;border-radius:4px;font-size:11px">';
+        html+='<b>'+sym.split('/')[0]+'</b> '+heatStr+' heat='+o.heat+' (+'+o.bonus+'pts) ';
+        html+='<span style="color:#8b949e">L:<span style="'+warnLong+'">$'+fmtP(o.liq_long_min)+'</span>/S:<span style="'+warnShort+'">$'+fmtP(o.liq_short_min)+'</span> ∼$'+fmtP(o.current_price)+'</span>';
         if(o.levels_detail && o.levels_detail.length>0){
-          html+='<br>Уровни: '+o.levels_detail.map(l=>'<span title="'+l.name+'">$'+fmtP(l.long)+'/'+fmtP(l.short)+'</span>').join(' ');
+          html+=' <span style="font-size:10px;color:#555">('+o.levels_detail.map(l=>l.name.split(' ')[0]).join('/')+')</span>';
         }
-        html+='<br>Текущая: $'+fmtP(o.current_price);
-        html+='</span></div>';
+        html+=inLong+inShort+'</div>';
       });
       oiEl.innerHTML=html;
     }else{
