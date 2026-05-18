@@ -55,15 +55,19 @@ pip install -r requirements.txt
 
 ### 3. Настройте API-ключи Bybit
 
+> ⚠️ Файл с реальными ключами (`config/api_config_final.json`) добавлен в `.gitignore` — ключи никогда не попадут в репозиторий.
+
 1. Создайте API-ключи на [Bybit](https://www.bybit.com/app/user/api-management) (права: Trade + Read)
 2. Скопируйте шаблон конфига:
    ```bash
-   cp config.example.py config.py
+   cp config/example.json config/api_config_final.json
    ```
-3. Откройте `config.py` и вставьте свои ключи:
-   ```python
-   BYBIT_API_KEY = "ваш_ключ"
-   BYBIT_API_SECRET = "ваш_секрет"
+3. Откройте `config/api_config_final.json` и вставьте свои ключи:
+   ```json
+   "bybit": {
+       "api_key": "ВАШ_API_KEY",
+       "secret": "ВАШ_SECRET"
+   }
    ```
 
 ### 4. Запустите
@@ -118,8 +122,8 @@ wsl --install -d Ubuntu
 sudo apt update && sudo apt install python3 python3-pip git -y
 git clone https://github.com/rez18346/super-trading-system.git
 cd super-trading-system
-cp config.example.py config.py
-# Отредактируйте config.py (nano config.py)
+cp config/example.json config/api_config_final.json
+# Отредактируйте config/api_config_final.json (nano config/api_config_final.json)
 pip install -r requirements.txt
 ./start.sh
 ```
@@ -188,16 +192,19 @@ pip install -r requirements.txt
 
 ## ⚙️ Конфигурация
 
-Основные настройки в `config.py`:
+Основные настройки в `config/api_config_final.json` (шаблон: `config/example.json`):
 
 | Параметр | По умолч. | Описание |
 |----------|-----------|----------|
-| `MAX_BUY_ORDER_USD` | 90 | Максимальный размер ордера |
-| `MAX_OPEN_POSITIONS` | 10 | Максимум открытых позиций |
-| `TEST_MODE` | False | True = логгирование без реальных ордеров |
-| `BYBIT_TESTNET` | False | Использовать testnet Bybit |
-| `RECV_WINDOW` | 5000 | Окно синхронизации времени (мс) |
-| `TRADING_PAIRS` | 19 пар | Список монет для торговли |
+| `bybit.api_key` | `***` | API ключ Bybit |
+| `bybit.secret` | `***` | API секрет Bybit |
+| `trading.max_order_usd` | 90 | Максимальный размер ордера |
+| `trading.max_open_positions` | 10 | Максимум открытых позиций |
+| `system.test_mode` | false | True = логгирование без реальных ордеров |
+| `system.bybit_testnet` | false | Использовать testnet Bybit |
+| `trading.symbols` | 19 пар | Список монет для торговли |
+| `risk_management.default_sl_pct` | 2.5 | Стоп-лосс % |
+| `risk_management.default_tp_pct` | 1.5 | Тейк-профит % |
 
 ---
 
@@ -302,9 +309,9 @@ MIT — используйте, модифицируйте, делитесь.
 1. Клонировать: git clone https://github.com/rez18346/super-trading-system.git
 2. Перейти: cd super-trading-system
 3. Установить зависимости: pip install -r requirements.txt
-4. Создать config.py из config.example.py
+4. Создать `config/api_config_final.json` из шаблона: `cp config/example.json config/api_config_final.json`
 5. Запросить у пользователя API-ключи Bybit (Trade + Read)
-6. Записать ключи в config.py
+6. Записать ключи в `config/api_config_final.json` в поле `bybit`
 7. Запустить: python3 main.py
 8. Создать systemd unit для автостарта (см. README → Production-запуск)
 9. Сообщить пользователю, что система запущена и работает
