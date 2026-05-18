@@ -923,13 +923,34 @@ class DecisionEngine:
             scores['rsi_vol_btc']['score'] = 50
             scores['rsi_vol_btc']['detail'] = f"error({e})"
         
-        # ═══ ГОЛОС 5: LiquidityCluster (15%) ════════════════════════════════
+        # ═══ ГОЛОС 5: LiquidityCluster (25%) ═══════════════════════════════
         try:
             if self._liquidity:
                 liq = self._liquidity.evaluate(candles_5m, current_price,
                                                 candles_1h, candles_4h)
-                scores['liquidity']['score'] = liq['score']
+                liq_score = liq['score']
+                
+                # ─── OI LIQ BONUS ────────────────────────────────────────
+                # Подмешиваем уровни ликвидаций из OI Delta
+                oi_bonus = 0
+                oi_heat = 0
+                try:
+                    from collect_oi import get_oi_collector
+                    oi_collector = get_oi_collector()
+                    oi_levels = oi_collector.get_liq_levels(symbol, current_price)
+                    oi_bonus = oi_levels.get('score_bonus', 0)
+                    oi_heat = oi_levels.get('heat', 0)
+                    if oi_bonus > 0:
+                        liq_score = min(100, liq_score + oi_bonus)
+                        if oi_heat >= 2:
+                            self.stats['oi_liq_hits'] = self.stats.get('oi_liq_hits', 0) + 1
+                except Exception:
+                    pass  # OI collector может быть не загружен
+                
+                scores['liquidity']['score'] = liq_score
                 scores['liquidity']['detail'] = liq['detail']
+                if oi_heat > 0:
+                    scores['liquidity']['detail'] += f" OI🔥{oi_heat}(+{oi_bonus})"
                 self.stats['liquidity_scores'] += 1
             else:
                 scores['liquidity']['score'] = 50

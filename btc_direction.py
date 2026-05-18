@@ -103,6 +103,11 @@ class BTCDirectionPredictor:
             os.path.dirname(os.path.abspath(__file__)), 'data', 'btc_fr_oi.csv')
         self._fr_oi_data = None  # Кеш FR/OI DataFrame
         
+        # CVD — Cumulative Volume Delta (опционально)
+        self.cvd_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), 'data', 'btc_cvd_1m.csv')
+        self._cvd_data = None  # Кеш CVD DataFrame (агрегирован по часам)
+        
         # Статистика
         self.stats = {
             'predictions': 0,
@@ -201,8 +206,71 @@ class BTCDirectionPredictor:
             logger.warning(f"⚠️ FR/OI загрузка: {e}")
             return None
     
+    def _load_cvd(self) -> Optional[pd.DataFrame]:
+        """Загрузить CVD (Cumulative Volume Delta) из 1m CSV, агрегировать по часам.
+        
+        CVD данные — buy_vol, sell_vol, buy_usd, sell_usd за каждую минуту.
+        Агрегируем в часовые фичи:
+          cvd_net_1h — чистый CVD (buy - sell) в USD
+          cvd_ratio — buy_vol / sell_vol
+          cvd_volume — общий объём в USD
+          cvd_buy_pct — доля buy в общем объёме
+        """
+        if self._cvd_data is not None:
+            return self._cvd_data
+        
+        if not os.path.exists(self.cvd_path):
+            logger.warning("⚠️ CVD CSV не найден — пропускаем")
+            return None
+        
+        try:
+            df = pd.read_csv(self.cvd_path)
+            if len(df) < 60:
+                logger.warning(f"⚠️ CVD данных мало ({len(df)} мин)")
+                return None
+            
+            # Преобразуем timestamp в datetime
+            df['ts'] = pd.to_datetime(pd.to_numeric(df['ts']), unit='s')
+            df.set_index('ts', inplace=True)
+            
+            # Конвертируем в числа
+            for col in ['buy_vol', 'sell_vol', 'buy_usd', 'sell_usd', 'count']:
+                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
+            # Агрегация по часам
+            hourly = df.resample('1h').agg({
+                'buy_vol': 'sum',
+                'sell_vol': 'sum',
+                'buy_usd': 'sum',
+                'sell_usd': 'sum',
+                'count': 'sum',
+            })
+            
+            # Расчёт производных метрик
+            hourly['cvd_net_1h'] = hourly['buy_usd'] - hourly['sell_usd']  # чистый CVD в USD
+            hourly['cvd_ratio'] = hourly['buy_vol'] / (hourly['sell_vol'] + 1e-10)  # buy/sell ratio
+            hourly['cvd_volume'] = hourly['buy_usd'] + hourly['sell_usd']  # общий объём в USD
+            hourly['cvd_buy_pct'] = hourly['buy_usd'] / (hourly['cvd_volume'] + 1e-10) * 100  # % buy
+            
+            # Сглаженные метрики (скользящие средние)
+            hourly['cvd_net_4h'] = hourly['cvd_net_1h'].rolling(4).mean()
+            hourly['cvd_net_24h'] = hourly['cvd_net_1h'].rolling(24).mean()
+            hourly['cvd_ratio_4h'] = hourly['cvd_ratio'].rolling(4).mean()
+            hourly['cvd_volume_ratio'] = hourly['cvd_volume'] / (hourly['cvd_volume'].rolling(24).mean() + 1e-10)
+            
+            # Дивергенция: цена vs CVD (скользящая корреляция за 6ч)
+            # Сигнал: цена растёт, CVD падает = bearish дивергенция
+            #         цена падает, CVD растёт = bullish дивергенция
+            
+            self._cvd_data = hourly
+            logger.info(f"📊 CVD: загружено {len(hourly)} часов из {len(df)} минут")
+            return hourly
+        except Exception as e:
+            logger.warning(f"⚠️ CVD загрузка: {e}")
+            return None
+    
     # ════════════════════════════════════════
-    # 2. FEATURE ENGINEERING (30+ фич)
+    # 2. FEATURE ENGINEERING (40+ фич)
     # ════════════════════════════════════════
     
     def _calculate_features(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -373,6 +441,35 @@ class BTCDirectionPredictor:
             df['fr_change_8h'] = 0.0
             df['oi_change_24h'] = 0.0
             df['oi_change_4h'] = 0.0
+        
+        # ─── CVD — Cumulative Volume Delta ═════════════════════════════
+        cvd = self._load_cvd()
+        if cvd is not None and len(cvd) > 10:
+            cvd_aligned = cvd[['cvd_net_1h', 'cvd_ratio', 'cvd_volume', 'cvd_buy_pct',
+                              'cvd_net_4h', 'cvd_net_24h', 'cvd_ratio_4h', 'cvd_volume_ratio']].copy()
+            df = df.join(cvd_aligned, how='left')
+            # CVD дивергенция: скользящая корреляция цена-CVD за 6ч
+            df['cvd_price_corr_6h'] = 0.0
+            for i in range(6, len(df)):
+                price_slice = df['close'].iloc[i-6:i].values
+                cvd_slice = df['cvd_net_1h'].iloc[i-6:i].values
+                if len(price_slice) == 6 and not np.isnan(price_slice).any() and not np.isnan(cvd_slice).any():
+                    corr = np.corrcoef(price_slice, cvd_slice)[0, 1]
+                    df.loc[df.index[i], 'cvd_price_corr_6h'] = corr if not np.isnan(corr) else 0
+            for col in ['cvd_net_1h', 'cvd_ratio', 'cvd_volume', 'cvd_buy_pct',
+                       'cvd_net_4h', 'cvd_net_24h', 'cvd_ratio_4h', 'cvd_volume_ratio',
+                       'cvd_price_corr_6h']:
+                df[col] = df[col].fillna(0)
+        else:
+            df['cvd_net_1h'] = 0.0
+            df['cvd_ratio'] = 1.0
+            df['cvd_volume'] = 0.0
+            df['cvd_buy_pct'] = 50.0
+            df['cvd_net_4h'] = 0.0
+            df['cvd_net_24h'] = 0.0
+            df['cvd_ratio_4h'] = 1.0
+            df['cvd_volume_ratio'] = 1.0
+            df['cvd_price_corr_6h'] = 0.0
         
         # ─── Таргет ════════════════════
         future_close = df['close'].shift(-TARGET_HOURS_AHEAD)

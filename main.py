@@ -19,7 +19,6 @@ import os
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
-sys.path.insert(0, BASE_DIR)
 
 import json
 import time
@@ -81,6 +80,7 @@ from data_cache import (PriceCache, OHLCVCache, CachedDataFetcher,
                          patch_exchange_fetch_ticker, patch_exchange_create_order)
 from ws_client import BybitWebSocketClient, set_global_client, init_cvd_collector, get_cvd_collector
 from btc_direction import BTCDirectionPredictor
+from collect_oi import get_oi_collector
 
 
 class TradingSystem:
@@ -260,6 +260,17 @@ class TradingSystem:
                         logger.info(f"🌐 WebSocket: {ws_state['state']}, msg={ws_state['messages_received']}, rc={ws_state['reconnects']}")
                     except Exception:
                         pass
+                
+                # Сбор OI раз в 30 циклов (15 минут)
+                if sync_count % 30 == 0:
+                    try:
+                        oi_collector = get_oi_collector()
+                        oi_results = oi_collector.collect(self.exchange)
+                        if oi_results:
+                            active = sum(1 for d in oi_results.values() if d.get('heat', 0) > 0)
+                            logger.info(f"📊 OI: {len(oi_results)} монет, {active} с активными уровнями")
+                    except Exception as e:
+                        logger.debug(f"[OI] Ошибка сбора: {e}")
                 
                 # Статус раз в 10 циклов (5 минут)
                 if sync_count % 10 == 0:

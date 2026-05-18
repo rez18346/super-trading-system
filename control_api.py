@@ -284,6 +284,8 @@ def _parse_votes_from_log() -> dict:
                     'rev': int(bonus_match.group(2)) if bonus_match else 0,
                     'btc': int(bonus_match.group(3)) if bonus_match else 0,
                     'idm': idm_info,
+                    'oi_heat': int(m_oi.group(1)) if (m_oi := re.search(r'OI🔥(\d+)\(\+(\d+)\)', line)) else 0,
+                    'oi_bonus': int(m_oi.group(2)) if (m_oi := re.search(r'OI🔥(\d+)\(\+(\d+)\)', line)) else 0,
                     'price': prices.get(sym, 0),
                 }
         # VETO — только если не перезаписана основной строкой
@@ -831,6 +833,7 @@ function updPos(pos){
           '<span style="font-size:10px;color:'+(v.bonus>0?'#3fb950':v.bonus<0?'#f85149':'#555')+'">B'+(v.bonus||0)+'</span> '+
           '<span style="font-size:10px;color:'+(v.rev>0?'#d2d268':v.rev<0?'#f85149':'#555')+'">R'+(v.rev||0)+'</span> '+
           '<span style="font-size:10px;color:'+(v.btc>0?'#3fb950':v.btc<0?'#f85149':'#555')+'">₿'+(v.btc||0)+'</span>'+
+          (v.oi_heat>0?' <span style="font-size:10px;color:#d29922" title="OI heat='+v.oi_heat+' +'+v.oi_bonus+'pts">🔥'+(v.oi_heat||0)+'</span>':'')+
           (v.idm?' <span style="font-size:11px;font-weight:600;color:'+(v.idm==='IDM'||v.idm==='IDM↑'?'#d29922':v.idm==='IDM↓'?'#e06c00':v.idm==='OB↑'?'#3fb950':v.idm==='OB↓'?'#f85149':'#8b949e')+'" title="'+(v.idm==='IDM'?'Индукция (Inducement) — сбор ликвидности, направление не определено':v.idm==='IDM↑'?'Индукция бычья (Inducement ↑) — ликвидность собрана снизу, цель вверх':v.idm==='IDM↓'?'Индукция медвежья (Inducement ↓) — ликвидность собрана сверху, цель вниз':v.idm==='OB↑'?'Ордерблок бычий (Order Block ↑) — поддержка, зона набора позиции':v.idm==='OB↓'?'Ордерблок медвежий (Order Block ↓) — сопротивление, зона набора шортов':'Неизвестно')+'">▫'+v.idm+'</span>':'')
         : (isVeto ? '<span style="color:#f85149;font-size:11px">⛔ '+v.veto+'</span>' : '<span style="color:#555;font-size:11px">ожидание...</span>');
       return '<tr>'+
