@@ -562,33 +562,50 @@ def get_status_snapshot() -> dict:
         oi = get_oi_collector()
         oi_levels = {}
         for sym in oi.data:
-            levels = oi.get_liq_levels(sym, 0)
-            if levels.get('heat', 0) > 0:
-                current_price = enriched_positions.get(sym, {}).get('current_price', 0)
-                if not current_price and sym in votes:
-                    current_price = votes[sym].get('price', 0)
+            # Цена из OI данных (последняя запись), затем из позиций/голосов
+            cur_price = 0
+            entries = oi.data.get(sym, [])
+            if entries:
+                cur_price = entries[-1].get('price', 0)
+            if not cur_price:
+                base = sym.replace('/USDT', '')
+                cur_price = enriched_positions.get(sym, {}).get('entry', 0)
+            if not cur_price:
+                cur_price = enriched_positions.get(base, {}).get('entry', 0)
+            if not cur_price and sym in votes:
+                cur_price = votes[sym].get('price', 0)
+            levels = oi.get_liq_levels(sym, cur_price or 0)
+            heat = levels.get('heat', 0)
+            if heat > 0:
+                liq_long = levels.get('liq_zone_long', None)
+                liq_short = levels.get('liq_zone_short', None)
+                liq_long_min = liq_long[0] if liq_long and len(liq_long) == 2 else 0
+                liq_long_max = liq_long[1] if liq_long and len(liq_long) == 2 else 0
+                liq_short_min = liq_short[0] if liq_short and len(liq_short) == 2 else 0
+                liq_short_max = liq_short[1] if liq_short and len(liq_short) == 2 else 0
                 oi_levels[sym] = {
-                    'heat': levels['heat'],
-                    'bonus': levels.get('bonus', 0),
-                    'current_price': current_price,
-                    'liq_long_min': levels.get('liq_long_min', 0),
-                    'liq_long_max': levels.get('liq_long_max', 0),
-                    'liq_short_min': levels.get('liq_short_min', 0),
-                    'liq_short_max': levels.get('liq_short_max', 0),
-                    'price_at_zone_long': (current_price >= levels['liq_long_min'] and current_price <= levels['liq_long_max']) if current_price else False,
-                    'price_at_zone_short': (current_price >= levels['liq_short_min'] and current_price <= levels['liq_short_max']) if current_price else False,
+                    'heat': heat,
+                    'bonus': levels.get('score_bonus', 0),
+                    'current_price': cur_price,
+                    'liq_long_min': liq_long_min,
+                    'liq_long_max': liq_long_max,
+                    'liq_short_min': liq_short_min,
+                    'liq_short_max': liq_short_max,
+                    'price_at_zone_long': (liq_long_min and cur_price >= liq_long_min and cur_price <= liq_long_max) if cur_price else False,
+                    'price_at_zone_short': (liq_short_min and cur_price >= liq_short_min and cur_price <= liq_short_max) if cur_price else False,
                 }
-                if 'levels' in levels:
+                if levels.get('levels'):
                     oi_levels[sym]['levels_detail'] = []
                     for lev in levels['levels']:
                         oi_levels[sym]['levels_detail'].append({
-                            'name': lev['name'],
-                            'long': lev['long'],
-                            'short': lev['short'],
+                            'name': lev.get('name', '?'),
+                            'long': lev.get('liq_long', 0),
+                            'short': lev.get('liq_short', 0),
                         })
         result['oi_liquidation_levels'] = oi_levels if oi_levels else {}
     except Exception as e:
-        log.warning(f"[OI] не удалось получить уровни: {e}")
+        log.error(f"[OI] ошибка: {e}")
+        log.debug(traceback.format_exc())
         result['oi_liquidation_levels'] = {}
     
     return result

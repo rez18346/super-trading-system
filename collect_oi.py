@@ -122,9 +122,9 @@ class OICollector:
             enriched = self._enrich(spot_sym, amount, price)
             results[spot_sym] = enriched
 
-        # Автосохранение раз в 10 вызовов
+        # Автосохранение раз в 3 вызова
         self._call_count += 1
-        if self._call_count % 10 == 0:
+        if self._call_count % 3 == 0:
             self.save()
 
         return results
