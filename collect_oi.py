@@ -197,8 +197,16 @@ class OICollector:
         h2_threshold = ma_delta * 2.2
         h1_threshold = ma_delta * 1.8
 
-        leverages = [0.01, 0.02, 0.04, 0.1, 0.2]
-        lev_labels = ['100x', '50x', '25x', '10x', '5x']
+        # Разные уровни плеч для BTC/ETH и альткоинов
+        is_btc_like = spot_sym.upper() in ('BTC/USDT', 'BTC', 'ETH/USDT', 'ETH')
+        if is_btc_like:
+            # 100x, 50x, 25x, 10x, 5x — BTC/ETH реально дают 100x
+            leverages = [0.01, 0.02, 0.04, 0.1, 0.2]
+            lev_labels = ['100x', '50x', '25x', '10x', '5x']
+        else:
+            # Альты: макс 25x (100x/50x не дают на биржах)
+            leverages = [0.04, 0.1, 0.2, 0.334, 0.5]
+            lev_labels = ['25x', '10x', '5x', '3x', '2x']
 
         def _build_levels(n_levers: int) -> list:
             return [

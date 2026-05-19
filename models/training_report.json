@@ -1,0 +1,105 @@
+{
+  "timestamp": "2026-05-05T08:54:34",
+  "total_samples": 3743,
+  "features": 33,
+  "label_balance": 0.3034998664173123,
+  "accuracy": 0.6565836298932385,
+  "pairs": [
+    {
+      "pair": "ADAUSDT",
+      "windows": 197,
+      "balance": "27.9%"
+    },
+    {
+      "pair": "ALGOUSDT",
+      "windows": 197,
+      "balance": "32.0%"
+    },
+    {
+      "pair": "APTUSDT",
+      "windows": 197,
+      "balance": "36.0%"
+    },
+    {
+      "pair": "ARBUSDT",
+      "windows": 197,
+      "balance": "33.0%"
+    },
+    {
+      "pair": "ATOMUSDT",
+      "windows": 197,
+      "balance": "28.4%"
+    },
+    {
+      "pair": "AVAXUSDT",
+      "windows": 197,
+      "balance": "28.4%"
+    },
+    {
+      "pair": "BTCUSDT",
+      "windows": 197,
+      "balance": "27.9%"
+    },
+    {
+      "pair": "DOGEUSDT",
+      "windows": 197,
+      "balance": "37.6%"
+    },
+    {
+      "pair": "DOTUSDT",
+      "windows": 197,
+      "balance": "32.5%"
+    },
+    {
+      "pair": "EGLDUSDT",
+      "windows": 197,
+      "balance": "29.4%"
+    },
+    {
+      "pair": "ETHUSDT",
+      "windows": 197,
+      "balance": "27.9%"
+    },
+    {
+      "pair": "FILUSDT",
+      "windows": 197,
+      "balance": "33.5%"
+    },
+    {
+      "pair": "LINKUSDT",
+      "windows": 197,
+      "balance": "25.9%"
+    },
+    {
+      "pair": "MNTUSDT",
+      "windows": 197,
+      "balance": "20.8%"
+    },
+    {
+      "pair": "NEARUSDT",
+      "windows": 197,
+      "balance": "28.4%"
+    },
+    {
+      "pair": "OPUSDT",
+      "windows": 197,
+      "balance": "39.1%"
+    },
+    {
+      "pair": "ROSEUSDT",
+      "windows": 197,
+      "balance": "39.1%"
+    },
+    {
+      "pair": "SOLUSDT",
+      "windows": 197,
+      "balance": "24.4%"
+    },
+    {
+      "pair": "XRPUSDT",
+      "windows": 197,
+      "balance": "24.4%"
+    }
+  ],
+  "status": "success"
+}

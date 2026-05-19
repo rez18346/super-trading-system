@@ -55,8 +55,8 @@ PREDICTIONS_LOG = os.path.join(os.path.dirname(__file__), 'data', 'btc_predictio
 TRAINING_LOG = os.path.join(os.path.dirname(__file__), 'data', 'btc_training_log.json')
 
 # Параметры для классификации направления
-UP_THRESHOLD = 0.005     # +0.5% за TARGET_HOURS_AHEAD = UP
-DOWN_THRESHOLD = -0.004  # -0.4% = DOWN
+UP_THRESHOLD = 0.003     # +0.3% за TARGET_HOURS_AHEAD = UP (было +0.5% — симметрично DOWN)
+DOWN_THRESHOLD = -0.0025  # -0.25% = DOWN (было -0.4% — пропускало медленные сливы)
 SIDE_ZONE = 0.0015     # ±0.15% вокруг нуля = SIDE (было 0.3% — слишком широкая слепая зона)
 
 
@@ -391,6 +391,19 @@ class BTCDirectionPredictor:
         df['obv_slope'] = (obv - obv.shift(12)) / obv.shift(12).abs() * 100
         
         # ─── Время — внутридневные паттерны BTC ════════════
+        # Фикс: если индекс не DatetimeIndex — конвертируем
+        if not isinstance(df.index, pd.DatetimeIndex):
+            if 'timestamp' in df.columns:
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                df.set_index('timestamp', inplace=True)
+            else:
+                logger.warning('⚠️ [BTCDirection] Нет временного индекса — пропускаем временные фичи')
+                df['hour_sin'] = 0.0
+                df['hour_cos'] = 0.0
+                df['session_asia'] = 0
+                df['session_europe'] = 0
+                df['session_usa'] = 1
+        
         hour = df.index.hour
         df['hour_sin'] = np.sin(2 * np.pi * hour / 24)
         df['hour_cos'] = np.cos(2 * np.pi * hour / 24)
@@ -398,6 +411,14 @@ class BTCDirectionPredictor:
         df['session_asia'] = ((hour >= 0) & (hour < 8)).astype(int)
         df['session_europe'] = ((hour >= 8) & (hour < 16)).astype(int) 
         df['session_usa'] = ((hour >= 16) & (hour < 24)).astype(int)
+        
+        # ─── Short-term: внутрисвечная динамика ═══════
+        # Позиция close внутри high-low: 1.0 = хай, 0.0 = лоу
+        df['intra_candle_pos'] = (close - low) / (high - low + 1e-10)
+        # Ускорение/замедление движения: разница последовательных returns
+        df['returns_accel'] = df['returns_1h'].diff()
+        # Отклонение текущего часа от скользящей средней 4ч
+        df['returns_vs_ma4'] = df['returns_1h'] - df['returns_4h'] / 4
         
         # ─── HMM режим ═════════════════
         # Простая proxy-оценка волатильности по ценам
@@ -571,8 +592,8 @@ class BTCDirectionPredictor:
             )
             
             # ─── Веса классов для повышения чувствительности к UP/DOWN ═══
-            # Агрессивные веса: UP=5x, DOWN=3x (UP важнее не пропустить)
-            class_weights = {0: 3.0, 1: 1.0, 2: 5.0}
+            # Симметричные веса: UP=5x, DOWN=5x (пороги уже сбалансированы 0.3% vs 0.25%)
+            class_weights = {0: 5.0, 1: 1.0, 2: 5.0}
             sample_weight_arr = np.ones(len(X_train_bal))
             for cls, w in class_weights.items():
                 sample_weight_arr[y_train_bal == cls] = w

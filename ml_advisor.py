@@ -13,6 +13,7 @@
 import numpy as np
 import pandas as pd
 import json
+from collections import deque
 import os
 import logging
 import pickle
@@ -122,6 +123,10 @@ class MLAdvisor:
         self.last_retrain = 0
         self.training_data = []  # Собираем примеры: [features, label]
         self.is_trained = False
+        # Сглаживание объёмных фич — скользящее среднее за 3 скана
+        # (чтобы одиночный всплеск объёма не триггерил ложный вход)
+        self._vol_ratio_buffer = {}   # symbol → deque(maxlen=3)
+        self._vol_momentum_buffer = {} # symbol → deque(maxlen=3)
 
         # Пытаемся загрузить обученную модель
         self._load_model()
@@ -273,8 +278,19 @@ class MLAdvisor:
             
             # Волатильность и объём
             features['volatility'] = np.std(closes[-10:] / (np.mean(closes[-10:]) + 0.0001))
-            features['volume_ratio'] = volumes[-1] / (np.mean(volumes[-5:]) + 0.0001)
-            features['volume_momentum'] = np.mean(volumes[-3:]) / (np.mean(volumes[-10:-3]) + 0.0001)
+            # Сглаженный volume_ratio — скользящее среднее за 3 скана
+            raw_vol_ratio = volumes[-1] / (np.mean(volumes[-5:]) + 0.0001)
+            if symbol not in self._vol_ratio_buffer:
+                self._vol_ratio_buffer[symbol] = deque(maxlen=3)
+            self._vol_ratio_buffer[symbol].append(raw_vol_ratio)
+            features['volume_ratio'] = np.mean(self._vol_ratio_buffer[symbol])
+
+            # Сглаженный volume_momentum — скользящее среднее за 3 скана
+            raw_vol_momentum = np.mean(volumes[-3:]) / (np.mean(volumes[-10:-3]) + 0.0001)
+            if symbol not in self._vol_momentum_buffer:
+                self._vol_momentum_buffer[symbol] = deque(maxlen=3)
+            self._vol_momentum_buffer[symbol].append(raw_vol_momentum)
+            features['volume_momentum'] = np.mean(self._vol_momentum_buffer[symbol])
             features['hl_range'] = (highs[-1] - lows[-1]) / (closes[-1] + 0.0001)
 
             # Паттерны свечей

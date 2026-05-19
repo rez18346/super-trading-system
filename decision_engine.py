@@ -18,8 +18,8 @@ decision_engine.py — Единый центр принятия торговых
   5. Volume/VWAP (VWAP реверсия + Volume Spike)              — 20%
   ──────────────────────────────────────────────────────────
   MTF — 0% (информационно, без веса)
-  VSA — 0% (информационно, без веса)
-  VSA — 0% (информационно, без веса)
+  VSA — 10% (качество движения: дивергенция, накопление/распределение)
+  VSA — 10% (качество движения: дивергенция, накопление/распределение)
   Порог входа: 60 (адаптивный: CALM=52, NORMAL=60, VOLATILE=65)
   VETO: макс(1H=-15, 4H=-25) + BTC(до -25) — не складываем таймфреймы
   Override VETO: Liq≥75 + VV≥70 + Adv≥80 → игнорировать VETO
@@ -606,21 +606,24 @@ class DecisionEngine:
             }
             vote_log_path = os.path.join(BASE_DIR, 'data', 'vote_history.json')
             os.makedirs(os.path.dirname(vote_log_path), exist_ok=True)
+            import tempfile
             history = []
             if os.path.exists(vote_log_path):
                 try:
                     with open(vote_log_path, 'r') as f:
                         history = json.load(f)
                 except Exception as _e:
-                    logger.debug(f"[vote_log] load: {_e}")
                     history = []
             history.append(vote_record)
             if len(history) > 10000:
                 history = history[-10000:]
-            with open(vote_log_path, 'w') as f:
+            # Атомарная запись: temp + rename
+            tmp_path = vote_log_path + '.tmp'
+            with open(tmp_path, 'w') as f:
                 json.dump(history, f, indent=2, default=str)
+            os.replace(tmp_path, vote_log_path)
         except Exception as e:
-            pass  # silently ignore
+            logger.debug(f"[DE] vote_log save: {e}")
 
 
     def _calc_trend_from_candles(self, candles: list) -> str:
@@ -724,15 +727,15 @@ class DecisionEngine:
         # Инициализируем результаты голосов
         # ⚡ БАЗОВЫЕ ВЕСА
         BASE_WEIGHTS = {
-            'ml_v2': 0.20,
+            'ml_v2': 0.15,
             'advisor': 0.35,
             'mtf': 0.00,   # информационно, без веса
-            'rsi_vol_btc': 0.00,  # отключён — дублирует Advisor (LightGBM уже использует RSI)
+            'rsi_vol_btc': 0.00,  # отключён — дублирует Advisor
             'liquidity': 0.25,
-            'volume_vwap': 0.20,
-            'vsa': 0.00,   # информационно, без веса
+            'volume_vwap': 0.15,
+            'vsa': 0.10,   # VSA — качество движения
         }
-        # Сумма весов = 1.0 (0.20+0.20+0.00+0.15+0.25+0.20+0.00)
+        # Сумма весов = 1.0 (0.15+0.35+0.00+0.00+0.25+0.15+0.10)
 
         scores = {}
         for k, w in BASE_WEIGHTS.items():
@@ -1161,20 +1164,24 @@ class DecisionEngine:
                 }
                 vote_log_path = os.path.join(BASE_DIR, 'data', 'vote_history.json')
                 os.makedirs(os.path.dirname(vote_log_path), exist_ok=True)
+                import tempfile
                 history = []
                 if os.path.exists(vote_log_path):
                     try:
                         with open(vote_log_path, 'r') as f:
                             history = json.load(f)
                     except Exception as _e:
-                        logger.debug(f"[vote_log2] load: {_e}")
+                        # Файл битый — создаём новый
                         history = []
                 history.append(vote_record)
                 # Держим последние 10000 записей
                 if len(history) > 10000:
                     history = history[-10000:]
-                with open(vote_log_path, 'w') as f:
+                # Атомарная запись: сначала во временный файл, потом rename
+                tmp_path = vote_log_path + '.tmp'
+                with open(tmp_path, 'w') as f:
                     json.dump(history, f, indent=2, default=str)
+                os.replace(tmp_path, vote_log_path)
         except Exception as e:
             logger.debug(f"[DE] vote_history save error: {e}")
         # ════════════════════════════════════════════════════════════════
