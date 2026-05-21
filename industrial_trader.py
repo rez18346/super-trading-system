@@ -568,6 +568,7 @@ class IndustrialTrader:
                                 'entry_price': real_entry,
                                 'entry_time': datetime.now().isoformat(),
                                 'max_profit': 0.0,
+                                '_highest_price': real_entry,
                                 '_created_at': time.time(),  # 🛡️ Для защиты от sync-удаления
                                 '_sl_price': sl_price,
                                 '_tp_price': tp_price,
@@ -974,7 +975,7 @@ class IndustrialTrader:
                                 # Дополнительная проверка: есть ли уже позиция в БД
                                 import sqlite3
                                 try:
-                                    db_path = self.db_path
+                                    db_path = db.DB_PATH
                                     _conn = sqlite3.connect(db_path)
                                     _c = _conn.cursor()
                                     _c.execute('SELECT COUNT(*) FROM positions WHERE symbol=? AND quantity>0', (symbol,))
@@ -1043,6 +1044,9 @@ class IndustrialTrader:
                             position['max_profit'] = pnl_percent
                         else:
                             position['max_profit'] = max(position['max_profit'], pnl_percent)
+                        # Точная максимальная цена (для корректного highest_price в decide_exit)
+                        if '_highest_price' not in position or current_price > position['_highest_price']:
+                            position['_highest_price'] = current_price
                         
                         # 🎯 РАННИЙ ТРЕЙЛИНГ: цена прошла +1.5% — активируем плотный трейлинг 0.3%
                         # Отличие от стандартного трейлинга: срабатывает раньше и плотнее
@@ -1067,9 +1071,14 @@ class IndustrialTrader:
                                     early_trail_reason = f"Ранний трейлинг: пик={peak:.4f}, откат до {current_price:.4f} ({pnl_percent:+.2f}%)"
                                     logger.info(f"🎯 [Ранний трейлинг] {symbol}: {early_trail_reason}")
                         
-                        # ⚡ ИМПУЛЬСНЫЙ ВЫХОД: проверяем 1M свечи на затухание
+                        # ═══════════════════════════════════════════════════════
+                        # ⚡ ИМПУЛЬСНЫЙ ВЫХОД (1M свечи) + EXIT ENSEMBLE (модули)
+                        # ═══════════════════════════════════════════════════════
                         impulse_exit_signal = None
-                        # 🛡️ Auto-reload: подхватываем изменения /tmp/impulse_config.json на лету
+                        candles_1m = None
+                        vsa_for_impulse = None
+
+                        # 🛡️ Auto-reload
                         try:
                             import importlib
                             import impulse_exit as ie
@@ -1079,49 +1088,152 @@ class IndustrialTrader:
                                 import impulse_exit as ie
                             except Exception:
                                 ie = None
-                        if ie is not None and not ie.is_cooldown_active(symbol, 60):
+
+                        # Получаем 1M свечи в одном месте, чтобы не дёргать API дважды
+                        if hasattr(self, 'exchange'):
                             try:
-                                candles_1m = None
-                                if hasattr(self, 'exchange'):
-                                    raw_1m = self.exchange.fetch_ohlcv(symbol, '1m', limit=20)
-                                    if raw_1m and len(raw_1m) >= 5:
-                                        candles_1m = [
-                                            {'o':c[1],'h':c[2],'l':c[3],'c':c[4],'v':c[5]}
-                                            for c in raw_1m
-                                        ]
-                                if candles_1m and len(candles_1m) >= 5:
+                                raw_1m = self.exchange.fetch_ohlcv(symbol, '1m', limit=25)
+                                if raw_1m and len(raw_1m) >= 5:
+                                    candles_1m = [
+                                        {'o':c[1],'h':c[2],'l':c[3],'c':c[4],'v':c[5]}
+                                        for c in raw_1m
+                                    ]
+                            except Exception as e:
+                                logger.debug(f"[FETCH] {symbol}: {e}")
+
+                        # ═══ VSA для импульса: быстрая проверка ────────────────
+                        if candles_1m and len(candles_1m) >= 10:
+                            try:
+                                from vsa_analyzer import analyze_volume_spread
+                                vsa_imp = analyze_volume_spread(candles_1m)
+                                if vsa_imp:
+                                    vsa_for_impulse = {
+                                        'signal': vsa_imp.signal,
+                                        'strength': vsa_imp.strength,
+                                        'label': vsa_imp.detail,
+                                    }
+                            except Exception as e:
+                                logger.debug(f"[VSA] {symbol}: {e}")
+
+                        # ═══ Импульсный выход с VSA-валидацией ─────────────────
+                        if ie is not None and not ie.is_cooldown_active(symbol, 60):
+                            if candles_1m and len(candles_1m) >= 5:
+                                try:
                                     impulse_result = ie.detect_impulse_exhaustion(
                                         candles_1m,
                                         entry_price=entry_price,
-                                        current_pnl_pct=pnl_percent
+                                        current_pnl_pct=pnl_percent,
+                                        vsa_result=vsa_for_impulse
                                     )
                                     if impulse_result.exhaustion and pnl_percent > 0.3:
                                         impulse_exit_signal = f"Импульс: {impulse_result.detail}"
                                         logger.info(f"⚡ [IMPULSE EXIT] {symbol}: {impulse_result.detail} (PnL={pnl_percent:+.2f}%)")
-                                        ie.mark_trigger(symbol)  # 🛡️ глобальный кулдаун
-                            except Exception as e:
-                                logger.debug(f"[IMPULSE] {symbol}: {e}")  # Не критично
-                        
+                                        ie.mark_trigger(symbol)
+                                except Exception as e:
+                                    logger.debug(f"[IMPULSE] {symbol}: {e}")
+
+                        # ═══ DecisionEngine: SL/TP/трейлинг/таймаут (с exit ensemble) ─
                         exit_decision = de.decide_exit(
                             symbol, entry_price, current_price,
-                            highest_price=current_price * (1 + position['max_profit'] / 100),
+                            highest_price=position.get('_highest_price', current_price * (1 + position.get('max_profit', 0) / 100)),
                             lowest_price=current_price * (1 + min(0, pnl_percent) / 100),
                             entry_time=pos_time, pnl_pct=pnl_percent,
                             sl_pct=rp['sl_pct'], tp_pct=rp['tp_pct'],
                             trail_act=rp['trail_act'], trail_dist=rp['trail_dist'],
-                            max_hold_hours=max_hold, side='long'
+                            max_hold_hours=max_hold, side='long',
+                            candles_1m=candles_1m
                         )
-                        
-                        should_sell = (exit_decision is not None) or early_trail_triggered or (impulse_exit_signal is not None) or (stale_sell_reason is not None)
-                        sell_reason = exit_decision.reason if exit_decision else ""
+
+                        # ═══ SMART EXIT: проверяем exit_override ──────────────
+                        # exit_override может быть:
+                        #   None — решение не принято (держать)
+                        #   'exit' — выходим
+                        #   'hold_widen_sl' — не выходим, расширяем SL
+                        # Action: 'exit' (выход) или 'hold' (не выходим)
+
+                        should_sell = False
+                        sell_reason = ""
+                        exit_widened = False
+
+                        # 1) Early trail — если цена просела, но ensemble говорит держать
                         if early_trail_triggered:
-                            sell_reason = early_trail_reason
-                        elif impulse_exit_signal is not None:
+                            # Пробуем ensemble (из decide_exit или свой)
+                            et_ensemble_override = (
+                                exit_decision and exit_decision.exit_override == 'hold_widen_sl'
+                            )
+                            # Если decide_exit не дал ensemble (exit_decision=None), делаем свой
+                            if not et_ensemble_override and candles_1m and len(candles_1m) >= 10:
+                                try:
+                                    et_vote = de._evaluate_exit_ensemble(
+                                        symbol, entry_price, current_price, pnl_percent,
+                                        highest_price=position.get('_highest_price', current_price),
+                                        candles_5m=candles_1m
+                                    )
+                                    if et_vote.get('approved'):
+                                        et_ensemble_override = True
+                                        logger.info(f"🧠 [SMART EXIT] {symbol}: ранний трейлинг отменён"
+                                                    f" (собственный ensemble hold={et_vote.get('hold_confidence', 0)}%)")
+                                except Exception as _et_e:
+                                    logger.debug(f"[SMART] early trail ensemble: {_et_e}")
+
+                            if et_ensemble_override:
+                                sell_reason = ""
+                                early_trail_triggered = False
+                                exit_widened = True
+                            else:
+                                should_sell = True
+                                sell_reason = early_trail_reason
+
+                        # 2) DecisionEngine exit (SL/TP/трейлинг/таймаут с exit ensemble)
+                        if not should_sell and exit_decision is not None:
+                            if exit_decision.exit_override == 'hold_widen_sl':
+                                # Ensemble говорит «держать» — расширяем SL
+                                logger.info(f"🧠 [SMART EXIT] {symbol}: {exit_decision.reason}")
+                                exit_widened = True
+                            else:
+                                # Ensemble подтвердил выход
+                                should_sell = True
+                                sell_reason = exit_decision.reason
+
+                        # 3) Импульсный выход
+                        if not should_sell and impulse_exit_signal is not None:
+                            should_sell = True
                             sell_reason = impulse_exit_signal
-                        elif stale_sell_reason is not None:
+
+                        # 4) Stale sell
+                        if not should_sell and stale_sell_reason is not None:
+                            should_sell = True
                             sell_reason = stale_sell_reason
-                        
-                        if not should_sell:
+
+                        # ═══ SMART SL WIDENING: обновляем SL если ensemble отменил выход ─
+                        if exit_widened and exit_decision and exit_decision.sl_price is not None:
+                            new_sl = exit_decision.sl_price
+                            old_sl = entry_price * (1 - rp['sl_pct'] / 100.0)
+                            if new_sl < old_sl:  # SL расширяется (ниже текущего)
+                                # Обновляем SL в позиции — ключ _sl_price а не sl_price (см. __init__)
+                                position['_sl_price'] = new_sl
+                                position['smart_exit_count'] = position.get('smart_exit_count', 0) + 1
+                                logger.info(f"🧠 SL РАСШИРЕН: {symbol} {old_sl:.6f}→{new_sl:.6f} "
+                                            f"(счётчик: {position.get('smart_exit_count')})")
+
+                        # ═══ RE-ENTRY SUPPRESSION: если только что вышли и снова хотим войти ─
+                        reentry_check_cooldown = 300  # 5 мин
+                        if should_sell and hasattr(de, '_last_decisions'):
+                            last_entry = de._last_decisions.get(symbol, {})
+                            last_exit_time = last_entry.get('exit_time', 0)
+                            if last_exit_time > 0 and (time.time() - last_exit_time) < reentry_check_cooldown:
+                                # Вышли менее 5 мин назад — возможно нас выбило шумом
+                                # Вместо продажи: восстанавливаем позицию по цене входа
+                                # (на самом деле просто пропускаем sell — позиция остаётся)
+                                entry_age = time.time() - last_exit_time
+                                logger.info(f"🧠 RE-ENTRY SUPPRESSION: {symbol} вышли {entry_age:.0f}с назад")
+                                # Отменяем sell, но сбрасываем таймер выхода
+                                # чтобы не попасть в цикл "продажа → вход → продажа"
+                                should_sell = False
+                                sell_reason = ""
+                                de._last_decisions.pop(symbol, None)
+
+                        if not should_sell and not exit_widened:
                             # Статусный лог (раз в цикл для видимых PnL)
                             if abs(pnl_percent) > 1:
                                 logger.info(f"📊 {symbol}: PnL={pnl_percent:+.2f}%, время={hold_hours:.0f}ч, трейд={position.get('max_profit', 0):.1f}% пик")
@@ -1189,6 +1301,24 @@ class IndustrialTrader:
                                 logger.warning(f"⚠️ Sell {symbol} не удался. Принудительно очищаю позицию из памяти.")
                                 self.positions.pop(symbol, None)
                                 db.remove_position(symbol)
+                
+                # Периодическая очистка старых триггеров + ретрейн ML (раз в 10 мин)
+                if getattr(self, '_last_cleanup_time', 0) < time.time() - 600:
+                    try:
+                        import impulse_exit as ie_clean
+                        by_ie = ie_clean.cleanup_old_triggers(7200)
+                        by_de = de.cleanup_old_decisions(7200)
+                        if by_ie + by_de > 0:
+                            logger.info(f"🧹 Очистка кешей: импульс={by_ie}, решения={by_de}")
+                    except Exception:
+                        pass
+                    # 🧠 Advisor: попытка ретрейна (раз в час, если хватает данных)
+                    try:
+                        from ml_advisor import ml_train
+                        ml_train(force=False)
+                    except Exception:
+                        pass
+                    self._last_cleanup_time = time.time()
                 
                 # Сохраняем реальный баланс с биржи для дашборда
                 self._save_real_balance()

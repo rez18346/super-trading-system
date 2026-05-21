@@ -124,7 +124,8 @@ def mark_trigger(symbol: str):
 
 def detect_impulse_exhaustion(candles_1m: List[Dict], 
                                 entry_price: float = None,
-                                current_pnl_pct: float = None) -> ImpulseResult:
+                                current_pnl_pct: float = None,
+                                vsa_result: Optional[Dict] = None) -> ImpulseResult:
     """
     Анализ 1M свечей на признаки затухания импульса.
     
@@ -342,6 +343,9 @@ def detect_impulse_exhaustion(candles_1m: List[Dict],
                 details += f' (отсев {len(unconfirmed)} неподтв.)'
     
     # Если после отсева не осталось компонентов — импульс здоровый
+    # Инициализируем details ДО блока 4b (используется в consecutive confirmations)
+    details = '+'.join(f"{k}={v}" for k, v in score_components)
+    
     if not score_components:
         return ImpulseResult(
             score=0, exhaustion=False,
@@ -354,7 +358,6 @@ def detect_impulse_exhaustion(candles_1m: List[Dict],
     
     # Итоговый score: берём максимальный компонент
     max_score = max(s[1] for s in score_components)
-    details = '+'.join(f"{k}={v}" for k, v in score_components)
     
     # ─── 5. Микро-тренд: не выходим на растущем рынке ────────────────────
     # Если последние свечи идут вверх — импульсное затухание может быть
@@ -388,6 +391,33 @@ def detect_impulse_exhaustion(candles_1m: List[Dict],
                     detail=f"score={max_score}: {details}"
                 )
     
+    # ─── 6. VSA-валидация: если VSA говорит «держать» — подавляем импульс ──
+    if vsa_result and isinstance(vsa_result, dict):
+        vsa_signal = vsa_result.get('signal', '')
+        vsa_strength = vsa_result.get('strength', 0)
+        vsa_label = vsa_result.get('label', '')
+        if 'bullish' in vsa_signal or 'bullish' in vsa_label or vsa_strength > 0.5:
+            # VSA бычий — объём идёт наверх, импульс может быть коррекцией
+            suppressed = len([s for s in score_components if s[1] >= exit_thresh])
+            exhaustion = False
+            signal = 'hold'
+            details += f' (VSA бычий vsa_str={vsa_strength:.2f}, {suppressed} сигн. подавлено)'
+            return ImpulseResult(
+                score=max_score,
+                exhaustion=False,
+                volume_divergence=volume_divergence,
+                body_trend=body_trend,
+                wick_rejection=wick_rejection,
+                signal='hold',
+                detail=f"score={max_score}: {details}"
+            )
+        elif 'bearish' in vsa_signal or 'bearish' in vsa_label:
+            # VSA медвежий — подтверждает импульсный выход
+            details += f' (VSA медвежий vsa_str={vsa_strength:.2f} → подтверждён)'
+        else:
+            # VSA нейтрален — импульс работает как обычно
+            details += f' (VSA={vsa_signal}, без изменений)'
+
     # Проверка: нужно достаточно подтверждений
     if min_confirmations > 1:
         # Требуется несколько сигналов
@@ -408,6 +438,23 @@ def detect_impulse_exhaustion(candles_1m: List[Dict],
         signal=signal,
         detail=f"score={max_score}: {details}"
     )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ОЧИСТКА СТАРЫХ ТРИГГЕРОВ (предотвращает утечку)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def cleanup_old_triggers(max_age_sec: int = 7200) -> int:
+    """Удалить триггеры старше max_age_sec. Возвращает количество удалённых."""
+    now = time.time()
+    keys = list(_LAST_IMPULSE_TRIGGER.keys())
+    removed = 0
+    for sym in keys:
+        if now - _LAST_IMPULSE_TRIGGER[sym] > max_age_sec:
+            del _LAST_IMPULSE_TRIGGER[sym]
+            removed += 1
+    return removed
 
 
 # ──────────────────────────────────────────────────────────────────────────────

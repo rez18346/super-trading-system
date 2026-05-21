@@ -61,6 +61,7 @@ class Decision:
 
     ⚡ ЗАЛОЖЕНО ПОД ШОРТ: поле side='short'.
     ⚡ ЗАЛОЖЕНО ПОД ДИНАМИЧЕСКИЙ РИСК: sl_price, tp_price, trail_act, trail_dist.
+    ⚡ ЗАЛОЖЕНО ПОД SMART EXIT: exit_override, exit_vote.
 
       Атрибуты:
       symbol        — тикер (XRP/USDT)
@@ -78,6 +79,8 @@ class Decision:
       signal_type   — тип сигнала (SignalType)
       priority      — приоритет (50 по умолч.)
       metadata      — полная раскладка голосов
+      exit_override — 'exit' | 'hold_widen_sl' | 'hold_tighten_sl': как поступить (для exit)
+      exit_vote     — полная раскладка exit ensemble (для exit & hold_widen_sl)
     """
     def __init__(self, symbol: str, action: str = 'hold',
                  side: str = 'long',
@@ -92,7 +95,9 @@ class Decision:
                  reason: str = '',
                  signal_type: Optional[SignalType] = None,
                  priority: int = 50,
-                 metadata: Optional[Dict] = None):
+                 metadata: Optional[Dict] = None,
+                 exit_override: Optional[str] = None,
+                 exit_vote: Optional[Dict] = None):
         self.symbol = symbol
         self.action = action
         self.side = side
@@ -108,6 +113,8 @@ class Decision:
         self.signal_type = signal_type
         self.priority = priority
         self.metadata = metadata or {}
+        self.exit_override = exit_override
+        self.exit_vote = exit_vote or {}
 
     @property
     def is_long(self) -> bool:
@@ -315,7 +322,178 @@ class DecisionEngine:
         """Обновить HMM-режим рынка (вызывается из монитора)."""
         self.hmm_regime = regime
         logger.debug(f"[DE] HMM: {regime}")
-    
+
+    # ─── EXIT ENSEMBLE — МОДУЛЬНОЕ ГОЛОСОВАНИЕ НА ВЫХОД ───────────────────
+
+    def _evaluate_exit_ensemble(self, symbol: str,
+                                 entry_price: float,
+                                 current_price: float,
+                                 pnl_pct: float,
+                                 highest_price: float = None,
+                                 candles_5m: Optional[list] = None) -> Dict:
+        """
+        Профессиональный ансамбль для решения о выходе.
+
+        Отвечает на вопрос: «Рынок всё ещё за позицию?»
+
+        Веса (exit-специфичные, отличаются от entry):
+          1. VSA (качество движения, распределение/накопление) — 35%
+          2. MLAdvisor (уверенность в тренде)                  — 25%
+          3. LiquidityCluster (структура ликвидности)          — 20%
+          4. Volume/VWAP (реверсия, спайки)                    — 10%
+          5. ML-v2 (LightGBM, резерв)                          — 10%
+
+        Возвращает:
+        {
+            'hold_confidence': 0-100,  # насколько уверенно надо держать
+            'approved': bool,          # true = отменить/ослабить SL
+            'votes': {...},            # раскладка по модулям
+            'reason': str,             # пояснение
+            'weights': {...},          # веса модулей
+        }
+        """
+        self._lazy_init_ml()
+
+        EXIT_WEIGHTS = {
+            'vsa': 0.35,
+            'advisor': 0.25,
+            'liquidity': 0.20,
+            'volume_vwap': 0.10,
+            'ml_v2': 0.10,
+        }
+
+        scores = {}
+        for k, w in EXIT_WEIGHTS.items():
+            scores[k] = {'score': 50, 'weight': w, 'detail': 'N/A'}
+
+        # ═══ VSA (35%) — критичен для выхода: видит распределение/накопление
+        try:
+            from vsa_analyzer import analyze_volume_spread
+            vsa_result = analyze_volume_spread(candles_5m or [])
+            if vsa_result.signal == 'bullish':
+                vsa_score = 60 + vsa_result.strength * 35
+                scores['vsa']['detail'] = f"bullish(strength={vsa_result.strength:.2f})"
+            elif vsa_result.signal == 'bearish':
+                vsa_score = 40 - vsa_result.strength * 35  # 5-40 — надо выходить
+                scores['vsa']['detail'] = f"bearish(strength={vsa_result.strength:.2f})"
+            else:
+                vsa_score = 50
+                scores['vsa']['detail'] = f"neutral({vsa_result.detail[:40]})"
+            scores['vsa']['score'] = max(0, min(100, int(vsa_score)))
+        except Exception as e:
+            logger.debug(f"[EXIT] VSA: {e}")
+            scores['vsa']['score'] = 50
+
+        # ═══ Advisor (25%) — уверенность в продолжении тренда
+        try:
+            if self._ml_advisor and self._ml_advisor.is_trained:
+                adv_df = None
+                if candles_5m and len(candles_5m) > 10:
+                    try:
+                        import pandas as _pd
+                        adv_df = _pd.DataFrame(candles_5m)
+                    except Exception:
+                        adv_df = None
+                adv = self._ml_advisor.evaluate(
+                    symbol, current_price, 50, 'neutral', 50, df=adv_df
+                )
+                if adv['decision'] == 'GOOD':
+                    adv_score = 60 + adv['confidence'] * 35
+                    scores['advisor']['score'] = min(100, int(adv_score))
+                    scores['advisor']['detail'] = f"GOOD({adv['confidence']:.2f})"
+                elif adv['decision'] == 'WEAK':
+                    scores['advisor']['score'] = 45
+                    scores['advisor']['detail'] = f"WEAK({adv['confidence']:.2f})"
+                else:
+                    scores['advisor']['score'] = 30
+                    scores['advisor']['detail'] = f"SKIP({adv['confidence']:.2f})"
+            else:
+                scores['advisor']['score'] = 50
+                scores['advisor']['detail'] = "not_trained"
+        except Exception as e:
+            logger.debug(f"[EXIT] Advisor: {e}")
+            scores['advisor']['score'] = 50
+
+        # ═══ Liquidity (20%) — структура ликвидности всё ещё за?
+        try:
+            if self._liquidity:
+                liq = self._liquidity.evaluate(candles_5m or [], current_price, None, None)
+                if liq and isinstance(liq, dict):
+                    raw_liq = liq.get('score', 50)
+                    scores['liquidity']['score'] = int(raw_liq)
+                    scores['liquidity']['detail'] = f"score={raw_liq:.0f}"
+                else:
+                    scores['liquidity']['score'] = 50
+            else:
+                scores['liquidity']['score'] = 50
+        except Exception as e:
+            logger.debug(f"[EXIT] Liquidity: {e}")
+            scores['liquidity']['score'] = 50
+
+        # ═══ Volume/VWAP (10%) — спайки, реверсия
+        try:
+            if self._volume_vwap and candles_5m:
+                vv = self._volume_vwap.evaluate(symbol, current_price, candles_5m, None, None)
+                if vv and isinstance(vv, dict):
+                    vv_score = vv.get('score', 50)
+                    vv_signal = vv.get('signal', vv.get('detail', ''))
+                    if 'reversion_sell' in str(vv_signal):
+                        vv_score = max(10, vv_score - 30)
+                    scores['volume_vwap']['score'] = int(vv_score)
+                    scores['volume_vwap']['detail'] = f"score={vv_score:.0f} sig={vv_signal[:30]}"
+                else:
+                    scores['volume_vwap']['score'] = 50
+            else:
+                scores['volume_vwap']['score'] = 50
+        except Exception as e:
+            logger.debug(f"[EXIT] VWAP: {e}")
+            scores['volume_vwap']['score'] = 50
+
+        # ═══ ML-v2 (10%) — резервный голос
+        try:
+            if self._ml_pro_v2 and self._ml_pro_v2.trained:
+                ml = self._ml_pro_v2.evaluate(symbol, candles_5m or [], [], [], 50, 'neutral', 50)
+                ml_dec, ml_prob, _ = ml if len(ml) == 3 else (None, 0.5, None)
+                if ml_dec == 'BUY':
+                    scores['ml_v2']['score'] = 70
+                    scores['ml_v2']['detail'] = f"BUY(prob={ml_prob:.2f})"
+                elif ml_dec == 'WEAK_BUY':
+                    scores['ml_v2']['score'] = 55
+                    scores['ml_v2']['detail'] = f"WEAK(prob={ml_prob:.2f})"
+                else:
+                    scores['ml_v2']['score'] = 30
+                    scores['ml_v2']['detail'] = f"SKIP(prob={ml_prob:.2f})"
+            else:
+                scores['ml_v2']['score'] = 50
+        except Exception as e:
+            logger.debug(f"[EXIT] ML-v2: {e}")
+            scores['ml_v2']['score'] = 50
+
+        # ═══ ИТОГОВЫЙ SCORE HOLD ─────────────────────────────────────────
+        total_weight = sum(EXIT_WEIGHTS.values())
+        hold_confidence = sum(s['score'] * s['weight'] for s in scores.values()) / total_weight if total_weight > 0 else 50
+        hold_confidence = max(0, min(100, int(round(hold_confidence))))
+
+        # Решение:
+        approved = hold_confidence >= 65  # ≥65 = отменяем/ослабляем SL
+
+        # Собираем детали
+        details = ' | '.join(f"{k}={v['score']}" for k, v in scores.items())
+        reason = f"EXIT-VOTE: hold={hold_confidence}% {'✅' if approved else '❌'} [{details}]"
+
+        # ⚡ PnL-контекст: если уже в хорошем плюсе (>3%), ослабляем требования
+        if pnl_pct > 3.0 and hold_confidence >= 55:
+            approved = True
+            reason += " | PnL>3% → ослаблен порог"
+
+        return {
+            'hold_confidence': hold_confidence,
+            'approved': approved,
+            'votes': scores,
+            'reason': reason,
+            'weights': EXIT_WEIGHTS,
+        }
+
     # ─── ВЫХОД ИЗ ПОЗИЦИИ ──────────────────────────────────────────────────
     
     def decide_exit(self, symbol: str, entry_price: float, current_price: float,
@@ -323,71 +501,129 @@ class DecisionEngine:
                     entry_time: datetime, pnl_pct: float,
                     sl_pct: float, tp_pct: float, trail_act: float,
                     trail_dist: float, max_hold_hours: float = 48,
-                    side: str = 'long') -> Optional[Decision]:
+                    side: str = 'long',
+                    candles_1m: Optional[list] = None) -> Optional[Decision]:
         """
         Принять решение о выходе.
         Приоритет: SL > TP > трейлинг > таймаут.
-        
+
+        ⚡ SMART EXIT: перед выходом по TP/трейлингу/таймауту проверяет
+           exit-ensemble (VSA + Advisor + Liq + VWAP + ML-v2).
+           Если ensemble говорит «держать» (hold_confidence >= 65) —
+           возвращает hold_widen_sl с расширенным SL вместо выхода.
+
         ⚡ ЗАЛОЖЕНО ПОД ШОРТ: side='short' инвертирует логику SL/TP/трейлинга.
-        
-        Для long:
-          SL = цена падает на N% от входа
-          TP = цена растёт на N% от входа
-          Трейлинг = цена была выше входа на trail_act%, потом упала на trail_dist%
-        
-        Для short:
-          SL = цена растёт на N% от входа (движение против шорта)
-          TP = цена падает на N% от входа
-          Трейлинг = цена была ниже входа на trail_act%, потом выросла на trail_dist%
+
+        Параметры:
+            candles_1m: 1M свечи для exit ensemble (опционально)
         """
         self.stats['total_decisions'] += 1
         is_short = (side == 'short')
-        
+
+        # ═══ ВСПОМОГАТЕЛЬНАЯ: exit ensemble для TP/трейлинга ─────────────
+        def _check_exit_ensemble(trigger_type: str, base_reason: str) -> Optional[Decision]:
+            """Проверить exit ensemble: если модули говорят «держать» — отменить выход."""
+            if candles_1m is None or len(candles_1m) < 5:
+                return None  # нет данных для ensemble → exit как обычно
+
+            exit_vote = self._evaluate_exit_ensemble(
+                symbol, entry_price, current_price, pnl_pct,
+                highest_price=highest_price, candles_5m=candles_1m
+            )
+
+            if exit_vote['approved']:
+                # Модули говорят «держать» → расширяем SL вместо выхода
+                widened_sl = sl_pct * 1.5  # расширяем SL на 50%
+                reason = (f"{trigger_type} ОТМЕНЁН: ensemble hold={exit_vote['hold_confidence']}% [{exit_vote.get('reason','')}]"
+                          f" | SL расширен до {widened_sl:.1f}%")
+                logger.info(f"🧠 [SMART EXIT] {symbol}: {reason}")
+
+                return Decision(
+                    symbol, 'hold', side=side, priority=85,
+                    reason=reason,
+                    signal_type=SignalType.HOLD,
+                    sl_price=entry_price * (1 - widened_sl / 100.0),
+                    exit_override='hold_widen_sl',
+                    exit_vote=exit_vote
+                )
+            else:
+                # Модули согласны с выходом
+                reason = f"{base_reason} | exit_ensemble hold={exit_vote['hold_confidence']}% — выход подтверждён"
+                logger.info(f"🧠 [SMART EXIT] {symbol}: {reason}")
+                return Decision(
+                    symbol, 'exit', side=side, priority=80 if trigger_type != 'TP' else 90,
+                    reason=reason,
+                    signal_type=SignalType.SELL,
+                    exit_override='exit',
+                    exit_vote=exit_vote
+                )
+
         # ─── 1. SL — безусловный стоп-лосс ────────────────────────────────
-        # Long: PnL <= -sl_pct (цена упала). Short: PnL <= -sl_pct (цена выросла против шорта)
+        # SL никогда не отменяется exit ensemble — это safety net
         if pnl_pct <= -sl_pct:
             self.stats['exit_decisions'] += 1
             return Decision(symbol, 'exit', side=side,
                            reason=f"SL -{pnl_pct:.2f}% (лимит -{sl_pct}%)",
-                           signal_type=SignalType.STRONG_SELL, priority=100)
-        
-        # ─── 2. TP — тейк-профит ──────────────────────────────────────────
-        # Long: PnL >= tp_pct (цена выросла). Short: PnL >= tp_pct (цена упала в пользу)
+                           signal_type=SignalType.STRONG_SELL, priority=100,
+                           exit_override='exit')
+
+        # ─── 2. TP — тейк-профит с exit ensemble ──────────────────────────
         if pnl_pct >= tp_pct:
             self.stats['exit_decisions'] += 1
+            ensemble_result = _check_exit_ensemble(
+                'TP',
+                f"TP +{pnl_pct:.2f}% (лимит +{tp_pct}%)"
+            )
+            if ensemble_result:
+                return ensemble_result
+            # Fallback: нет данных для ensemble → exit как обычно
             return Decision(symbol, 'exit', side=side,
                            reason=f"TP +{pnl_pct:.2f}% (лимит +{tp_pct}%)",
-                           signal_type=SignalType.STRONG_SELL, priority=90)
-        
-        # ─── 3. Трейлинг-стоп ─────────────────────────────────────────────
-        # ⚡ ЗАЛОЖЕНО ПОД ШОРТ: для short трейлинг срабатывает при росте цены после падения
+                           signal_type=SignalType.STRONG_SELL, priority=90,
+                           exit_override='exit')
+
+        # ─── 3. Трейлинг-стоп с exit ensemble ─────────────────────────────
         if is_short:
-            # Short: lowest_price (минимум от входа), трейлинг = цена выросла от минимума
             trail_active_pct = (entry_price - lowest_price) / entry_price * 100
             if trail_active_pct >= trail_act:
                 trail_level = lowest_price * (1 + trail_dist / 100.0)
                 if current_price >= trail_level:
                     self.stats['exit_decisions'] += 1
+                    ensemble_result = _check_exit_ensemble(
+                        'Short-трейлинг',
+                        f"Short-трейлинг: L={lowest_price:.4f}→{current_price:.4f}"
+                        f" (активация: {trail_act}%, дист: {trail_dist}%)"
+                    )
+                    if ensemble_result:
+                        return ensemble_result
                     return Decision(
                         symbol, 'exit', side=side, priority=80,
                         reason=(f"Short-трейлинг: L={lowest_price:.4f}→{current_price:.4f}"
                                 f" (активация: {trail_act}%, дист: {trail_dist}%)"),
-                        signal_type=SignalType.SELL
+                        signal_type=SignalType.SELL,
+                        exit_override='exit'
                     )
         else:
-            # Long: highest_price (максимум от входа), трейлинг = цена упала от максимума
             trail_active_pct = (highest_price - entry_price) / entry_price * 100
             if trail_active_pct >= trail_act:
                 trail_level = highest_price * (1 - trail_dist / 100.0)
                 if current_price <= trail_level:
                     self.stats['exit_decisions'] += 1
+                    ensemble_result = _check_exit_ensemble(
+                        'Long-трейлинг',
+                        f"Long-трейлинг: H={highest_price:.4f}→{current_price:.4f}"
+                        f" (активация: {trail_act}%, дист: {trail_dist}%)"
+                    )
+                    if ensemble_result:
+                        return ensemble_result
                     return Decision(
                         symbol, 'exit', side=side, priority=80,
                         reason=(f"Long-трейлинг: H={highest_price:.4f}→{current_price:.4f}"
                                 f" (активация: {trail_act}%, дист: {trail_dist}%)"),
-                        signal_type=SignalType.SELL
+                        signal_type=SignalType.SELL,
+                        exit_override='exit'
                     )
-        
+
         # ─── 4. Таймаут удержания (48 часов) ──────────────────────────────
         if entry_time.tzinfo is None:
             entry_time = entry_time.replace(tzinfo=timezone.utc)
@@ -395,12 +631,19 @@ class DecisionEngine:
         hold_hours = (now - entry_time).total_seconds() / 3600
         if hold_hours >= max_hold_hours:
             self.stats['exit_decisions'] += 1
+            ensemble_result = _check_exit_ensemble(
+                'Таймаут',
+                f"Таймаут {hold_hours:.1f}ч > {max_hold_hours}ч"
+            )
+            if ensemble_result:
+                return ensemble_result
             return Decision(
                 symbol, 'exit', side=side, priority=70,
                 reason=f"Таймаут {hold_hours:.1f}ч > {max_hold_hours}ч",
-                signal_type=SignalType.WEAK_SELL
+                signal_type=SignalType.WEAK_SELL,
+                exit_override='exit'
             )
-        
+
         return None  # держим
     
     def _check_trailing_stop(self, symbol: str, entry_price: float,
@@ -727,15 +970,15 @@ class DecisionEngine:
         # Инициализируем результаты голосов
         # ⚡ БАЗОВЫЕ ВЕСА
         BASE_WEIGHTS = {
-            'ml_v2': 0.15,
+            'ml_v2': 0.10,
             'advisor': 0.35,
             'mtf': 0.00,   # информационно, без веса
             'rsi_vol_btc': 0.00,  # отключён — дублирует Advisor
             'liquidity': 0.25,
-            'volume_vwap': 0.15,
-            'vsa': 0.10,   # VSA — качество движения
+            'volume_vwap': 0.10,
+            'vsa': 0.20,   # VSA — качество движения (повышено для защиты от заходов на вершине)
         }
-        # Сумма весов = 1.0 (0.15+0.35+0.00+0.00+0.25+0.15+0.10)
+        # Сумма весов = 1.0 (0.10+0.35+0.00+0.00+0.25+0.10+0.20)
 
         scores = {}
         for k, w in BASE_WEIGHTS.items():
@@ -1246,6 +1489,18 @@ class DecisionEngine:
             elif time.time() - self._btc_reference_time > 14400:  # каждые 4 часа
                 self._btc_reference_price = btc_price
                 self._btc_reference_time = time.time()
+
+    def cleanup_old_decisions(self, max_age_sec: int = 7200) -> int:
+        """Удалить exit-time записи старше max_age_sec (предотвращает утечку)."""
+        now = time.time()
+        keys = list(self._last_decisions.keys())
+        removed = 0
+        for sym in keys:
+            exit_time = self._last_decisions[sym].get('exit_time', 0)
+            if now - exit_time > max_age_sec:
+                del self._last_decisions[sym]
+                removed += 1
+        return removed
 
     def get_stats(self) -> Dict:
         """Вернуть статистику решений."""
