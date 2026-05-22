@@ -469,10 +469,73 @@ class DecisionEngine:
             logger.debug(f"[EXIT] ML-v2: {e}")
             scores['ml_v2']['score'] = 50
 
+        # ═══ OI LIQUIDATION + FR BOOST ────────────────────────────────────
+        # Если цена в зоне ликвидации шортов → потенциал сквиза → держим
+        oi_squeeze = 0
+        oi_heat = 0
+        oi_detail = ''
+        try:
+            from collect_oi import get_oi_collector
+            oi_collector = get_oi_collector()
+            oi_levels = oi_collector.get_liq_levels(symbol, current_price)
+            oi_heat = oi_levels.get('heat', 0)
+            
+            # Если цена в зоне ликвидации шортов
+            sz = oi_levels.get('liq_zone_short')
+            in_short_zone = False
+            if sz and len(sz) == 2:
+                if sz[0] <= current_price <= sz[1]:
+                    in_short_zone = True
+                # Или цена прямо у нижней границы (шорты начнут гореть при пробое)
+                elif abs(current_price - sz[0]) / current_price < 0.02:
+                    in_short_zone = True
+            
+            if oi_heat >= 1 and in_short_zone:
+                oi_squeeze = 15 + oi_heat * 5  # 20-30 баллов буста
+                oi_detail = f"Liq🔥OI(heat={oi_heat},+{oi_squeeze})"
+            elif oi_heat >= 2:
+                oi_squeeze = 10
+                oi_detail = f"OI(heat={oi_heat},+{oi_squeeze})"
+        except Exception:
+            pass
+        
+        # FR (Funding Rate) — негативный FR = сквиз потенциал
+        # Загружаем напрямую из CSV (путь совпадает с btc_direction)
+        fr_squeeze = 0
+        fr_detail = ''
+        try:
+            import csv
+            import os as _os
+            _fr_csv = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'data', 'btc_fr_oi.csv')
+            if _os.path.exists(_fr_csv):
+                with open(_fr_csv) as _f:
+                    _rows = list(csv.DictReader(_f))
+                if _rows:
+                    _last = _rows[-1]
+                    _fr_str = _last.get('funding_rate', '')
+                    if _fr_str and _fr_str.strip():
+                        last_fr = float(_fr_str)
+                        if last_fr < -0.0005:  # FR сильно негативный (< -0.05%)
+                            fr_squeeze = 20
+                            fr_detail = f"FR🔥({last_fr:.6f},+{fr_squeeze})"
+                        elif last_fr < -0.0001:  # FR умеренно негативный
+                            fr_squeeze = 10
+                            fr_detail = f"FR({last_fr:.6f},+{fr_squeeze})"
+        except Exception:
+            pass
+        
+        # Итоговый буст: OI + FR, максимум 35
+        squeeze_bonus = min(35, oi_squeeze + fr_squeeze)
+        squeeze_detail = ' | '.join(filter(None, [oi_detail, fr_detail]))
+
         # ═══ ИТОГОВЫЙ SCORE HOLD ─────────────────────────────────────────
         total_weight = sum(EXIT_WEIGHTS.values())
         hold_confidence = sum(s['score'] * s['weight'] for s in scores.values()) / total_weight if total_weight > 0 else 50
         hold_confidence = max(0, min(100, int(round(hold_confidence))))
+        
+        # Применяем squeeze bonus
+        if squeeze_bonus > 0:
+            hold_confidence = min(100, hold_confidence + squeeze_bonus)
 
         # Решение:
         approved = hold_confidence >= 65  # ≥65 = отменяем/ослабляем SL
@@ -480,6 +543,8 @@ class DecisionEngine:
         # Собираем детали
         details = ' | '.join(f"{k}={v['score']}" for k, v in scores.items())
         reason = f"EXIT-VOTE: hold={hold_confidence}% {'✅' if approved else '❌'} [{details}]"
+        if squeeze_detail:
+            reason += f" | {squeeze_detail}"
 
         # ⚡ PnL-контекст: если уже в хорошем плюсе (>3%), ослабляем требования
         if pnl_pct > 3.0 and hold_confidence >= 55:
@@ -492,6 +557,8 @@ class DecisionEngine:
             'votes': scores,
             'reason': reason,
             'weights': EXIT_WEIGHTS,
+            'squeeze_bonus': squeeze_bonus,
+            'oi_heat': oi_heat,
         }
 
     # ─── ВЫХОД ИЗ ПОЗИЦИИ ──────────────────────────────────────────────────
@@ -558,10 +625,16 @@ class DecisionEngine:
                     exit_vote=exit_vote
                 )
 
-        # ─── 1. SL — безусловный стоп-лосс ────────────────────────────────
-        # SL никогда не отменяется exit ensemble — это safety net
+        # ─── 1. SL — стоп-лосс с exit ensemble ──────────────────────────
+        # SL проверяется через ensemble: если модули говорят «держать» — SL расширяется
         if pnl_pct <= -sl_pct:
             self.stats['exit_decisions'] += 1
+            ensemble_result = _check_exit_ensemble(
+                'SL',
+                f"SL -{pnl_pct:.2f}% (лимит -{sl_pct}%)"
+            )
+            if ensemble_result:
+                return ensemble_result
             return Decision(symbol, 'exit', side=side,
                            reason=f"SL -{pnl_pct:.2f}% (лимит -{sl_pct}%)",
                            signal_type=SignalType.STRONG_SELL, priority=100,

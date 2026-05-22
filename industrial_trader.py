@@ -979,11 +979,15 @@ class IndustrialTrader:
                                     _conn = sqlite3.connect(db_path)
                                     _c = _conn.cursor()
                                     _c.execute('SELECT COUNT(*) FROM positions WHERE symbol=? AND quantity>0', (symbol,))
-                                    if _c.fetchone()[0] > 0:
-                                        logger.warning(f"🛡️ {symbol}: уже есть в БД, пропускаю повторный BUY")
-                                        _conn.close()
-                                        continue
+                                    in_db = _c.fetchone()[0] > 0
                                     _conn.close()
+                                    # Проверяем реальную позицию: в БД И в open_positions (биржевой статус)
+                                    # Иначе старые записи в БД блокируют ре-вход
+                                    if in_db and symbol in self.positions:
+                                        logger.warning(f"🛡️ {symbol}: уже есть в БД, пропускаю повторный BUY")
+                                        continue
+                                    elif in_db and symbol not in self.positions:
+                                        logger.info(f"🧹 {symbol}: очистка устаревшей записи в БД (нет на бирже)")
                                 except Exception as _e:
                                     logger.debug(f"[buy_lock] DB check: {_e}")
                                 _buy_lock[symbol] = time.time()
@@ -1053,23 +1057,24 @@ class IndustrialTrader:
                         # Если рост продолжается — остаёмся в позиции и трейлим
                         early_trail_triggered = False
                         early_trail_reason = ""
+                        # 🟢 Активация раннего трейлинга (при PnL >= 1.5%)
                         if pnl_percent >= 1.5 and rp['tp_pct'] > 2.0:
-                            # Запоминаем пик для раннего трейлинга
                             if '_early_trail_peak' not in position:
                                 position['_early_trail_peak'] = current_price
                                 logger.info(f"📈 [Ранний трейлинг] {symbol}: активирован при PnL={pnl_percent:+.2f}%, пик={current_price:.4f}")
-                            else:
-                                # Обновляем пик если цена выросла
-                                if current_price > position['_early_trail_peak']:
-                                    position['_early_trail_peak'] = current_price
-                                # Проверяем откат от пика (0.3% = $0.003 на $1)
-                                peak = position['_early_trail_peak']
-                                trail_dist_pct = 0.003  # 0.3%
-                                trail_price = peak * (1 - trail_dist_pct)
-                                if current_price <= trail_price and pnl_percent >= 0.8:
-                                    early_trail_triggered = True
-                                    early_trail_reason = f"Ранний трейлинг: пик={peak:.4f}, откат до {current_price:.4f} ({pnl_percent:+.2f}%)"
-                                    logger.info(f"🎯 [Ранний трейлинг] {symbol}: {early_trail_reason}")
+                            elif current_price > position['_early_trail_peak']:
+                                position['_early_trail_peak'] = current_price
+                        
+                        # 🟢 Проверка отката (всегда, если трейлинг уже активирован)
+                        # (исправлено: раньше проверка была внутри pnl_percent >= 1.5,
+                        #  из-за чего при падении PnL ниже 1.5% трейлинг переставал проверяться)
+                        if '_early_trail_peak' in position and not early_trail_triggered:
+                            peak = position['_early_trail_peak']
+                            trail_price = peak * (1 - 0.003)
+                            if current_price <= trail_price and pnl_percent >= 0.8:
+                                early_trail_triggered = True
+                                early_trail_reason = f"Ранний трейлинг: пик={peak:.4f}, откат до {current_price:.4f} ({pnl_percent:+.2f}%)"
+                                logger.info(f"🎯 [Ранний трейлинг] {symbol}: {early_trail_reason}")
                         
                         # ═══════════════════════════════════════════════════════
                         # ⚡ ИМПУЛЬСНЫЙ ВЫХОД (1M свечи) + EXIT ENSEMBLE (модули)
@@ -1162,19 +1167,40 @@ class IndustrialTrader:
                                 exit_decision and exit_decision.exit_override == 'hold_widen_sl'
                             )
                             # Если decide_exit не дал ensemble (exit_decision=None), делаем свой
-                            if not et_ensemble_override and candles_1m and len(candles_1m) >= 10:
-                                try:
-                                    et_vote = de._evaluate_exit_ensemble(
-                                        symbol, entry_price, current_price, pnl_percent,
-                                        highest_price=position.get('_highest_price', current_price),
-                                        candles_5m=candles_1m
-                                    )
-                                    if et_vote.get('approved'):
-                                        et_ensemble_override = True
-                                        logger.info(f"🧠 [SMART EXIT] {symbol}: ранний трейлинг отменён"
-                                                    f" (собственный ensemble hold={et_vote.get('hold_confidence', 0)}%)")
-                                except Exception as _et_e:
-                                    logger.debug(f"[SMART] early trail ensemble: {_et_e}")
+                            if not et_ensemble_override:
+                                ensemble_candles = None
+                                ensemble_label = ""
+                                hold_threshold = 65
+
+                                # Сначала пробуем 1м свечи (точнее, порог 65)
+                                if candles_1m and len(candles_1m) >= 10:
+                                    ensemble_candles = candles_1m
+                                    ensemble_label = "1m"
+                                    hold_threshold = 65
+                                # Fallback на 5м если 1м нет (грубее, порог 70)
+                                elif df is not None and len(df) >= 10:
+                                    ensemble_candles = df.to_dict('records')
+                                    ensemble_label = "5m⚠️"
+                                    hold_threshold = 70
+
+                                if ensemble_candles is not None:
+                                    try:
+                                        et_vote = de._evaluate_exit_ensemble(
+                                            symbol, entry_price, current_price, pnl_percent,
+                                            highest_price=position.get('_highest_price', current_price),
+                                            candles_5m=ensemble_candles
+                                        )
+                                        hold_conf = et_vote.get('hold_confidence', 0)
+                                        et_approved = hold_conf >= hold_threshold
+                                        if et_approved:
+                                            et_ensemble_override = True
+                                            logger.info(f"🧠 [SMART EXIT] {symbol}: ранний трейлинг отменён"
+                                                        f" ({ensemble_label} ensemble hold={hold_conf}% ≥ {hold_threshold})")
+                                        else:
+                                            logger.info(f"🧠 [SMART EXIT] {symbol}: ensemble подтвердил выход"
+                                                        f" ({ensemble_label} hold={hold_conf}% < {hold_threshold})")
+                                    except Exception as _et_e:
+                                        logger.debug(f"[SMART] early trail ensemble: {_et_e}")
 
                             if et_ensemble_override:
                                 sell_reason = ""
