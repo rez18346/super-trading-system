@@ -19,6 +19,7 @@ import logging
 import pickle
 import time
 from datetime import datetime
+from typing import Dict, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -114,6 +115,7 @@ MIN_TRAINING_SAMPLES = 50        # Минимум для обучения
 CONFIDENCE_HIGH = 0.65           # XGBoost калиброван лучше, порог можно ниже
 CONFIDENCE_LOW = 0.35            # Ниже этого — SKIP
 RETRAIN_INTERVAL = 3600          # Переобучение раз в час (в секундах)
+SUPPORTED_FEATURES = 17         # 14 базовых + 3 фичи памяти (consecutive_losses, loss_streak, win_rate)
 
 
 class MLAdvisor:
@@ -127,10 +129,23 @@ class MLAdvisor:
         # (чтобы одиночный всплеск объёма не триггерил ложный вход)
         self._vol_ratio_buffer = {}   # symbol → deque(maxlen=3)
         self._vol_momentum_buffer = {} # symbol → deque(maxlen=3)
+        
+        # Память о поведении ММ на символе
+        self._consecutive_losses: Dict[str, int] = {}  # symbol → сколько убытков подряд
+        self._symbol_trade_count: Dict[str, int] = {}  # symbol → всего сделок
+        self._symbol_win_count: Dict[str, int] = {}    # symbol → прибыльных сделок
+        self._recent_trades: Dict[str, deque] = {}     # symbol → deque(pnl_pct, maxlen=10)
 
         # Пытаемся загрузить обученную модель
         self._load_model()
         self._load_training_data()  # Загружаем накопленные примеры
+        
+        # Форсированный ретрейн при старте (если данные есть, но модель старая)
+        if self.is_trained and len(self.training_data) >= MIN_TRAINING_SAMPLES:
+            expected = getattr(self.model, 'n_features_in_', 14)
+            if expected != SUPPORTED_FEATURES:
+                logger.info(f"🔄 ML: модель обучена на {expected} фич, переобучаю на {SUPPORTED_FEATURES}...")
+                self.train(force=True)
 
         # Загружаем конфиг для пар
         try:
@@ -164,6 +179,29 @@ class MLAdvisor:
         except Exception as e:
             logger.warning(f"⚠️ Не удалось сохранить training_data: {e}")
 
+    def update_symbol_memory(self, symbol: str, consecutive_losses: int = 0,
+                               trade_result: Optional[float] = None,
+                               total_trades: int = 0, wins: int = 0) -> None:
+        """
+        Обновить память о поведении ММ на символе.
+        
+        Args:
+            symbol: символ (e.g. 'NEAR/USDT')
+            consecutive_losses: сколько убытков подряд на этом символе
+            trade_result: PnL% последней сделки (если есть)
+            total_trades: всего сделок на символе
+            wins: прибыльных сделок
+        """
+        safe_sym = symbol.split('/')[0] if '/' in symbol else symbol
+        self._consecutive_losses[safe_sym] = consecutive_losses
+        self._symbol_trade_count[safe_sym] = total_trades
+        self._symbol_win_count[safe_sym] = wins
+        
+        if trade_result is not None:
+            if safe_sym not in self._recent_trades:
+                self._recent_trades[safe_sym] = deque(maxlen=10)
+            self._recent_trades[safe_sym].append(trade_result)
+    
     def _load_model(self):
         """Загрузка сохранённой модели"""
         try:
@@ -246,9 +284,11 @@ class MLAdvisor:
 
     def _extract_features(self, symbol, current_price, rsi, trend, confidence, df=None):
         """
-        14 признаков для XGBoost.
-        Добавлены: BTC-корреляция, время суток, импульс объёма, H/L диапазон.
+        17 признаков для XGBoost.
+        14 базовых + 3 фичи памяти (ММ-поведение).
         """
+        safe_sym = symbol.split('/')[0] if '/' in symbol else symbol
+        
         features = {
             'rsi': rsi,
             'trend': 0.5,
@@ -264,6 +304,10 @@ class MLAdvisor:
             'volume_momentum': 0.0,        # Отношение объёма последней свечи к средней за 10
             'hl_range': 0.0,               # High-Low диапазон
             'price_above_sma20': 1.0,      # Цена выше SMA20 на 1H
+            # Фичи памяти — чтобы XGBoost учился распознавать ММ
+            'consecutive_losses': 0.0,      # Убытков подряд (0, 1, 2, 3...)
+            'loss_streak_active': 0.0,      # 1 если consecutive_losses >= 2 (MM паттерн)
+            'recent_win_rate_10': 0.5,      # % прибыльных из последних 10 сделок
         }
 
         features['trend'] = (1.0 if trend == 'bullish' else (0.0 if trend == 'bearish' else 0.5))
@@ -335,16 +379,28 @@ class MLAdvisor:
             logger.debug("bare except in ml_advisor: %s", _e)
             pass
 
+        # 🧠 Память — поведение ММ на символе
+        cl = self._consecutive_losses.get(safe_sym, 0)
+        features['consecutive_losses'] = min(float(cl), 5.0)  # кап на 5
+        features['loss_streak_active'] = 1.0 if cl >= 2 else 0.0
+        recent = self._recent_trades.get(safe_sym, deque(maxlen=10))
+        if len(recent) > 0:
+            wins = sum(1 for r in recent if r > 0)
+            features['recent_win_rate_10'] = wins / len(recent)
+        
         return [features['rsi'], features['trend'], features['volatility'],
                 features['volume_ratio'], features['multi_tf'], features['vwap_dist'],
                 features['candle_doji'], features['candle_hammer'], features['candle_engulfing'],
                 features['btc_change_1h'], features['hour_of_day'],
-                features['volume_momentum'], features['hl_range'], features['price_above_sma20']]
+                features['volume_momentum'], features['hl_range'], features['price_above_sma20'],
+                features['consecutive_losses'], features['loss_streak_active'],
+                features['recent_win_rate_10']]
 
     def _feature_names(self):
         return ['rsi', 'trend', 'volatility', 'volume_ratio', 'multi_tf',
                 'vwap_dist', 'candle_doji', 'candle_hammer', 'candle_engulfing',
-                'btc_change_1h', 'hour_of_day', 'volume_momentum', 'hl_range', 'price_above_sma20']
+                'btc_change_1h', 'hour_of_day', 'volume_momentum', 'hl_range', 'price_above_sma20',
+                'consecutive_losses', 'loss_streak_active', 'recent_win_rate_10']
 
     def add_trade_result(self, symbol, entry_price, exit_price, rsi, trend, confidence,
                          hold_hours, reason, volume_ratio=None):
@@ -448,6 +504,15 @@ class MLAdvisor:
                     'reason': 'ML не обучен (доверяем основной системе)'}
 
         features = self._extract_features(symbol, current_price, rsi, trend, confidence, df)
+        
+        # Обратная совместимость: старая модель (14 фич) vs новая (17 фич)
+        expected_features = getattr(self.model, 'n_features_in_', 14)
+        if len(features) > expected_features:
+            features = features[:expected_features]
+        elif len(features) < expected_features:
+            # Если вдруг меньше — дополняем нулями
+            features = features + [0.0] * (expected_features - len(features))
+        
         X = np.array([features])
         X_scaled = self.scaler.transform(X)
 

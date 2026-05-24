@@ -525,7 +525,8 @@ class StopLossMonitor:
                     self.close_position_market(symbol, quantity, pnl_pct)
                     
                     # Запоминаем выход (для кулдауна повторного входа)
-                    de.record_exit(symbol, str(decision.signal_type.name))
+                    was_loss = pnl_pct < 0 if pnl_pct is not None else False
+                    de.record_exit(symbol, str(decision.signal_type.name), was_loss=was_loss)
                     
                     time.sleep(3)
                     continue

@@ -1307,7 +1307,11 @@ class IndustrialTrader:
 
                             # 🚫 Кулдаун re-entry: запомнить время выхода
                             if result is not None:
-                                de.record_exit(symbol, sell_reason)
+                                # Определяем убыток: если цена продажи ниже цены входа (для long)
+                                pos = self.positions.get(symbol, {})
+                                entry_price_pos = pos.get('entry_price', current_price)
+                                was_loss = current_price < entry_price_pos
+                                de.record_exit(symbol, sell_reason, was_loss=was_loss)
                             
                             # 🧠 ML: обучаем на результате сделки
                             if result is not None and symbol in self.positions:

@@ -191,7 +191,15 @@ class DecisionEngine:
         self._last_decisions: Dict[str, Dict] = {}
         
         # Тайм-аут на повторный вход после продажи (сек)
-        self.reentry_cooldown = 3600  # 1 час
+        self.reentry_cooldown = 3600  # 1 час (базовый)
+        
+        # Счётчик последовательных убытков на символ
+        self._consecutive_losses: Dict[str, int] = {}
+        # Максимум убытков подряд перед блокировкой
+        self.max_consecutive_losses = 2  # после 2х убытков подряд — блокировка
+        # Файл для сохранения счётчика (переживает перезагрузки)
+        self._losses_file = os.path.join(os.path.dirname(__file__), 'data', 'consecutive_losses.json')
+        self._maybe_restore_losses()
         
         # Инициализация ML-модулей (ленивая)
         self._ml_pro_v2 = None
@@ -270,6 +278,18 @@ class DecisionEngine:
                 logger.warning(f"[DE] Volume/VWAP не загрузился: {e}")
                 self._volume_vwap = None
     
+    def _push_memory_to_ml(self) -> None:
+        """Передать память о поведении ММ в MLAdvisor.
+        
+        Вызывается после record_exit() и в начале decide() для синхронизации.
+        """
+        if self._ml_advisor is None:
+            return
+        from ml_advisor import get_advisor
+        advisor = get_advisor()
+        for sym, losses in self._consecutive_losses.items():
+            advisor.update_symbol_memory(sym, consecutive_losses=losses)
+    
     def set_multi_tf_data(self, candles_1h: Optional[list] = None,
                           candles_4h: Optional[list] = None,
                           btc_price: Optional[float] = None) -> None:
@@ -286,9 +306,9 @@ class DecisionEngine:
     # ⚡ ЗАЛОЖЕНО ПОД ШОРТ: side='short' инвертирует уровни
 
     _SL_TP_BY_REGIME = {
-        0: {'sl': 2.5, 'tp': 8.0,   'trail_act': 2.0, 'trail_dist': 1.2},  # CALM
-        1: {'sl': 2.5, 'tp': 10.0,  'trail_act': 2.5, 'trail_dist': 1.5},  # NORMAL
-        2: {'sl': 2.5, 'tp': 14.0,  'trail_act': 3.0, 'trail_dist': 2.0},  # VOLATILE
+        0: {'sl': 2.0, 'tp': 8.0,   'trail_act': 2.0, 'trail_dist': 1.2},  # CALM
+        1: {'sl': 2.0, 'tp': 10.0,  'trail_act': 2.5, 'trail_dist': 1.5},  # NORMAL
+        2: {'sl': 2.0, 'tp': 14.0,  'trail_act': 3.0, 'trail_dist': 2.0},  # VOLATILE
     }
 
     def get_sl_tp_params(self, side: str = 'long') -> dict:
@@ -763,6 +783,9 @@ class DecisionEngine:
         is_short = (side == 'short')
         self._lazy_init_ml()
         
+        # Синхронизируем память о поведении ММ с MLAdvisor
+        self._push_memory_to_ml()
+        
         # Используем переданные свечи или закэшированные
         c1h = candles_1h if candles_1h is not None else self._candles_1h
         c4h = candles_4h if candles_4h is not None else self._candles_4h
@@ -777,10 +800,23 @@ class DecisionEngine:
             self._save_veto_vote(symbol, current_price, f"Максимум {max_positions} позиций", side)
             return Decision(symbol, 'hold', side=side, reason=f"Максимум {max_positions} позиций")
         
-        # 2. Кулдаун повторного входа
+        # 2. Кулдаун повторного входа (прогрессивный)
         if symbol in self._last_decisions:
             last_exit = self._last_decisions[symbol]
             time_since = now - last_exit.get('exit_time', 0)
+            
+            # Прогрессивный кулдаун: чем больше убытков подряд, тем дольше ждём
+            losses = self._consecutive_losses.get(symbol, 0)
+            if losses >= self.max_consecutive_losses:
+                # После N убытков подряд — жёсткая блокировка на N*4 часов
+                hard_block_hours = losses * 4
+                hard_block_sec = hard_block_hours * 3600
+                if time_since < hard_block_sec:
+                    remain = hard_block_sec - time_since
+                    reason = f"🚫 {losses} убытка подряд, блокировка на {hard_block_hours}ч (осталось {remain/3600:.1f}ч)"
+                    self._save_veto_vote(symbol, current_price, reason, side)
+                    return Decision(symbol, 'hold', side=side, reason=reason)
+            
             if time_since < self.reentry_cooldown:
                 remain = self.reentry_cooldown - time_since
                 reason = f"Повторный вход через {remain/60:.1f} мин"
@@ -1541,12 +1577,44 @@ class DecisionEngine:
     
     # ─── Управление повторными входами ──────────────────────────────────────
     
-    def record_exit(self, symbol: str, reason: str = "") -> None:
-        """Запомнить момент выхода (для кулдауна повторного входа)."""
+    def record_exit(self, symbol: str, reason: str = "", was_loss: bool = False) -> None:
+        """Запомнить момент выхода (для кулдауна повторного входа).
+        
+        Args:
+            was_loss: True если сделка закрылась в минус
+        """
         self._last_decisions[symbol] = {
             'exit_time': time.time(),
             'reason': reason,
         }
+        
+        # Обновляем счётчик последовательных убытков
+        if was_loss:
+            self._consecutive_losses[symbol] = self._consecutive_losses.get(symbol, 0) + 1
+            losses = self._consecutive_losses[symbol]
+            if losses >= self.max_consecutive_losses:
+                block_h = losses * 4
+                logger.warning(f"⚠️ {symbol}: {losses} убытков подряд → блокировка на {block_h}ч")
+            else:
+                logger.info(f"⚠️ {symbol}: {losses}-й убыток подряд")
+        else:
+            # На прибыли — не сбрасываем полностью, а уменьшаем на 1
+            # (чтобы одна удачная сделка не обнуляла историю ММ-паттерна)
+            old = self._consecutive_losses.get(symbol, 0)
+            if old > 0:
+                new_val = max(0, old - 1)
+                if new_val == 0:
+                    self._consecutive_losses.pop(symbol, None)
+                else:
+                    self._consecutive_losses[symbol] = new_val
+                logger.info(f"✅ {symbol}: серия убытков снижена с {old} до {new_val} (был профит)")
+        
+        # Сохраняем счётчик в файл (переживает перезагрузки)
+        self._save_losses()
+        
+        # Передаём память в MLAdvisor (чтобы XGBoost учился на этом)
+        self._push_memory_to_ml()
+        
         logger.info(f"🚫 Кулдаун входа: {symbol} на {self.reentry_cooldown/3600:.01f}ч")
     
     def set_reentry_cooldown(self, seconds: int) -> None:
@@ -1563,6 +1631,41 @@ class DecisionEngine:
                 self._btc_reference_price = btc_price
                 self._btc_reference_time = time.time()
 
+    def _maybe_restore_losses(self) -> None:
+        """Загрузить счётчик убытков из файла при перезапуске."""
+        try:
+            if os.path.exists(self._losses_file):
+                with open(self._losses_file, 'r') as f:
+                    data = json.load(f)
+                now = time.time()
+                restored = 0
+                for sym, info in data.items():
+                    losses = info.get('losses', 0)
+                    saved_at = info.get('saved_at', 0)
+                    if losses > 0:
+                        # Проверяем, не истекла ли блокировка
+                        block_hours = losses * 4
+                        if now - saved_at < block_hours * 3600:
+                            self._consecutive_losses[sym] = losses
+                            restored += 1
+                if restored > 0:
+                    logger.info(f"♻️ Восстановлены счётчики убытков для {restored} символов")
+        except Exception as e:
+            logger.debug(f"[restore_losses] {e}")
+    
+    def _save_losses(self) -> None:
+        """Сохранить счётчик убытков в файл."""
+        try:
+            data = {}
+            now = time.time()
+            for sym, losses in self._consecutive_losses.items():
+                data[sym] = {'losses': losses, 'saved_at': now}
+            os.makedirs(os.path.dirname(self._losses_file), exist_ok=True)
+            with open(self._losses_file, 'w') as f:
+                json.dump(data, f)
+        except Exception as e:
+            logger.debug(f"[save_losses] {e}")
+
     def cleanup_old_decisions(self, max_age_sec: int = 7200) -> int:
         """Удалить exit-time записи старше max_age_sec (предотвращает утечку)."""
         now = time.time()
@@ -1572,6 +1675,12 @@ class DecisionEngine:
             exit_time = self._last_decisions[sym].get('exit_time', 0)
             if now - exit_time > max_age_sec:
                 del self._last_decisions[sym]
+                # Также чистим счётчик убытков, если блокировка уже истекла
+                losses = self._consecutive_losses.get(sym, 0)
+                if losses > 0:
+                    hard_block_sec = losses * 4 * 3600
+                    if now - exit_time > hard_block_sec:
+                        self._consecutive_losses.pop(sym, None)
                 removed += 1
         return removed
 
@@ -1592,9 +1701,11 @@ class DecisionEngine:
             'regime_name': ['CALM', 'NORMAL', 'VOLATILE'][self.hmm_regime] if self.hmm_regime in (0,1,2) else 'UNKNOWN',
             'active_cooldowns': len(self._last_decisions),
             'entry_threshold': self._get_entry_threshold(),
+            'consecutive_losses': dict(self._consecutive_losses),
         }
 
     def reset_cooldowns(self) -> None:
         """Сбросить все тайм-ауты."""
         self._last_decisions.clear()
+        self._consecutive_losses.clear()
         logger.info("🔄 Кулдауны сброшены")
