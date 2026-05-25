@@ -115,7 +115,7 @@ MIN_TRAINING_SAMPLES = 50        # Минимум для обучения
 CONFIDENCE_HIGH = 0.65           # XGBoost калиброван лучше, порог можно ниже
 CONFIDENCE_LOW = 0.35            # Ниже этого — SKIP
 RETRAIN_INTERVAL = 3600          # Переобучение раз в час (в секундах)
-SUPPORTED_FEATURES = 17         # 14 базовых + 3 фичи памяти (consecutive_losses, loss_streak, win_rate)
+SUPPORTED_FEATURES = 25         # 17 базовых + 8 портфельных фич
 
 
 class MLAdvisor:
@@ -135,6 +135,17 @@ class MLAdvisor:
         self._symbol_trade_count: Dict[str, int] = {}  # symbol → всего сделок
         self._symbol_win_count: Dict[str, int] = {}    # symbol → прибыльных сделок
         self._recent_trades: Dict[str, deque] = {}     # symbol → deque(pnl_pct, maxlen=10)
+
+        # 📊 Портфельные метрики (обновляются трейдером каждый цикл)
+        self._pf_daily_pnl = 0.0              # PnL за сегодня
+        self._pf_daily_profit_count = 0       # Прибыльных сделок сегодня
+        self._pf_daily_loss_count = 0         # Убыточных сделок сегодня
+        self._pf_daily_trade_count = 0        # Всего сделок сегодня
+        self._pf_consecutive_profits = 0      # Прибыльных подряд
+        self._pf_consecutive_losses_global = 0 # Убыточных подряд (глобальный)
+        self._pf_open_positions = 0           # Открытых позиций
+        self._pf_exposure_pct = 0.0           # % капитала в позициях
+        self._pf_avg_position_value = 0.0     # Средний размер позиции
 
         # Пытаемся загрузить обученную модель
         self._load_model()
@@ -285,7 +296,8 @@ class MLAdvisor:
     def _extract_features(self, symbol, current_price, rsi, trend, confidence, df=None):
         """
         17 признаков для XGBoost.
-        14 базовых + 3 фичи памяти (ММ-поведение).
+        25 признаков: 17 базовых + 8 портфельных.
+        Портфельные метрики обновляются трейдером через update_portfolio_stats().
         """
         safe_sym = symbol.split('/')[0] if '/' in symbol else symbol
         
@@ -299,15 +311,24 @@ class MLAdvisor:
             'candle_doji': 0.0,
             'candle_hammer': 0.0,
             'candle_engulfing': 0.0,
-            'btc_change_1h': 0.0,         # Изменение BTC за последний час
-            'hour_of_day': 0.0,           # Час дня (0-23, sin-закодировано)
-            'volume_momentum': 0.0,        # Отношение объёма последней свечи к средней за 10
-            'hl_range': 0.0,               # High-Low диапазон
-            'price_above_sma20': 1.0,      # Цена выше SMA20 на 1H
+            'btc_change_1h': 0.0,               # Изменение BTC за последний час
+            'hour_of_day': 0.0,                 # Час дня (0-23, /23.0)
+            'volume_momentum': 0.0,              # Импульс объёма
+            'hl_range': 0.0,                     # High-Low диапазон
+            'price_above_sma20': 1.0,            # Цена выше SMA20 на 1H
             # Фичи памяти — чтобы XGBoost учился распознавать ММ
-            'consecutive_losses': 0.0,      # Убытков подряд (0, 1, 2, 3...)
-            'loss_streak_active': 0.0,      # 1 если consecutive_losses >= 2 (MM паттерн)
-            'recent_win_rate_10': 0.5,      # % прибыльных из последних 10 сделок
+            'consecutive_losses': 0.0,            # Убытков подряд (0, 1, 2, 3...)
+            'loss_streak_active': 0.0,            # 1 если consecutive_losses >= 2
+            'recent_win_rate_10': 0.5,            # % прибыльных из последних 10
+            # 📊 Портфельные метрики (одинаковы для всех символов в цикле)
+            'pf_daily_pnl': 0.0,                  # $ PnL сегодня
+            'pf_daily_profit_ratio': 0.5,          # доля профитных сегодня
+            'pf_daily_trade_count': 0.0,           # всего сделок сегодня
+            'pf_consecutive_profits': 0.0,         # профитных подряд (глобально)
+            'pf_consecutive_losses_global': 0.0,   # убыточных подряд (глобально)
+            'pf_open_positions_pct': 0.0,          # кол-во позиций / max (0-1)
+            'pf_exposure_pct_norm': 0.0,           # % капитала в позициях / 100
+            'pf_avg_position_value_norm': 0.0,     # средний размер позиции / 90
         }
 
         features['trend'] = (1.0 if trend == 'bullish' else (0.0 if trend == 'bearish' else 0.5))
@@ -388,19 +409,55 @@ class MLAdvisor:
             wins = sum(1 for r in recent if r > 0)
             features['recent_win_rate_10'] = wins / len(recent)
         
+        # 📊 Портфельные метрики (обновляются трейдером)
+        features['pf_daily_pnl'] = self._pf_daily_pnl
+        tc = max(self._pf_daily_trade_count, 1)
+        features['pf_daily_profit_ratio'] = self._pf_daily_profit_count / tc
+        features['pf_daily_trade_count'] = min(self._pf_daily_trade_count / 50.0, 1.0)  # норм на 50
+        features['pf_consecutive_profits'] = min(self._pf_consecutive_profits / 10.0, 1.0)  # норм на 10
+        features['pf_consecutive_losses_global'] = min(self._pf_consecutive_losses_global / 5.0, 1.0)
+        features['pf_open_positions_pct'] = self._pf_open_positions / 25.0  # 25 = max позиций
+        features['pf_exposure_pct_norm'] = self._pf_exposure_pct / 100.0
+        features['pf_avg_position_value_norm'] = min(self._pf_avg_position_value / 90.0, 1.0)
+        
         return [features['rsi'], features['trend'], features['volatility'],
                 features['volume_ratio'], features['multi_tf'], features['vwap_dist'],
                 features['candle_doji'], features['candle_hammer'], features['candle_engulfing'],
                 features['btc_change_1h'], features['hour_of_day'],
                 features['volume_momentum'], features['hl_range'], features['price_above_sma20'],
                 features['consecutive_losses'], features['loss_streak_active'],
-                features['recent_win_rate_10']]
+                features['recent_win_rate_10'],
+                features['pf_daily_pnl'], features['pf_daily_profit_ratio'],
+                features['pf_daily_trade_count'], features['pf_consecutive_profits'],
+                features['pf_consecutive_losses_global'], features['pf_open_positions_pct'],
+                features['pf_exposure_pct_norm'], features['pf_avg_position_value_norm']]
+
+    def update_portfolio_stats(self, daily_pnl=0.0, profit_count=0, loss_count=0,
+                                trade_count=0, consecutive_profits=0,
+                                consecutive_losses_global=0, open_positions=0,
+                                exposure_pct=0.0, avg_position_value=0.0):
+        """
+        Обновить портфельные метрики (вызывается трейдером раз в цикл).
+        Эти фичи будут использованы при следующем evaluate().
+        """
+        self._pf_daily_pnl = daily_pnl
+        self._pf_daily_profit_count = profit_count
+        self._pf_daily_loss_count = loss_count
+        self._pf_daily_trade_count = trade_count
+        self._pf_consecutive_profits = consecutive_profits
+        self._pf_consecutive_losses_global = consecutive_losses_global
+        self._pf_open_positions = open_positions
+        self._pf_exposure_pct = exposure_pct
+        self._pf_avg_position_value = avg_position_value
 
     def _feature_names(self):
         return ['rsi', 'trend', 'volatility', 'volume_ratio', 'multi_tf',
                 'vwap_dist', 'candle_doji', 'candle_hammer', 'candle_engulfing',
                 'btc_change_1h', 'hour_of_day', 'volume_momentum', 'hl_range', 'price_above_sma20',
-                'consecutive_losses', 'loss_streak_active', 'recent_win_rate_10']
+                'consecutive_losses', 'loss_streak_active', 'recent_win_rate_10',
+                'pf_daily_pnl', 'pf_daily_profit_ratio', 'pf_daily_trade_count',
+                'pf_consecutive_profits', 'pf_consecutive_losses_global',
+                'pf_open_positions_pct', 'pf_exposure_pct_norm', 'pf_avg_position_value_norm']
 
     def add_trade_result(self, symbol, entry_price, exit_price, rsi, trend, confidence,
                          hold_hours, reason, volume_ratio=None):

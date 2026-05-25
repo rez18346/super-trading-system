@@ -883,6 +883,74 @@ class IndustrialTrader:
                         except Exception as e:
                             logger.warning(f"⚠️ BTC Direction Predictor predict: {e}")
                 
+                # 📊 Обновляем портфельные метрики для MLAdvisor
+                try:
+                    _day_start = datetime.now(timezone.utc).strftime('%Y-%m-%d') + 'T00:00'
+                    _conn = sqlite3.connect(db.DB_PATH)
+                    _c = _conn.cursor()
+                    _c.execute('''
+                        SELECT COALESCE(SUM(pnl), 0), COUNT(*), 
+                               COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0),
+                               COALESCE(SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END), 0)
+                        FROM trade_history
+                        WHERE side='sell' AND timestamp >= ? AND abs(pnl) > 0.0001
+                    ''', (_day_start,))
+                    _daily_pnl, _daily_trades, _daily_wins, _daily_losses = _c.fetchone()
+                    _c.execute('SELECT COUNT(*) FROM positions WHERE entry_price*quantity > 0')
+                    _open_pos = _c.fetchone()[0]
+                    
+                    # Позиции для avg_position_value
+                    _c.execute('SELECT entry_price*quantity FROM positions WHERE entry_price*quantity >= 1')
+                    _pos_vals = [r[0] for r in _c.fetchall()]
+                    _avg_pos = sum(_pos_vals)/max(len(_pos_vals), 1)
+                    _total_pos = sum(_pos_vals)
+                    _capital = getattr(self, 'capital', 300)
+                    _exposure = _total_pos / max(_capital, 1) * 100
+                    _conn.close()
+                    
+                    # Считаем consecutive_profits из последних сделок
+                    _c2 = sqlite3.connect(db.DB_PATH)
+                    _cu = _c2.cursor()
+                    _cu.execute('''
+                        SELECT pnl FROM trade_history
+                        WHERE side='sell' AND abs(pnl) > 0.0001
+                        ORDER BY timestamp DESC LIMIT 20
+                    ''')
+                    _recent_pnls = [r[0] for r in _cu.fetchall()]
+                    _cons_profits = 0
+                    for _p in _recent_pnls:
+                        if _p > 0:
+                            _cons_profits += 1
+                        else:
+                            break
+                    _cons_losses = 0
+                    for _p in _recent_pnls:
+                        if _p < 0:
+                            _cons_losses += 1
+                        else:
+                            break
+                    _c2.close()
+                    
+                    from ml_advisor import get_advisor
+                    _adv = get_advisor()
+                    _adv.update_portfolio_stats(
+                        daily_pnl=_daily_pnl,
+                        profit_count=_daily_wins,
+                        loss_count=_daily_losses,
+                        trade_count=_daily_trades,
+                        consecutive_profits=_cons_profits,
+                        consecutive_losses_global=_cons_losses,
+                        open_positions=_open_pos,
+                        exposure_pct=_exposure,
+                        avg_position_value=_avg_pos
+                    )
+                    if _daily_trades % 5 == 0 or _daily_trades < 3:
+                        logger.debug(f"📊 Портфель: PnL=\${_daily_pnl:.2f}, сделок={_daily_trades}, "
+                                     f"профитных={_daily_wins}, открыто={_open_pos}, "
+                                     f"экспозиция={_exposure:.0f}%")
+                except Exception as _e:
+                    logger.debug(f"[portfolio_stats] {_e}")
+
                 # Анализ каждого символа
                 for symbol in symbols:
                     if not self.running:
@@ -931,6 +999,12 @@ class IndustrialTrader:
                                                        candles_5m=c5m, candles_1h=c1h, candles_4h=c4h)
                             
                             if decision.action == 'enter':
+                                # 🌙 НОЧНОЙ РЕЖИМ: не входить с 23:00 до 08:00 KRAT (UTC+7)
+                                _local_hour = (datetime.now(timezone.utc).hour + 7) % 24
+                                if _local_hour >= 23 or _local_hour < 8:
+                                    logger.info(f"🌙 {symbol}: ночной режим ({_local_hour}:00 KRAT). Пропускаю.")
+                                    continue
+
                                 score = decision.score or 50
                                 # Адаптивный размер позиции: от DE или стандартный
                                 size_mult = decision.position_size or 0.5
