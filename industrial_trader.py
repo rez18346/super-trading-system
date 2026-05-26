@@ -112,21 +112,21 @@ class IndustrialTrader:
                         if value_usdt > 1.0:  # Позиции больше $1
                             symbol = f"{currency}/USDT"
                             
-                            # Цена входа: используем последнюю цену покупки из trade_history
-                            # (не WA — он искажает PnL из-за старых бумажных сделок)
-                            trades = db.get_trade_history(symbol, limit=1, side='buy')
-                            if trades and trades[0].get('entry_price', 0) > 0:
-                                entry_price = float(trades[0]['entry_price'])
-                                entry_time = trades[0]['entry_time']
-                                logger.info(f"   📊 Последняя цена покупки из истории: {symbol}: ${entry_price:.4f}")
+                            # 🩹 Цена входа: сначала средневзвешенная с биржи (DCA-aware),
+                            # fallback на последнюю цену из PG или текущую
+                            avg_price, first_trade_time = self.get_average_buy_price(symbol, amount)
+                            
+                            if avg_price:
+                                entry_price = avg_price
+                                entry_time = first_trade_time
+                                logger.info(f"   📊 Средняя цена покупки {symbol}: ${avg_price:.4f} (DCA weighted)")
                             else:
-                                # Если нет в истории — пытаемся получить с биржи
-                                avg_price, first_trade_time = self.get_average_buy_price(symbol, amount)
-                                
-                                if avg_price:
-                                    entry_price = avg_price
-                                    entry_time = first_trade_time
-                                    logger.info(f"   📊 Средняя цена покупки {symbol}: ${avg_price:.4f}")
+                                # Если нет истории на бирже — последняя цена из PG
+                                trades = db.get_trade_history(symbol, limit=1, side='buy')
+                                if trades and trades[0].get('entry_price', 0) > 0:
+                                    entry_price = float(trades[0]['entry_price'])
+                                    entry_time = trades[0]['entry_time']
+                                    logger.info(f"   📊 Последняя цена покупки из PG: {symbol}: ${entry_price:.4f}")
                                 else:
                                     entry_price = current_price
                                     entry_time = datetime.now().isoformat()
@@ -174,8 +174,8 @@ class IndustrialTrader:
     def get_average_buy_price(self, symbol: str, current_amount: float):
         """Получение средней цены покупки из истории ордеров"""
         try:
-            # Получаем историю закрытых ордеров за последние 24 часа
-            since = self.exchange.milliseconds() - (24 * 60 * 60 * 1000)
+            # Получаем историю закрытых ордеров за последние 48 часов (для DCA/усреднения)
+            since = self.exchange.milliseconds() - (48 * 60 * 60 * 1000)
             
             # Bybit требует использовать fetch_closed_orders вместо fetch_orders
             orders = self.exchange.fetch_closed_orders(symbol, since=since)
@@ -478,7 +478,7 @@ class IndustrialTrader:
                         '_created_at': time.time(),  # 🛡️ Для защиты от sync-удаления
                     }
                     self.available_capital -= quantity * price
-                    db.add_trade(symbol, 'buy', price, quantity, timestamp=timestamp)
+                    db.add_trade(symbol, 'buy', float(price), float(quantity), ts=timestamp)
                 elif side == 'sell' and symbol in self.positions:
                     with self._lock:
                         position = self.positions.pop(symbol)
@@ -489,7 +489,7 @@ class IndustrialTrader:
                     
                     trade['pnl'] = pnl
                     trade['pnl_percent'] = (pnl / (position['entry_price'] * quantity)) * 100
-                    db.add_trade(symbol, 'sell', price, quantity, pnl=pnl, pnl_pct=trade['pnl_percent'], timestamp=timestamp)
+                    db.add_trade(symbol, 'sell', float(price), float(quantity), pnl=float(pnl), pnl_pct=float(trade['pnl_percent']), ts=timestamp)
                 
                 self.trades_history.append(trade)
                 logger.info(f"Бумажная сделка: {side} {quantity} {symbol} @ ${price}")
@@ -562,18 +562,23 @@ class IndustrialTrader:
                 
                 # ОБНОВЛЯЕМ ПОЗИЦИИ ПОСЛЕ УСПЕШНОЙ СДЕЛКИ
                 if side == 'buy':
+                    # 🩹 Конвертируем numpy → float для PG
                     order_price = order.get('average', order.get('price', price)) or price
                     filled_qty = order.get('filled', quantity) or quantity
+                    if hasattr(order_price, 'item'):
+                        order_price = order_price.item()
+                    if hasattr(filled_qty, 'item'):
+                        filled_qty = filled_qty.item()
                     
                     # Запись точной цены в trade_history
                     db.add_trade(
                         symbol=symbol,
                         side='buy',
-                        price=order_price,
-                        quantity=filled_qty,
-                        order_id=order['id'],
-                        exchange_id=order['id'],
-                        timestamp=datetime.now().isoformat()
+                        price=float(order_price),
+                        quantity=float(filled_qty),
+                        order_id=str(order['id']),
+                        exchange_id=str(order['id']),
+                        ts=datetime.now().isoformat()
                     )
                     
                     # Берём реальное количество из order.filled или quantity
@@ -619,20 +624,24 @@ class IndustrialTrader:
                     if symbol in self.positions:
                         entry = self.positions[symbol]['entry_price']
                         filled = order.get('filled', quantity) or quantity
-                        filled_price = order.get('average', order.get('price', price)) or price
+                        # 🩹 Конвертируем numpy → float для PG (psycopg2 не умеет в np.float64)
+                        if hasattr(filled_price, 'item'):
+                            filled_price = filled_price.item()
+                        filled = float(filled)
+                        
                         pnl = (filled_price - entry) * filled
                         pnl_pct = ((filled_price - entry) / entry) * 100 if entry > 0 else 0
                         
                         db.add_trade(
                             symbol=symbol,
                             side='sell',
-                            price=filled_price,
-                            quantity=filled,
-                            pnl=pnl,
-                            pnl_pct=pnl_pct,
-                            order_id=order['id'],
-                            exchange_id=order['id'],
-                            timestamp=datetime.now().isoformat()
+                            price=float(filled_price),
+                            quantity=float(filled),
+                            pnl=float(pnl),
+                            pnl_pct=float(pnl_pct),
+                            order_id=str(order['id']),
+                            exchange_id=str(order['id']),
+                            ts=datetime.now().isoformat()
                         )
                     
                     # Удаляем позицию после продажи
@@ -1104,11 +1113,17 @@ class IndustrialTrader:
                     else:
                         # Управление открытой позицией
                         position = self.positions[symbol]
-                        pos_time = datetime.fromisoformat(position['entry_time'])
-                        if pos_time.tzinfo is not None:
-                            pos_time = pos_time.replace(tzinfo=None)
-                        hold_time = (datetime.now() - pos_time).total_seconds() / 3600
-                        hold_hours = hold_time
+                        
+                        # 🩹 СТАРЫЕ ПОЗИЦИИ: используем _created_at (время в памяти),
+                        # а не entry_time (реальное время покупки — может быть вчерашним при DCA)
+                        hold_start = position.get('_created_at') or position.get('entry_time', time.time())
+                        if isinstance(hold_start, str):
+                            pos_time = datetime.fromisoformat(hold_start)
+                            if pos_time.tzinfo is not None:
+                                pos_time = pos_time.replace(tzinfo=None)
+                            hold_hours = (datetime.now() - pos_time).total_seconds() / 3600
+                        else:
+                            hold_hours = (time.time() - hold_start) / 3600
                         
                         # ✅ ЕДИНЫЙ ЦЕНТР РЕШЕНИЙ: DE решает когда выходить
                         entry_price = position['entry_price']
