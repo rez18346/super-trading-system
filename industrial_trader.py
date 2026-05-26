@@ -624,6 +624,7 @@ class IndustrialTrader:
                     if symbol in self.positions:
                         entry = self.positions[symbol]['entry_price']
                         filled = order.get('filled', quantity) or quantity
+                        filled_price = order.get('average', order.get('price', price)) or price
                         # 🩹 Конвертируем numpy → float для PG (psycopg2 не умеет в np.float64)
                         if hasattr(filled_price, 'item'):
                             filled_price = filled_price.item()
