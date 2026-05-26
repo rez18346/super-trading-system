@@ -71,7 +71,7 @@ _check_pid_file()
 
 # ─── Импорты ──────────────────────────────────────────────────────────────────
 import ccxt
-import db
+import db_pg as db
 from industrial_trader import IndustrialTrader
 from decision_engine import DecisionEngine, SignalType
 from error_handler import ErrorHandler, RetryConfig

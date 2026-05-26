@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger('cleanup')
 
 import ccxt
-import db
+import db_pg as db
 
 # Загружаем конфиг
 with open('config/config.json') as f:

@@ -17,7 +17,7 @@ from typing import Dict, List, Optional, Tuple
 import threading
 import signal
 import sys
-import db  # SQLite БД вместо JSON-трекера
+import db_pg as db  # PostgreSQL
 
 # Настройка логирования
 logging.basicConfig(
@@ -78,13 +78,35 @@ class IndustrialTrader:
             self.available_capital = free_usdt
             logger.info(f"💰 Реальный доступный капитал: ${free_usdt:.2f} (всего USDT: ${total_usdt:.2f})")
             
+
+            
             # Находим открытые позиции (активы кроме USDT)
             open_positions_count = 0
+            
+            # Загружаем все цены одним запросом (предотвращает rate limit)
+            try:
+                all_tickers = self.exchange.fetch_tickers()
+            except Exception as e:
+                logger.warning(f"⚠️ Не удалось загрузить все тикеры: {e}")
+                all_tickers = {}
+            
             for currency, amount in balance['total'].items():
                 if currency != 'USDT' and amount > 0.000001:  # Минимальный порог
                     try:
-                        ticker = self.exchange.fetch_ticker(f"{currency}/USDT")
-                        current_price = ticker['last']
+                        symbol_key = f"{currency}/USDT"
+                        # Ищем тикер — сначала spot, потом все
+                        ticker = all_tickers.get(symbol_key, {})
+                        current_price = ticker.get('last') or 0
+                        if current_price <= 0:
+                            # fallback: индивидуальный запрос
+                            try:
+                                ticker = self.exchange.fetch_ticker(symbol_key)
+                                current_price = ticker.get('last') or 0
+                            except Exception:
+                                current_price = 0
+                        if current_price <= 0:
+                            logger.warning(f"   ⚠️ Нет цены для {symbol_key} — пропускаем")
+                            continue
                         value_usdt = amount * current_price
                         
                         if value_usdt > 1.0:  # Позиции больше $1
@@ -93,9 +115,9 @@ class IndustrialTrader:
                             # Цена входа: используем последнюю цену покупки из trade_history
                             # (не WA — он искажает PnL из-за старых бумажных сделок)
                             trades = db.get_trade_history(symbol, limit=1, side='buy')
-                            if trades and trades[0]['price'] > 0:
-                                entry_price = trades[0]['price']
-                                entry_time = trades[0]['timestamp']
+                            if trades and trades[0].get('entry_price', 0) > 0:
+                                entry_price = float(trades[0]['entry_price'])
+                                entry_time = trades[0]['entry_time']
                                 logger.info(f"   📊 Последняя цена покупки из истории: {symbol}: ${entry_price:.4f}")
                             else:
                                 # Если нет в истории — пытаемся получить с биржи
@@ -137,8 +159,8 @@ class IndustrialTrader:
                                     logger.warning(f"   🎯 ДОСТИГНУТ ТЕЙК-ПРОФИТ! {pnl_percent:.2f}% >= {take_profit}%")
                                     logger.warning(f"   💡 Рекомендация: продать позицию")
                             
-                    except Exception as e:
-                        logger.warning(f"Не удалось обработать {currency}: {e}")
+                    except Exception:
+                        logger.debug(f"Не удалось обработать {currency}")
             
             if open_positions_count > 0:
                 logger.info(f"✅ Синхронизировано {open_positions_count} позиций с биржей")
@@ -667,6 +689,7 @@ class IndustrialTrader:
         
         while self.running:
             try:
+                cycle_start = time.time()
                 # 🧹 Очистка старых лимитных ордеров
                 self.clean_stale_orders()
                 
@@ -886,37 +909,15 @@ class IndustrialTrader:
                 # 📊 Обновляем портфельные метрики для MLAdvisor
                 try:
                     _day_start = datetime.now(timezone.utc).strftime('%Y-%m-%d') + 'T00:00'
-                    _conn = sqlite3.connect(db.DB_PATH)
-                    _c = _conn.cursor()
-                    _c.execute('''
-                        SELECT COALESCE(SUM(pnl), 0), COUNT(*), 
-                               COALESCE(SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END), 0),
-                               COALESCE(SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END), 0)
-                        FROM trade_history
-                        WHERE side='sell' AND timestamp >= ? AND abs(pnl) > 0.0001
-                    ''', (_day_start,))
-                    _daily_pnl, _daily_trades, _daily_wins, _daily_losses = _c.fetchone()
-                    _c.execute('SELECT COUNT(*) FROM positions WHERE entry_price*quantity > 0')
-                    _open_pos = _c.fetchone()[0]
-                    
-                    # Позиции для avg_position_value
-                    _c.execute('SELECT entry_price*quantity FROM positions WHERE entry_price*quantity >= 1')
-                    _pos_vals = [r[0] for r in _c.fetchall()]
+                    _daily_pnl, _daily_trades, _daily_wins, _daily_losses = db.get_daily_stats(_day_start)
+                    _total_pos = db.get_total_position_value()
+                    _pos_vals = db.get_all_active_position_values()
                     _avg_pos = sum(_pos_vals)/max(len(_pos_vals), 1)
-                    _total_pos = sum(_pos_vals)
                     _capital = getattr(self, 'capital', 300)
                     _exposure = _total_pos / max(_capital, 1) * 100
-                    _conn.close()
                     
                     # Считаем consecutive_profits из последних сделок
-                    _c2 = sqlite3.connect(db.DB_PATH)
-                    _cu = _c2.cursor()
-                    _cu.execute('''
-                        SELECT pnl FROM trade_history
-                        WHERE side='sell' AND abs(pnl) > 0.0001
-                        ORDER BY timestamp DESC LIMIT 20
-                    ''')
-                    _recent_pnls = [r[0] for r in _cu.fetchall()]
+                    _recent_pnls = db.get_recent_pnls(20)
                     _cons_profits = 0
                     for _p in _recent_pnls:
                         if _p > 0:
@@ -1047,14 +1048,8 @@ class IndustrialTrader:
                                     logger.warning(f"🔒 {symbol}: блокировка повторного BUY ({remaining}с)")
                                     continue
                                 # Дополнительная проверка: есть ли уже позиция в БД
-                                import sqlite3
                                 try:
-                                    db_path = db.DB_PATH
-                                    _conn = sqlite3.connect(db_path)
-                                    _c = _conn.cursor()
-                                    _c.execute('SELECT COUNT(*) FROM positions WHERE symbol=? AND quantity>0', (symbol,))
-                                    in_db = _c.fetchone()[0] > 0
-                                    _conn.close()
+                                    in_db = db.position_exists(symbol)
                                     # Проверяем реальную позицию: в БД И в open_positions (биржевой статус)
                                     # Иначе старые записи в БД блокируют ре-вход
                                     if in_db and symbol in self.positions:
@@ -1062,16 +1057,36 @@ class IndustrialTrader:
                                         continue
                                     elif in_db and symbol not in self.positions:
                                         logger.info(f"🧹 {symbol}: очистка устаревшей записи в БД (нет на бирже)")
+                                        # 🩹 FIX: закрываем с текущей рыночной ценой и PnL
+                                        try:
+                                            symbol_key = symbol.replace('/', '')
+                                            clean_price = 0
+                                            try:
+                                                ticker = self.exchange.fetch_ticker(symbol_key)
+                                                clean_price = ticker.get('last') or 0
+                                            except Exception:
+                                                pass
+                                            db.close_trade(
+                                                symbol,
+                                                exit_price=float(clean_price) if clean_price else 0,
+                                                exit_qty=0,
+                                                pnl=0,
+                                                pnl_pct=0,
+                                                exit_reason='stale_cleanup'
+                                            )
+                                            logger.info(f"   ✅ {symbol}: stale-запись закрыта @ ${clean_price:.4f}")
+                                        except Exception as cleanup_e:
+                                            logger.error(f"   ❌ {symbol}: ошибка при очистке БД: {cleanup_e}")
                                 except Exception as _e:
                                     logger.debug(f"[buy_lock] DB check: {_e}")
-                                _buy_lock[symbol] = time.time()
-                                self._buy_locks = _buy_lock
-                                
                                 logger.info(f"⚡ [DE→BUY] {symbol}: score={score:.0f}/100 size={size_mult:.2f} | ${de_price:.4f} | {decision.reason}")
                                 # Размер позиции = стандартный * size_mult от DE, с учётом Score
                                 base_qty = self.calculate_position_size(symbol, de_price, score)
                                 quantity = base_qty * size_mult
                                 if quantity * de_price <= self.available_capital:
+                                    # ✅ ЗАПОМИНАЕМ buy_lock ТОЛЬКО при реальной покупке
+                                    _buy_lock[symbol] = time.time()
+                                    self._buy_locks = _buy_lock
                                     # ✅ ЗАПОМИНАЕМ SL/TP УРОВНИ ОТ DE в позиции
                                     self.execute_trade(symbol, 'buy', quantity, de_price,
                                         sl_price=decision.sl_price, tp_price=decision.tp_price,
@@ -1426,6 +1441,14 @@ class IndustrialTrader:
                 
                 # Сохраняем реальный баланс с биржи для дашборда
                 self._save_real_balance()
+                
+                # 📊 Диагностика длительности цикла
+                cycle_end = time.time()
+                cycle_duration = cycle_end - cycle_start
+                if cycle_duration > 60:
+                    logger.warning(f"⚠️ Цикл занял {cycle_duration:.0f}с — возможно опаздываем")
+                elif cycle_duration > 30:
+                    logger.info(f"⌛ Цикл: {cycle_duration:.0f}с")
                 
                 # Пауза между циклами
                 time.sleep(trading_config['check_interval_seconds'])

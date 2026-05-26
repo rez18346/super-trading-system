@@ -27,14 +27,13 @@ import time
 import asyncio
 import logging
 import threading
-import sqlite3
 from datetime import datetime, timezone
 from typing import Optional, AsyncGenerator
 from pathlib import Path
 
 import re
 import traceback
-import db
+import db_pg as db
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
@@ -45,7 +44,7 @@ log = logging.getLogger('control_api')
 
 SYSTEM_PID_FILE = os.path.join(BASE_DIR, "data", "trader.pid")
 SYSTEM_LOG_FILE = "/tmp/system_v4.log"
-CAPITAL_DB = db.get_db_path()  # используем ту же БД
+PG_DSN = db.get_db_path()  # PostgreSQL DSN
 
 app = FastAPI(title="Super System Dashboard", version="1.0.0")
 
@@ -61,23 +60,9 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ─── ИНИЦИАЛИЗАЦИЯ ───────────────────────────────────────────────────────────
 
 def _init_capital_table():
-    """Создать таблицу capital_snapshots (безопасно, IF NOT EXISTS)."""
-    conn = sqlite3.connect(CAPITAL_DB)
-    try:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS capital_snapshots (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                total REAL NOT NULL,
-                positions_value REAL NOT NULL DEFAULT 0,
-                free_usdt REAL NOT NULL DEFAULT 0,
-                positions_count INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_cap_ts ON capital_snapshots(created_at)")
-        conn.commit()
-    finally:
-        conn.close()
+    """Таблица capital_snapshots уже создана в PG через schema.sql."""
+    db.init_db()
+    pass
 
 
 # Вызываем при импорте
@@ -117,16 +102,7 @@ def _snapshot_worker():
                     total = 0
                     free_usdt = 0
 
-                conn = sqlite3.connect(CAPITAL_DB)
-                try:
-                    conn.execute(
-                        "INSERT INTO capital_snapshots (total, positions_value, free_usdt, positions_count) "
-                        "VALUES (?, ?, ?, ?)",
-                        (round(total, 2), round(pos_value, 2), round(free_usdt, 2), count)
-                    )
-                    conn.commit()
-                finally:
-                    conn.close()
+                db.save_capital_snapshot(round(total, 2), round(pos_value, 2), round(free_usdt, 2), count)
         except Exception:
             pass
         time.sleep(60)
@@ -240,19 +216,30 @@ def _parse_votes_from_log() -> dict:
     except (FileNotFoundError, IOError):
         return result
 
+    # Все символы из ПОЗИЦИЙ — ключи вида 'SYMBOL/USDT'
+    # Сохраняем пару входящих символов (с /USDT или без) для правильного маппинга
+    _trade_symbols_set = set()
+    try:
+        _trade_positions = db.get_all_positions()
+        _trade_symbols_set = set(_trade_positions.keys())
+    except Exception:
+        pass
+
     # Сначала цены — они в каждой строке
     for line in reversed(lines):
         pm = re.search(r'(\w+)/USDT:? Цена=\$([\d.]+)', line)
         if pm:
-            sym = pm.group(1)
-            if sym not in prices:
-                prices[sym] = float(pm.group(2))
+            raw_sym = pm.group(1)
+            sym_key = raw_sym + '/USDT'
+            if sym_key not in prices:
+                prices[sym_key] = float(pm.group(2))
 
     # Собираем последнее состояние каждой пары
     for line in reversed(lines):
         m = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*Score=(\d+).*ML-Pro:(\d+)\(([^)]+)\).*Adv:(\d+)\(([^)]+)\).*MTF:(\d+).*RVB:(\d+).*Liq:(\d+)\([^)]*\)[^V]*VV:(\d+)\(', line)
         if m:
-            sym = m.group(2)
+            raw_sym = m.group(2)
+            sym = raw_sym + '/USDT'
             # Всегда перезаписываем — лог может содержать старые строки без VV
             # Ищем bonus/rev/btc в конце строки
             bonus_match = re.search(r'bonus=([-\d]+) rev=([-\d]+) btc=([-+]\d+)', line)
@@ -291,7 +278,7 @@ def _parse_votes_from_log() -> dict:
         # VETO — только если не перезаписана основной строкой
         vm = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*VETO: (.+)', line)
         if vm:
-            sym = vm.group(2)
+            sym = vm.group(2) + '/USDT'
             if sym not in result:
                 result[sym] = {
                     'score': 0,
@@ -345,27 +332,32 @@ def get_status_snapshot() -> dict:
 
     trades_history = []
     try:
-        conn = sqlite3.connect(CAPITAL_DB)
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            'SELECT id, symbol, side, price, quantity, value, pnl, pnl_pct, timestamp, created_at FROM trade_history ORDER BY id DESC LIMIT 50'
-        ).fetchall()
+        rows = db.get_trade_history(limit=50)
         trades_history = [
-            {'id': r['id'], 'symbol': r['symbol'], 'side': r['side'],
-             'price': r['price'], 'qty': r['quantity'], 'value': r['value'],
-             'pnl': r['pnl'], 'pnl_pct': r['pnl_pct'], 'ts': r['timestamp']}
+            {'id': r['id'], 'symbol': r['symbol'], 
+             'side': 'sell' if r.get('status') == 'closed' else 'buy',
+             'price': (float(r['exit_price']) if r.get('exit_price') else 0) if r.get('status') == 'closed' else (float(r['entry_price']) if r.get('entry_price') else 0),
+             'qty': float(r['entry_qty']) if r.get('entry_qty') else 0,
+             'value': (float(r['entry_price']) * float(r['entry_qty'])) if r.get('entry_price') and r.get('entry_qty') else 0,
+             'pnl': float(r['pnl']) if r.get('pnl') else 0,
+             'pnl_pct': float(r['pnl_percent']) if r.get('pnl_percent') else 0,
+             'ts': str(r.get('exit_time', '') or r.get('entry_time', ''))}
             for r in rows
         ]
-        conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        log.error(f"trade-history: {e}")
 
     votes = _parse_votes_from_log()
 
     # Обогащаем позиции голосами
     enriched_positions = {}
+    # Текущие цены: сначала из PriceCache (WS), fallback на highest_price из PG
+    from data_cache import PriceCache
+    pxc = PriceCache()
     for sym, pos in positions.items():
+        cur_price = pxc.get_price(sym) or pos.get('highest_price', 0) or 0
         p = {'qty': pos['quantity'], 'entry': pos['entry_price'],
+             'current_price': cur_price,
              'entry_time': pos.get('entry_time', '')}
         if sym in votes:
             p['votes'] = votes[sym]
@@ -622,16 +614,16 @@ async def api_status():
 async def api_trade_history():
     """История всех сделок с PnL, отсортированная по времени."""
     try:
-        conn = sqlite3.connect(CAPITAL_DB)
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            'SELECT id, symbol, side, price, quantity, value, pnl, pnl_pct, timestamp, created_at FROM trade_history ORDER BY id DESC LIMIT 500'
-        ).fetchall()
-        conn.close()
+        rows = db.get_trade_history(limit=500)
         return {'trades': [
-            {'id': r['id'], 'symbol': r['symbol'], 'side': r['side'],
-             'price': r['price'], 'qty': r['quantity'], 'value': r['value'],
-             'pnl': r['pnl'], 'pnl_pct': r['pnl_pct'], 'ts': r['timestamp']}
+            {'id': r['id'], 'symbol': r['symbol'], 
+             'side': 'sell' if r.get('status') == 'closed' else 'buy',
+             'price': (float(r['exit_price']) if r.get('exit_price') else 0) if r.get('status') == 'closed' else (float(r['entry_price']) if r.get('entry_price') else 0),
+             'qty': float(r['entry_qty']) if r.get('entry_qty') else 0,
+             'value': (float(r['entry_price']) * float(r['entry_qty'])) if r.get('entry_price') and r.get('entry_qty') else 0,
+             'pnl': float(r['pnl']) if r.get('pnl') else 0,
+             'pnl_pct': float(r['pnl_percent']) if r.get('pnl_percent') else 0,
+             'ts': str(r.get('exit_time', '') or r.get('entry_time', ''))}
             for r in rows
         ]}
     except Exception as e:
@@ -668,16 +660,9 @@ async def api_changelog():
 async def api_capital_history():
     """Последние 500 точек для графика капитала."""
     try:
-        conn = sqlite3.connect(CAPITAL_DB)
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT total, created_at FROM capital_snapshots "
-            "ORDER BY id DESC LIMIT 500"
-        ).fetchall()
-        conn.close()
-        # Разворачиваем в хронологическом порядке
+        rows = db.get_capital_history(limit=500)
         rows.reverse()
-        return {'points': [{'t': r['created_at'], 'v': r['total']} for r in rows]}
+        return {'points': [{'t': str(r['created_at']), 'v': r['total']} for r in rows]}
     except Exception as e:
         log.error(f"capital-history: {e}")
         log.debug(traceback.format_exc())

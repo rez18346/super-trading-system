@@ -457,10 +457,12 @@ class DecisionEngine:
                 if vv and isinstance(vv, dict):
                     vv_score = vv.get('score', 50)
                     vv_signal = vv.get('signal', vv.get('detail', ''))
-                    if 'reversion_sell' in str(vv_signal):
+                    if 'reversion_sell' in str(vv_signal).lower():
                         vv_score = max(10, vv_score - 30)
                     scores['volume_vwap']['score'] = int(vv_score)
-                    scores['volume_vwap']['detail'] = f"score={vv_score:.0f} sig={vv_signal[:30]}"
+                    # Сохраняем сигнал для VV-фильтра
+                    vv_raw_signal = str(vv_signal)
+                    scores['volume_vwap']['detail'] = f"score={vv_score:.0f} sig={vv_raw_signal[:40]}"
                 else:
                     scores['volume_vwap']['score'] = 50
             else:

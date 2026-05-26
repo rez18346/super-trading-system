@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # Подключаем SQLite БД вместо JSON-трекера
-import db  # SQLite БД — единый источник правды
+import db_pg as db  # PostgreSQL
 
 logging.basicConfig(
     level=logging.INFO,
