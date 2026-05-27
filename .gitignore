@@ -38,3 +38,4 @@ venv/
 nohup.out
 # Config (keys in .env only, not in JSON)
 config/api_config_final.json
+*.json.tmp
