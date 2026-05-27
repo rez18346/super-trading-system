@@ -306,9 +306,9 @@ class DecisionEngine:
     # ⚡ ЗАЛОЖЕНО ПОД ШОРТ: side='short' инвертирует уровни
 
     _SL_TP_BY_REGIME = {
-        0: {'sl': 2.0, 'tp': 8.0,   'trail_act': 2.0, 'trail_dist': 1.2},  # CALM
-        1: {'sl': 2.0, 'tp': 10.0,  'trail_act': 2.5, 'trail_dist': 1.5},  # NORMAL
-        2: {'sl': 2.0, 'tp': 14.0,  'trail_act': 3.0, 'trail_dist': 2.0},  # VOLATILE
+        0: {'sl': 1.5, 'tp': 8.0,   'trail_act': 2.0, 'trail_dist': 1.2},  # CALM
+        1: {'sl': 1.5, 'tp': 10.0,  'trail_act': 2.5, 'trail_dist': 1.5},  # NORMAL
+        2: {'sl': 1.5, 'tp': 14.0,  'trail_act': 3.0, 'trail_dist': 2.0},  # VOLATILE
     }
 
     def get_sl_tp_params(self, side: str = 'long') -> dict:
@@ -560,13 +560,25 @@ class DecisionEngine:
             hold_confidence = min(100, hold_confidence + squeeze_bonus)
 
         # Решение:
-        approved = hold_confidence >= 65  # ≥65 = отменяем/ослабляем SL
+        approved = False
+        widen_pct = 0.0
+        if hold_confidence >= 55:
+            if hold_confidence >= 65:
+                approved = True  # полная отмена SL
+                widen_pct = 0.5
+            else:
+                approved = True  # частичное расширение SL
+                widen_pct = 0.3
 
         # Собираем детали
         details = ' | '.join(f"{k}={v['score']}" for k, v in scores.items())
         reason = f"EXIT-VOTE: hold={hold_confidence}% {'✅' if approved else '❌'} [{details}]"
         if squeeze_detail:
             reason += f" | {squeeze_detail}"
+        if approved and widen_pct == 0.3:
+            reason += " | → расширение SL 30%"
+        elif approved and widen_pct == 0.5:
+            reason += " | → отмена SL"
 
         # ⚡ PnL-контекст: если уже в хорошем плюсе (>3%), ослабляем требования
         if pnl_pct > 3.0 and hold_confidence >= 55:
@@ -576,6 +588,7 @@ class DecisionEngine:
         return {
             'hold_confidence': hold_confidence,
             'approved': approved,
+            'widen_pct': widen_pct,
             'votes': scores,
             'reason': reason,
             'weights': EXIT_WEIGHTS,
@@ -598,8 +611,9 @@ class DecisionEngine:
 
         ⚡ SMART EXIT: перед выходом по TP/трейлингу/таймауту проверяет
            exit-ensemble (VSA + Advisor + Liq + VWAP + ML-v2).
-           Если ensemble говорит «держать» (hold_confidence >= 65) —
+           Если ensemble говорит «держать» (hold_confidence >= 55) —
            возвращает hold_widen_sl с расширенным SL вместо выхода.
+           При 55-64: расширение SL на 30%. При ≥65: полная отмена (50% расширение).
 
         ⚡ ЗАЛОЖЕНО ПОД ШОРТ: side='short' инвертирует логику SL/TP/трейлинга.
 
@@ -622,8 +636,10 @@ class DecisionEngine:
 
             if exit_vote['approved']:
                 # Модули говорят «держать» → расширяем SL вместо выхода
-                widened_sl = sl_pct * 1.5  # расширяем SL на 50%
-                reason = (f"{trigger_type} ОТМЕНЁН: ensemble hold={exit_vote['hold_confidence']}% [{exit_vote.get('reason','')}]"
+                widen_pct = exit_vote.get('widen_pct', 0.5)  # 0.3 для частичного, 0.5 для полного
+                widened_sl = sl_pct * (1 + widen_pct)
+                action = 'расширение 30%' if widen_pct < 0.5 else 'отмена SL'
+                reason = (f"{trigger_type} {action}: ensemble hold={exit_vote['hold_confidence']}% [{exit_vote.get('reason','')}]"
                           f" | SL расширен до {widened_sl:.1f}%")
                 logger.info(f"🧠 [SMART EXIT] {symbol}: {reason}")
 
@@ -917,6 +933,10 @@ class DecisionEngine:
             # SL/TP от HMM-режима
             rp = self.get_sl_tp_params(side)
             
+            # 🧠 Сохраняем признаки входа для дообучения ML-Pro v2
+            if self._ml_pro_v2 and self._ml_pro_v2.is_27f and self._ml_pro_v2.trained:
+                self._ml_pro_v2.store_entry_features(symbol)
+
             return Decision(
                 symbol, 'enter', side=side,
                 score=score,

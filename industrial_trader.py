@@ -45,6 +45,8 @@ class IndustrialTrader:
         self.available_capital = self.capital
         self.daily_pnl = 0.0
         self.daily_trades = 0
+        self._daily_peak_pnl = 0.0     # Пик дневного PnL для Portfolio Guard
+        self._portfolio_guard_triggered = False  # Флаг: Guard сработал
         self._current_market_mode = 'neutral'
         
         # Статистика
@@ -77,9 +79,21 @@ class IndustrialTrader:
             # Обновляем доступный капитал
             self.available_capital = free_usdt
             logger.info(f"💰 Реальный доступный капитал: ${free_usdt:.2f} (всего USDT: ${total_usdt:.2f})")
-            
 
-            
+            # 🛡️ Восстанавливаем состояние позиций из PostgreSQL
+            try:
+                pg_positions = db.load_open_positions()
+                if pg_positions:
+                    for sym, pos in pg_positions.items():
+                        if sym not in self.positions:
+                            self.positions[sym] = pos
+                            logger.info(f"   🗄️ {sym}: восстановлена из PG (entry=${pos.get("entry_price", 0):.4f}, "
+                                      f"max_profit={pos.get("max_profit", 0):+.2f}%, "
+                                      f"hold={pos.get("_created_at", 0):.0f}s)")
+                    logger.info(f"🗄️ Восстановлено {len(pg_positions)} позиций из PostgreSQL")
+            except Exception as e_pg:
+                logger.warning(f"⚠️ Ошибка загрузки позиций из PG: {e_pg}")
+
             # Находим открытые позиции (активы кроме USDT)
             open_positions_count = 0
             
@@ -112,36 +126,73 @@ class IndustrialTrader:
                         if value_usdt > 1.0:  # Позиции больше $1
                             symbol = f"{currency}/USDT"
                             
-                            # 🩹 Цена входа: сначала средневзвешенная с биржи (DCA-aware),
-                            # fallback на последнюю цену из PG или текущую
-                            avg_price, first_trade_time = self.get_average_buy_price(symbol, amount)
-                            
-                            if avg_price:
-                                entry_price = avg_price
-                                entry_time = first_trade_time
-                                logger.info(f"   📊 Средняя цена покупки {symbol}: ${avg_price:.4f} (DCA weighted)")
-                            else:
-                                # Если нет истории на бирже — последняя цена из PG
-                                trades = db.get_trade_history(symbol, limit=1, side='buy')
-                                if trades and trades[0].get('entry_price', 0) > 0:
-                                    entry_price = float(trades[0]['entry_price'])
-                                    entry_time = trades[0]['entry_time']
-                                    logger.info(f"   📊 Последняя цена покупки из PG: {symbol}: ${entry_price:.4f}")
-                                else:
-                                    entry_price = current_price
-                                    entry_time = datetime.now().isoformat()
-                                    logger.info(f"   ⚠️  Не удалось получить среднюю цену, используем текущую: ${current_price:.4f}")
-                            
                             # При рестарте не пишем в trade_history — данные будут от реальных сделок
                     # (синхронизация с биржей обновит self.positions)
                             
                             # Добавляем позицию в self.positions
-                            self.positions[symbol] = {
+                            # 🛡️ Если уже восстановлена из PG — сохраняем мета-данные
+                            existing = self.positions.get(symbol, {})
+                            
+                            # 🛡️ Цена входа: приоритет — PG (pos_meta), затем DCA с биржи, затем текущая
+                            pg_entry = existing.get('entry_price', 0)
+                            if pg_entry and pg_entry > 0:
+                                entry_price = pg_entry
+                                entry_time = existing.get('entry_time', '')
+                                logger.info(f"   📊 Цена входа {symbol}: ${entry_price:.4f} (из PG)")
+                            else:
+                                # Нет в PG — берём среднюю с биржи (DCA-aware)
+                                avg_price, first_trade_time = self.get_average_buy_price(symbol, amount)
+                                if avg_price:
+                                    entry_price = avg_price
+                                    entry_time = first_trade_time
+                                    logger.info(f"   📊 Цена входа {symbol}: ${avg_price:.4f} (DCA weighted, из биржи)")
+                                else:
+                                    # Последняя цена покупки из PG (не pos_meta, а сам трейд)
+                                    trades = db.get_trade_history(symbol, limit=1, side='buy')
+                                    if trades and trades[0].get('entry_price', 0) > 0:
+                                        entry_price = float(trades[0]['entry_price'])
+                                        entry_time = trades[0]['entry_time']
+                                        logger.info(f"   📊 Цена входа {symbol}: ${entry_price:.4f} (из истории PG)")
+                                    else:
+                                        entry_price = current_price
+                                        entry_time = datetime.now().isoformat()
+                                        logger.info(f"   ⚠️  {symbol}: нет данных о цене, используем текущую: ${current_price:.4f}")
+                            
+                            # 🛡️ Восстанавливаем _created_at: из PG, или конвертируем entry_time, или текущее время
+                            cat = existing.get('_created_at', 0)
+                            if cat == 0:
+                                # Пробуем конвертировать entry_time из PG (ISO строка) в timestamp
+                                et = existing.get('entry_time', '')
+                                try:
+                                    if et and isinstance(et, str):
+                                        dt = datetime.fromisoformat(et.replace('Z', '+00:00').replace('T', ' ', 1))
+                                        if dt.tzinfo is not None:
+                                            dt = dt.replace(tzinfo=None)
+                                        cat = dt.timestamp()
+                                    elif et and isinstance(et, datetime):
+                                        if et.tzinfo is not None:
+                                            et = et.replace(tzinfo=None)
+                                        cat = et.timestamp()
+                                except Exception:
+                                    cat = time.time()
+                            
+                            pos = {
                                 'quantity': amount,
                                 'entry_price': entry_price,
-                                'entry_time': entry_time,
-                                'side': 'long'
+                                'entry_time': existing.get('entry_time') or entry_time,
+                                'side': 'long',
+                                'max_profit': existing.get('max_profit', 0.0),
+                                '_highest_price': existing.get('_highest_price', entry_price),
+                                '_created_at': cat,
+                                'smart_exit_count': existing.get('smart_exit_count', 0),
                             }
+                            # Сохраняем только не-None значения (конфиг не перезаписываем)
+                            for k in ('_sl_price', '_tp_price', '_trail_act', '_trail_dist',
+                                      '_max_hold_h', '_early_trail_peak'):
+                                v = existing.get(k)
+                                if v is not None:
+                                    pos[k] = v
+                            self.positions[symbol] = pos
                             
                             open_positions_count += 1
                             logger.info(f"   ✅ Позиция добавлена: {symbol} - {amount:.6f} @ ${entry_price:.4f} (текущая: ${current_price:.4f})")
@@ -485,6 +536,7 @@ class IndustrialTrader:
                     pnl = (price - position['entry_price']) * quantity
                     self.available_capital += quantity * price
                     self.daily_pnl += pnl
+                    self._daily_peak_pnl = max(self._daily_peak_pnl, self.daily_pnl)  # обновляем пик
                     self.daily_trades += 1
                     
                     trade['pnl'] = pnl
@@ -616,6 +668,13 @@ class IndustrialTrader:
                         # 💰 Обновляем доступный капитал сразу (предотвращает двойные BUY)
                         order_cost = actual_qty * real_entry
                         self.available_capital = max(0, self.available_capital - order_cost)
+                    
+                    # 🛡️ Сохраняем мета-данные позиции в PostgreSQL
+                    try:
+                        db.update_pos_meta(symbol, self.positions[symbol])
+                    except Exception as e_meta:
+                        logger.debug(f"pos_meta save: {e_meta}")
+                    
                     logger.info(f"📥 Обновлена позиция: {symbol} - {actual_qty:.6f} @ ${real_entry:.4f}, капитал: ${self.available_capital:.2f}")
                 elif side == 'sell':
                     # Запись sell в trade_history
@@ -632,7 +691,15 @@ class IndustrialTrader:
                         
                         pnl = (filled_price - entry) * filled
                         pnl_pct = ((filled_price - entry) / entry) * 100 if entry > 0 else 0
-                        
+
+                        # 🧠 Записываем outcome для дообучения ML-Pro v2
+                        try:
+                            _mlpro = getattr(self, '_de', None)
+                            if _mlpro and hasattr(_mlpro, '_ml_pro_v2') and _mlpro._ml_pro_v2:
+                                _mlpro._ml_pro_v2.record_outcome(symbol, pnl_pct)
+                        except Exception:
+                            pass
+
                         db.add_trade(
                             symbol=symbol,
                             side='sell',
@@ -962,6 +1029,10 @@ class IndustrialTrader:
                 except Exception as _e:
                     logger.debug(f"[portfolio_stats] {_e}")
 
+                # Portfolio Guard: блокируем входы если сработал
+                if self._portfolio_guard_triggered:
+                    logger.warning("🔒 [GUARD] входы заблокированы, SL/TP работают")
+                
                 # Анализ каждого символа
                 for symbol in symbols:
                     if not self.running:
@@ -1014,6 +1085,11 @@ class IndustrialTrader:
                                 _local_hour = (datetime.now(timezone.utc).hour + 7) % 24
                                 if _local_hour >= 23 or _local_hour < 8:
                                     logger.info(f"🌙 {symbol}: ночной режим ({_local_hour}:00 KRAT). Пропускаю.")
+                                    continue
+
+                                # 🛑 PORTFOLIO GUARD: если сработал — входы заблокированы
+                                if self._portfolio_guard_triggered:
+                                    logger.warning(f"🔒 [GUARD] {symbol}: вход заблокирован (Guard активен)")
                                     continue
 
                                 score = decision.score or 50
@@ -1119,12 +1195,17 @@ class IndustrialTrader:
                         # а не entry_time (реальное время покупки — может быть вчерашним при DCA)
                         hold_start = position.get('_created_at') or position.get('entry_time', time.time())
                         if isinstance(hold_start, str):
-                            pos_time = datetime.fromisoformat(hold_start)
-                            if pos_time.tzinfo is not None:
-                                pos_time = pos_time.replace(tzinfo=None)
-                            hold_hours = (datetime.now() - pos_time).total_seconds() / 3600
+                            try:
+                                pos_time = datetime.fromisoformat(hold_start)
+                                if pos_time.tzinfo is not None:
+                                    pos_time = pos_time.replace(tzinfo=None)
+                                hold_hours = (datetime.now() - pos_time).total_seconds() / 3600
+                            except Exception:
+                                hold_hours = 0.0  # fallback: новая позиция
+                                pos_time = datetime.now()
                         else:
                             hold_hours = (time.time() - hold_start) / 3600
+                            pos_time = datetime.fromtimestamp(hold_start) if hold_start > 0 else datetime.now()
                         
                         # ✅ ЕДИНЫЙ ЦЕНТР РЕШЕНИЙ: DE решает когда выходить
                         entry_price = position['entry_price']
@@ -1181,6 +1262,19 @@ class IndustrialTrader:
                                 early_trail_reason = f"Ранний трейлинг: пик={peak:.4f}, откат до {current_price:.4f} ({pnl_percent:+.2f}%)"
                                 logger.info(f"🎯 [Ранний трейлинг] {symbol}: {early_trail_reason}")
                         
+                        # ═══════════════════════════════════════════════════════
+
+                        # 🥬 BREAK-EVEN EXIT: спящие позиции (≥4ч, не дали профита)
+                        # Если цена вернулась к entry или выше — выходим в ноль
+                        # Не ждём SL, не ждём чуда — освобождаем капитал
+                        be_sell_reason = None
+                        if hold_hours >= 4.0 and not early_trail_triggered:
+                            peak_pnl = position.get('max_profit', 0)
+                            if peak_pnl < rp.get('tp_pct', 3.0) * 0.7:
+                                if pnl_percent >= -0.2 and pnl_percent <= 1.0:
+                                    be_sell_reason = f"Break-even: {hold_hours:.0f}ч, пик={peak_pnl:+.2f}%, PnL={pnl_percent:+.2f}%"
+                                    logger.info(f"🥬 [BE] {symbol}: {be_sell_reason}. Продаю в безубыток")
+
                         # ═══════════════════════════════════════════════════════
                         # ⚡ ИМПУЛЬСНЫЙ ВЫХОД (1M свечи) + EXIT ENSEMBLE (модули)
                         # ═══════════════════════════════════════════════════════
@@ -1336,6 +1430,11 @@ class IndustrialTrader:
                             should_sell = True
                             sell_reason = stale_sell_reason
 
+                        # 5) Break-even sell
+                        if not should_sell and be_sell_reason is not None:
+                            should_sell = True
+                            sell_reason = be_sell_reason
+
                         # ═══ SMART SL WIDENING: обновляем SL если ensemble отменил выход ─
                         if exit_widened and exit_decision and exit_decision.sl_price is not None:
                             new_sl = exit_decision.sl_price
@@ -1453,7 +1552,53 @@ class IndustrialTrader:
                         ml_train(force=False)
                     except Exception:
                         pass
+                    # 🧠 ML-Pro v2: дообучение 27f модели на реальных сделках
+                    try:
+                        if hasattr(self, '_de') and self._de is not None:
+                            _mlpro = getattr(self._de, '_ml_pro_v2', None)
+                            if _mlpro is not None:
+                                _mlpro.retrain_27f(force=False)
+                    except Exception:
+                        pass
                     self._last_cleanup_time = time.time()
+
+                # 🛡️ Периодическое сохранение состояния позиций (раз в 60с)
+                if getattr(self, '_last_pos_save_time', 0) < time.time() - 60:
+                    try:
+                        with self._lock:
+                            db.save_all_positions(self.positions)
+                    except Exception as e_save:
+                        logger.debug(f"periodic pos save: {e_save}")
+                    self._last_pos_save_time = time.time()
+
+                # ─── Portfolio P&L Guard ────────────────────────────────────────
+                # Защита от слива дневного профита
+                if not self._portfolio_guard_triggered:
+                    self._daily_peak_pnl = max(self._daily_peak_pnl, self.daily_pnl)
+                    guard_threshold = min(5.0, 0.015 * self.capital)  # $5 или 1.5% капитала
+                    drawdown = self._daily_peak_pnl - self.daily_pnl
+                    if self._daily_peak_pnl > 2.0 and drawdown >= guard_threshold:
+                        logger.critical(f"🛑 PORTFOLIO GUARD: просадка ${drawdown:.2f} от пика "
+                                       f"${self._daily_peak_pnl:.2f}! Текущий PnL: ${self.daily_pnl:.2f}")
+                        self._portfolio_guard_triggered = True
+                        # Force-close всех позиций
+                        for sym, pos in list(self.positions.items()):
+                            try:
+                                df_g = self.get_market_data(sym, '1m', 1)
+                                if not df_g.empty:
+                                    cur_price = df_g['close'].iloc[-1]
+                                    self.execute_trade(sym, 'sell', pos['quantity'], cur_price)
+                                    logger.info(f"🔒 [GUARD] принудительное закрытие {sym}")
+                            except Exception as e_g:
+                                logger.error(f"[GUARD] ошибка закрытия {sym}: {e_g}")
+                elif self._portfolio_guard_triggered:
+                    # Проверка сброса Guard — новый торговый день (08:00+)
+                    _guard_hour = (datetime.now(timezone.utc).hour + 7) % 24
+                    # Сбрасываем если: утро (08:00-10:00) И PnL не в глубоком минусе
+                    if _guard_hour >= 8 and _guard_hour <= 10 and self.daily_pnl >= 0:
+                        logger.info(f"🔄 [GUARD] Сброс: новый день ({_guard_hour}:00 KRAT), PnL=${self.daily_pnl:.2f}")
+                        self._portfolio_guard_triggered = False
+                        self._daily_peak_pnl = max(0.0, self.daily_pnl)
                 
                 # Сохраняем реальный баланс с биржи для дашборда
                 self._save_real_balance()
@@ -1479,8 +1624,18 @@ class IndustrialTrader:
             logger.warning("Система уже запущена")
             return
         
+        # 🛡️ Регистрируем graceful shutdown handler
+        def _shutdown_handler(signum, frame):
+            logger.warning(f"📥 Получен сигнал {signum}, сохраняю состояние...")
+            self.stop()
+            # Принудительный выход через 5с если stop завис
+            threading.Timer(5.0, lambda: os._exit(0)).start()
+        
+        signal.signal(signal.SIGTERM, _shutdown_handler)
+        signal.signal(signal.SIGINT, _shutdown_handler)
+        
         self.running = True
-        logger.info("Запуск промышленной торговой системы")
+        logger.info("🚀 Запуск промышленной торговой системы")
         
         # Запуск торгового цикла в отдельном потоке
         self.trading_thread = threading.Thread(target=self.trading_cycle, daemon=True)
@@ -1490,23 +1645,22 @@ class IndustrialTrader:
         self.monitor_thread = threading.Thread(target=self.monitor_system, daemon=True)
         self.monitor_thread.start()
         
-        logger.info("Система успешно запущена")
+        logger.info("✅ Система успешно запущена")
     
     def stop(self):
-        """Остановка торговой системы"""
-        logger.info("Остановка промышленной торговой системы")
-        self.running = False
+        """Остановка торговой системы — сохраняет состояние, НЕ закрывает позиции"""
+        logger.info("🛑 Остановка промышленной торговой системы — сохраняю состояние...")
         
-        # Закрытие всех открытых позиций
-        for symbol, position in list(self.positions.items()):
-            try:
-                # Получаем текущую цену
-                df = self.get_market_data(symbol, '1m', 1)
-                if not df.empty:
-                    current_price = df['close'].iloc[-1]
-                    self.execute_trade(symbol, 'sell', position['quantity'], current_price)
-            except Exception as e:
-                logger.error(f"Ошибка закрытия позиции {symbol}: {e}")
+        # 🛡️ Сохраняем все открытые позиции с мета-данными
+        try:
+            with self._lock:
+                db.save_all_positions(self.positions)
+            open_count = len(self.positions)
+            logger.info(f"💾 Сохранено {open_count} позиций в PostgreSQL")
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка сохранения позиций при остановке: {e}")
+        
+        self.running = False
         
         # Ожидание завершения потоков
         if hasattr(self, 'trading_thread'):
@@ -1514,7 +1668,7 @@ class IndustrialTrader:
         if hasattr(self, 'monitor_thread'):
             self.monitor_thread.join(timeout=10)
         
-        logger.info("Система остановлена")
+        logger.info("✅ Система остановлена. Позиции сохранены.")
     
     def monitor_system(self):
         """Мониторинг состояния системы"""

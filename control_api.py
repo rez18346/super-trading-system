@@ -332,18 +332,21 @@ def get_status_snapshot() -> dict:
 
     trades_history = []
     try:
-        rows = db.get_trade_history(limit=50)
-        trades_history = [
-            {'id': r['id'], 'symbol': r['symbol'], 
-             'side': 'sell' if r.get('status') == 'closed' else 'buy',
-             'price': (float(r['exit_price']) if r.get('exit_price') else 0) if r.get('status') == 'closed' else (float(r['entry_price']) if r.get('entry_price') else 0),
-             'qty': float(r['entry_qty']) if r.get('entry_qty') else 0,
-             'value': (float(r['entry_price']) * float(r['entry_qty'])) if r.get('entry_price') and r.get('entry_qty') else 0,
-             'pnl': float(r['pnl']) if r.get('pnl') else 0,
-             'pnl_pct': float(r['pnl_percent']) if r.get('pnl_percent') else 0,
-             'ts': str(r.get('exit_time', '') or r.get('entry_time', ''))}
-            for r in rows
-        ]
+        rows = db.get_trade_history(limit=100)
+        trades_history = []
+        for r in rows:
+            is_closed = r.get('exit_price') is not None
+            trades_history.append({
+                'id': r['id'], 'symbol': r['symbol'],
+                'side': 'sell' if is_closed else 'buy',
+                'price': float(r['exit_price'] if is_closed else r['entry_price'] or 0),
+                'qty': float(r['exit_qty'] or r['entry_qty'] or 0),
+                'value': (float(r['exit_price'] or r['entry_price'] or 0) * float(r['exit_qty'] or r['entry_qty'] or 0)),
+                'pnl': float(r['pnl']) if r.get('pnl') else 0,
+                'pnl_pct': float(r['pnl_percent']) if r.get('pnl_percent') else 0,
+                'ts': str(r.get('exit_time', '') or r.get('entry_time', ''))}
+            )
+        trades_history = trades_history[:50]
     except Exception as e:
         log.error(f"trade-history: {e}")
 

@@ -1,0 +1,4281 @@
+[
+  {
+    "ts": "2026-05-26T22:06:21.547713+00:00",
+    "symbol": "DOGE/USDT",
+    "approved": true,
+    "final_score": 65.8,
+    "threshold": 60.0,
+    "price": 0.1007,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 51.0898494720459,
+        "detail": "WEAK(0.53)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=0.1011 VAH=0.1013 VAL=0.1008 q=0.53 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 57,
+        "detail": "VWAP=$0.1019 \u043e\u0442\u043a\u043b=-1.19% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(18%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=54% down=46% div=-0.27 POCtr=-0.01 mom=-0.10 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:06:23.125103+00:00",
+    "symbol": "NEAR/USDT",
+    "approved": true,
+    "final_score": 74.0,
+    "threshold": 58.0,
+    "price": 2.598,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.99985826015472,
+        "detail": "GOOD(0.77)"
+      },
+      "mtf": {
+        "score": 21.833333333333336,
+        "detail": "5m=20 1h=5 4h=90 hmm=1 pen=25.5"
+      },
+      "rsi_vol_btc": {
+        "score": 37.5,
+        "detail": "rsi=25 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 65,
+        "detail": "POC=2.6069 VAH=2.6420 VAL=2.5979 q=0.93 fvg\u2191=0 fvg\u2193=0  POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$2.7837 \u043e\u0442\u043a\u043b=-6.67% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 26,
+        "detail": "up=37% down=63% div=-0.78 POCtr=-0.13 mom=-0.32 \u2192bearish"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:06:24.314366+00:00",
+    "symbol": "ARB/USDT",
+    "approved": true,
+    "final_score": 66.6,
+    "threshold": 60.0,
+    "price": 0.1083,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=0.1086 VAH=0.1086 VAL=0.1083 q=1.00 fvg\u2191=0 fvg\u2193=0 OF1 POC\u2193 bullish"
+      },
+      "volume_vwap": {
+        "score": 61,
+        "detail": "VWAP=$0.1103 \u043e\u0442\u043a\u043b=-1.84% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(28%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=68% down=32% div=+0.00 POCtr=-0.01 mom=-0.00 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:06:25.546792+00:00",
+    "symbol": "OP/USDT",
+    "approved": true,
+    "final_score": 74.1,
+    "threshold": 58.0,
+    "price": 0.1279,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.94371426105499,
+        "detail": "GOOD(0.76)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=0.1292 VAH=0.1294 VAL=0.1288 q=0.44 fvg\u2191=0 fvg\u2193=0 OB2 idm bearish idm bearish POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$0.1310 \u043e\u0442\u043a\u043b=-2.36% SPIKE(2.9x) \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 33,
+        "detail": "up=27% down=73% div=-0.43 POCtr=-0.04 mom=-0.16 \u2192bearish"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:06:27.160420+00:00",
+    "symbol": "APT/USDT",
+    "approved": true,
+    "final_score": 67.7,
+    "threshold": 58.0,
+    "price": 0.9666,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 54.26007270812988,
+        "detail": "WEAK(0.61)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 45.75,
+        "detail": "rsi=40 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 75,
+        "detail": "POC=0.9654 VAH=0.9738 VAL=0.9651 q=0.46 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish OF1 POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$0.9878 \u043e\u0442\u043a\u043b=-2.15% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=40% down=60% div=-0.23 POCtr=-0.04 mom=-0.09 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:06:28.360191+00:00",
+    "symbol": "FIL/USDT",
+    "approved": true,
+    "final_score": 62.6,
+    "threshold": 60.0,
+    "price": 0.998,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 51.0898494720459,
+        "detail": "WEAK(0.53)"
+      },
+      "mtf": {
+        "score": 69.36666666666667,
+        "detail": "5m=20 1h=90 4h=90 hmm=1 pen=6.3"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 70,
+        "detail": "POC=1.0070 VAH=1.0165 VAL=1.0023 q=0.93 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 62,
+        "detail": "VWAP=$1.0190 \u043e\u0442\u043a\u043b=-2.06% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(31%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=55% down=45% div=+0.14 POCtr=+0.03 mom=+0.06 \u2192neutral"
+      }
+    },
+    "strong_count": 0
+  },
+  {
+    "ts": "2026-05-26T22:06:29.626400+00:00",
+    "symbol": "ALGO/USDT",
+    "approved": true,
+    "final_score": 61.4,
+    "threshold": 60.0,
+    "price": 0.10894,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 54.62515115737915,
+        "detail": "WEAK(0.62)"
+      },
+      "mtf": {
+        "score": 31.033333333333328,
+        "detail": "5m=75 1h=5 4h=5 hmm=1 pen=6.3"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=0.1092 VAH=0.1093 VAL=0.1087 q=0.29 fvg\u2191=0 fvg\u2193=0  POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 63,
+        "detail": "VWAP=$0.1115 \u043e\u0442\u043a\u043b=-2.25% \u0442\u0440\u0435\u043d\u0434=flat \u26a1reversion_buy(34%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=30% down=70% div=-0.06 POCtr=-0.01 mom=-0.02 \u2192neutral"
+      }
+    },
+    "strong_count": 0
+  },
+  {
+    "ts": "2026-05-26T22:06:31.217133+00:00",
+    "symbol": "EGLD/USDT",
+    "approved": true,
+    "final_score": 68.5,
+    "threshold": 58.0,
+    "price": 3.793,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.8830361366272,
+        "detail": "WEAK(0.57)"
+      },
+      "mtf": {
+        "score": 17.65,
+        "detail": "5m=20 1h=5 4h=5 hmm=1 pen=1.3"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=3.7950 VAH=3.8120 VAL=3.7950 q=0.82 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$3.8753 \u043e\u0442\u043a\u043b=-2.12% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=16% down=84% div=-0.30 POCtr=-0.03 mom=-0.11 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:07:16.680116+00:00",
+    "symbol": "ETH/USDT",
+    "approved": true,
+    "final_score": 82.2,
+    "threshold": 55.0,
+    "price": 2072.78,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 93.10083627700806,
+        "detail": "GOOD(0.77)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=2074.3511 VAH=2075.9141 VAL=2067.3488 q=0.36 fvg\u2191=0 fvg\u2193=0 OF1 POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 74,
+        "detail": "VWAP=$2094.5622 \u043e\u0442\u043a\u043b=-1.04% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(61%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=46% down=54% div=-0.06 POCtr=-0.01 mom=-0.03 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:07:17.906082+00:00",
+    "symbol": "SOL/USDT",
+    "approved": true,
+    "final_score": 64.8,
+    "threshold": 60.0,
+    "price": 83.67,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=83.5194 VAH=83.8701 VAL=83.4705 q=0.49 fvg\u2191=0 fvg\u2193=0  POC\u2191 bullish"
+      },
+      "volume_vwap": {
+        "score": 56,
+        "detail": "VWAP=$84.5389 \u043e\u0442\u043a\u043b=-1.03% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(15%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=42% down=58% div=-0.14 POCtr=-0.00 mom=-0.05 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:07:19.187773+00:00",
+    "symbol": "ADA/USDT",
+    "approved": true,
+    "final_score": 64.8,
+    "threshold": 60.0,
+    "price": 0.2396,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=0.2402 VAH=0.2402 VAL=0.2393 q=0.65 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish POC\u2193 bullish"
+      },
+      "volume_vwap": {
+        "score": 56,
+        "detail": "VWAP=$0.2422 \u043e\u0442\u043a\u043b=-1.09% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(16%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=35% down=65% div=-0.12 POCtr=+0.01 mom=-0.04 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:07:20.677297+00:00",
+    "symbol": "DOT/USDT",
+    "approved": true,
+    "final_score": 77.7,
+    "threshold": 60.0,
+    "price": 1.245,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 93.10083627700806,
+        "detail": "GOOD(0.77)"
+      },
+      "mtf": {
+        "score": 37.38333333333333,
+        "detail": "5m=75 1h=20 4h=5 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 72,
+        "detail": "POC=1.2480 VAH=1.2560 VAL=1.2460 q=0.43 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 61,
+        "detail": "VWAP=$1.2701 \u043e\u0442\u043a\u043b=-1.97% \u0442\u0440\u0435\u043d\u0434=flat \u26a1reversion_buy(30%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=35% down=65% div=-0.12 POCtr=+0.00 mom=-0.04 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:07:21.830806+00:00",
+    "symbol": "ROSE/USDT",
+    "approved": true,
+    "final_score": 69.4,
+    "threshold": 60.0,
+    "price": 0.00979,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 95,
+        "detail": "POC=0.0099 VAH=0.0099 VAL=0.0098 q=0.30 fvg\u2191=0 fvg\u2193=0 OB1 ext bullish OF1 POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 64,
+        "detail": "VWAP=$0.0100 \u043e\u0442\u043a\u043b=-2.37% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(35%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=19% down=81% div=+0.10 POCtr=-0.02 mom=+0.03 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:07:23.074524+00:00",
+    "symbol": "MNT/USDT",
+    "approved": true,
+    "final_score": 75.9,
+    "threshold": 60.0,
+    "price": 0.6367,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.55251586437225,
+        "detail": "GOOD(0.75)"
+      },
+      "mtf": {
+        "score": 24.0,
+        "detail": "5m=20 1h=20 4h=5 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 70,
+        "detail": "POC=0.6377 VAH=0.6388 VAL=0.6369 q=0.62 fvg\u2191=0 fvg\u2193=0  POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 50,
+        "detail": "VWAP=$0.6415 \u043e\u0442\u043a\u043b=-0.75% \u0442\u0440\u0435\u043d\u0434=falling"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=43% down=57% div=-0.16 POCtr=+0.00 mom=-0.05 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:07:24.687318+00:00",
+    "symbol": "XRP/USDT",
+    "approved": true,
+    "final_score": 80.4,
+    "threshold": 55.0,
+    "price": 1.3306,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.03027725219727,
+        "detail": "GOOD(0.73)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=1.3289 VAH=1.3327 VAL=1.3288 q=0.62 fvg\u2191=0 fvg\u2193=0 OB2 idm bearish idm bullish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 72,
+        "detail": "VWAP=$1.3428 \u043e\u0442\u043a\u043b=-0.90% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(55%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=38% down=62% div=+0.10 POCtr=-0.01 mom=+0.03 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:07:25.883668+00:00",
+    "symbol": "LINK/USDT",
+    "approved": true,
+    "final_score": 63.0,
+    "threshold": 60.0,
+    "price": 9.366,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 51.0898494720459,
+        "detail": "WEAK(0.53)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 65,
+        "detail": "POC=9.3680 VAH=9.4110 VAL=9.3531 q=0.96 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 79,
+        "detail": "VWAP=$9.4982 \u043e\u0442\u043a\u043b=-1.39% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(74%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=21% down=79% div=-0.21 POCtr=-0.02 mom=-0.08 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:07:27.153827+00:00",
+    "symbol": "AVAX/USDT",
+    "approved": true,
+    "final_score": 81.9,
+    "threshold": 55.0,
+    "price": 9.131,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.03027725219727,
+        "detail": "GOOD(0.73)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=9.1391 VAH=9.1781 VAL=9.1310 q=0.82 fvg\u2191=0 fvg\u2193=0 OB2 idm bullish idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 87,
+        "detail": "VWAP=$9.3083 \u043e\u0442\u043a\u043b=-1.90% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(94%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=14% down=86% div=-0.25 POCtr=-0.02 mom=-0.09 \u2192neutral"
+      }
+    },
+    "strong_count": 3
+  },
+  {
+    "ts": "2026-05-26T22:07:28.692817+00:00",
+    "symbol": "ATOM/USDT",
+    "approved": false,
+    "final_score": 59.0,
+    "threshold": 60.0,
+    "price": 2.19,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 89.0,
+        "detail": "5m=75 1h=75 4h=90 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 55,
+        "detail": "POC=2.2060 VAH=2.2140 VAL=2.1880 q=0.95 fvg\u2191=0 fvg\u2193=0  POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 60,
+        "detail": "VWAP=$2.2300 \u043e\u0442\u043a\u043b=-1.80% \u0442\u0440\u0435\u043d\u0434=flat \u26a1reversion_buy(27%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=65% down=35% div=+0.00 POCtr=-0.10 mom=-0.04 \u2192neutral"
+      }
+    },
+    "strong_count": 0
+  },
+  {
+    "ts": "2026-05-26T22:07:29.890793+00:00",
+    "symbol": "DOGE/USDT",
+    "approved": true,
+    "final_score": 65.7,
+    "threshold": 60.0,
+    "price": 0.10074,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 51.0898494720459,
+        "detail": "WEAK(0.53)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=0.1011 VAH=0.1013 VAL=0.1008 q=0.53 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 56,
+        "detail": "VWAP=$0.1019 \u043e\u0442\u043a\u043b=-1.15% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(17%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=54% down=46% div=-0.25 POCtr=-0.01 mom=-0.09 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:07:31.127505+00:00",
+    "symbol": "NEAR/USDT",
+    "approved": true,
+    "final_score": 79.2,
+    "threshold": 55.0,
+    "price": 2.6,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.99985826015472,
+        "detail": "GOOD(0.77)"
+      },
+      "mtf": {
+        "score": 21.833333333333336,
+        "detail": "5m=20 1h=5 4h=90 hmm=1 pen=25.5"
+      },
+      "rsi_vol_btc": {
+        "score": 37.5,
+        "detail": "rsi=25 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=2.6069 VAH=2.6420 VAL=2.5990 q=0.93 fvg\u2191=0 fvg\u2193=0  POC\u2193 bearish"
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$2.7836 \u043e\u0442\u043a\u043b=-6.60% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 27,
+        "detail": "up=37% down=63% div=-0.74 POCtr=-0.13 mom=-0.30 \u2192bearish"
+      }
+    },
+    "strong_count": 3
+  },
+  {
+    "ts": "2026-05-26T22:07:32.639416+00:00",
+    "symbol": "ARB/USDT",
+    "approved": true,
+    "final_score": 65.3,
+    "threshold": 60.0,
+    "price": 0.10829,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=0.1086 VAH=0.1086 VAL=0.1083 q=1.00 fvg\u2191=0 fvg\u2193=0 OF1 POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 61,
+        "detail": "VWAP=$0.1103 \u043e\u0442\u043a\u043b=-1.85% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(28%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=68% down=32% div=+0.00 POCtr=-0.01 mom=-0.00 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:07:33.950005+00:00",
+    "symbol": "OP/USDT",
+    "approved": true,
+    "final_score": 73.4,
+    "threshold": 58.0,
+    "price": 0.1279,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 90.95606684684753,
+        "detail": "GOOD(0.70)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=0.1292 VAH=0.1294 VAL=0.1288 q=0.43 fvg\u2191=0 fvg\u2193=0 OB2 idm bearish idm bearish POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$0.1309 \u043e\u0442\u043a\u043b=-2.33% SPIKE(3.5x) \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 33,
+        "detail": "up=28% down=72% div=-0.43 POCtr=-0.04 mom=-0.16 \u2192bearish"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:07:35.173442+00:00",
+    "symbol": "APT/USDT",
+    "approved": true,
+    "final_score": 67.6,
+    "threshold": 58.0,
+    "price": 0.9671,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 53.88124942779541,
+        "detail": "WEAK(0.60)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 75,
+        "detail": "POC=0.9654 VAH=0.9738 VAL=0.9651 q=0.46 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish OF1 POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$0.9878 \u043e\u0442\u043a\u043b=-2.09% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=40% down=60% div=-0.21 POCtr=-0.03 mom=-0.08 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:07:36.770448+00:00",
+    "symbol": "FIL/USDT",
+    "approved": true,
+    "final_score": 62.6,
+    "threshold": 60.0,
+    "price": 0.9983,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 51.0898494720459,
+        "detail": "WEAK(0.53)"
+      },
+      "mtf": {
+        "score": 65.71666666666665,
+        "detail": "5m=20 1h=90 4h=75 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 70,
+        "detail": "POC=1.0070 VAH=1.0165 VAL=1.0023 q=0.95 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 62,
+        "detail": "VWAP=$1.0190 \u043e\u0442\u043a\u043b=-2.03% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(30%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=55% down=45% div=+0.14 POCtr=+0.03 mom=+0.06 \u2192neutral"
+      }
+    },
+    "strong_count": 0
+  },
+  {
+    "ts": "2026-05-26T22:07:37.952331+00:00",
+    "symbol": "ALGO/USDT",
+    "approved": true,
+    "final_score": 74.7,
+    "threshold": 60.0,
+    "price": 0.10894,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.60443806648254,
+        "detail": "GOOD(0.75)"
+      },
+      "mtf": {
+        "score": 31.033333333333328,
+        "detail": "5m=75 1h=5 4h=5 hmm=1 pen=6.3"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=0.1092 VAH=0.1093 VAL=0.1087 q=0.29 fvg\u2191=0 fvg\u2193=0  POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 63,
+        "detail": "VWAP=$0.1115 \u043e\u0442\u043a\u043b=-2.25% \u0442\u0440\u0435\u043d\u0434=flat \u26a1reversion_buy(34%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=30% down=70% div=-0.06 POCtr=-0.01 mom=-0.02 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:07:39.245523+00:00",
+    "symbol": "EGLD/USDT",
+    "approved": true,
+    "final_score": 68.5,
+    "threshold": 58.0,
+    "price": 3.793,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.864110469818115,
+        "detail": "WEAK(0.57)"
+      },
+      "mtf": {
+        "score": 17.65,
+        "detail": "5m=20 1h=5 4h=5 hmm=1 pen=1.3"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=3.7950 VAH=3.8110 VAL=3.7870 q=0.81 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$3.8752 \u043e\u0442\u043a\u043b=-2.12% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=16% down=84% div=-0.30 POCtr=-0.03 mom=-0.11 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:08:13.180534+00:00",
+    "symbol": "ETH/USDT",
+    "approved": true,
+    "final_score": 82.2,
+    "threshold": 55.0,
+    "price": 2071.74,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.92092084884644,
+        "detail": "GOOD(0.76)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=2074.3511 VAH=2075.9141 VAL=2067.3488 q=0.36 fvg\u2191=0 fvg\u2193=0 OF1 POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 74,
+        "detail": "VWAP=$2094.5622 \u043e\u0442\u043a\u043b=-1.09% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(62%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=46% down=54% div=-0.09 POCtr=-0.01 mom=-0.04 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:08:14.349785+00:00",
+    "symbol": "SOL/USDT",
+    "approved": true,
+    "final_score": 64.8,
+    "threshold": 60.0,
+    "price": 83.65,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=83.5194 VAH=83.8701 VAL=83.4705 q=0.49 fvg\u2191=0 fvg\u2193=0  POC\u2191 bullish"
+      },
+      "volume_vwap": {
+        "score": 56,
+        "detail": "VWAP=$84.5389 \u043e\u0442\u043a\u043b=-1.05% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(16%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=42% down=58% div=-0.15 POCtr=-0.00 mom=-0.05 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:08:15.615404+00:00",
+    "symbol": "ADA/USDT",
+    "approved": true,
+    "final_score": 64.9,
+    "threshold": 60.0,
+    "price": 0.2394,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=0.2402 VAH=0.2402 VAL=0.2394 q=0.65 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 57,
+        "detail": "VWAP=$0.2422 \u043e\u0442\u043a\u043b=-1.17% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(18%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=36% down=64% div=-0.17 POCtr=+0.01 mom=-0.06 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:08:17.994315+00:00",
+    "symbol": "DOT/USDT",
+    "approved": true,
+    "final_score": 78.0,
+    "threshold": 58.0,
+    "price": 1.244,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 94.37677204608917,
+        "detail": "GOOD(0.81)"
+      },
+      "mtf": {
+        "score": 37.38333333333333,
+        "detail": "5m=75 1h=20 4h=5 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=1.2480 VAH=1.2560 VAL=1.2460 q=0.46 fvg\u2191=0 fvg\u2193=0  POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$1.2701 \u043e\u0442\u043a\u043b=-2.05% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=36% down=64% div=-0.16 POCtr=-0.00 mom=-0.06 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:08:19.192400+00:00",
+    "symbol": "ROSE/USDT",
+    "approved": true,
+    "final_score": 70.6,
+    "threshold": 60.0,
+    "price": 0.00979,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 100,
+        "detail": "POC=0.0099 VAH=0.0099 VAL=0.0098 q=0.30 fvg\u2191=0 fvg\u2193=0 OB1 ext bullish OF1 POC\u2193  OI\ud83d\udd252(+15)"
+      },
+      "volume_vwap": {
+        "score": 64,
+        "detail": "VWAP=$0.0100 \u043e\u0442\u043a\u043b=-2.37% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(35%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=19% down=81% div=+0.10 POCtr=-0.02 mom=+0.03 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:08:20.778824+00:00",
+    "symbol": "MNT/USDT",
+    "approved": true,
+    "final_score": 74.6,
+    "threshold": 60.0,
+    "price": 0.6366,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.36302852630615,
+        "detail": "GOOD(0.75)"
+      },
+      "mtf": {
+        "score": 24.0,
+        "detail": "5m=20 1h=20 4h=5 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 65,
+        "detail": "POC=0.6377 VAH=0.6380 VAL=0.6345 q=0.62 fvg\u2191=0 fvg\u2193=0  POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 50,
+        "detail": "VWAP=$0.6415 \u043e\u0442\u043a\u043b=-0.77% \u0442\u0440\u0435\u043d\u0434=flat"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=44% down=56% div=-0.16 POCtr=+0.00 mom=-0.06 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:08:22.657250+00:00",
+    "symbol": "XRP/USDT",
+    "approved": true,
+    "final_score": 67.0,
+    "threshold": 60.0,
+    "price": 1.3308,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 54.070448875427246,
+        "detail": "WEAK(0.60)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=1.3289 VAH=1.3327 VAL=1.3288 q=0.60 fvg\u2191=0 fvg\u2193=0 OB2 idm bearish idm bullish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 71,
+        "detail": "VWAP=$1.3428 \u043e\u0442\u043a\u043b=-0.89% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(55%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=38% down=62% div=+0.10 POCtr=-0.01 mom=+0.03 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:08:23.929826+00:00",
+    "symbol": "LINK/USDT",
+    "approved": true,
+    "final_score": 77.6,
+    "threshold": 58.0,
+    "price": 9.359,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.36302852630615,
+        "detail": "GOOD(0.75)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 65,
+        "detail": "POC=9.3680 VAH=9.4110 VAL=9.3531 q=0.95 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 80,
+        "detail": "VWAP=$9.4982 \u043e\u0442\u043a\u043b=-1.47% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(77%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=24% down=76% div=+0.02 POCtr=-0.02 mom=-0.00 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:08:25.402520+00:00",
+    "symbol": "AVAX/USDT",
+    "approved": true,
+    "final_score": 81.2,
+    "threshold": 55.0,
+    "price": 9.134,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 89.92282271385193,
+        "detail": "GOOD(0.66)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=9.1391 VAH=9.1781 VAL=9.1339 q=0.81 fvg\u2191=0 fvg\u2193=0 OB2 idm bullish idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 87,
+        "detail": "VWAP=$9.3083 \u043e\u0442\u043a\u043b=-1.87% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(93%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=14% down=86% div=+0.01 POCtr=-0.02 mom=-0.00 \u2192neutral"
+      }
+    },
+    "strong_count": 3
+  },
+  {
+    "ts": "2026-05-26T22:08:26.636035+00:00",
+    "symbol": "ATOM/USDT",
+    "approved": false,
+    "final_score": 59.0,
+    "threshold": 60.0,
+    "price": 2.191,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 89.0,
+        "detail": "5m=75 1h=75 4h=90 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 55,
+        "detail": "POC=2.2060 VAH=2.2140 VAL=2.1880 q=0.95 fvg\u2191=0 fvg\u2193=0  POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 60,
+        "detail": "VWAP=$2.2300 \u043e\u0442\u043a\u043b=-1.75% \u0442\u0440\u0435\u043d\u0434=flat \u26a1reversion_buy(26%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=71% down=29% div=+0.00 POCtr=-0.10 mom=-0.04 \u2192neutral"
+      }
+    },
+    "strong_count": 0
+  },
+  {
+    "ts": "2026-05-26T22:08:27.904902+00:00",
+    "symbol": "DOGE/USDT",
+    "approved": true,
+    "final_score": 79.6,
+    "threshold": 55.0,
+    "price": 0.10069,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 90.29235243797302,
+        "detail": "GOOD(0.68)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=0.1011 VAH=0.1013 VAL=0.1008 q=0.53 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 57,
+        "detail": "VWAP=$0.1019 \u043e\u0442\u043a\u043b=-1.20% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(18%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=54% down=46% div=-0.28 POCtr=-0.01 mom=-0.10 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:08:29.400245+00:00",
+    "symbol": "NEAR/USDT",
+    "approved": true,
+    "final_score": 79.2,
+    "threshold": 55.0,
+    "price": 2.602,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.99985826015472,
+        "detail": "GOOD(0.77)"
+      },
+      "mtf": {
+        "score": 21.833333333333336,
+        "detail": "5m=20 1h=5 4h=90 hmm=1 pen=25.5"
+      },
+      "rsi_vol_btc": {
+        "score": 45.75,
+        "detail": "rsi=40 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=2.6069 VAH=2.6420 VAL=2.5990 q=0.90 fvg\u2191=0 fvg\u2193=0  POC\u2193 bearish"
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$2.7836 \u043e\u0442\u043a\u043b=-6.52% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 27,
+        "detail": "up=63% down=37% div=-0.70 POCtr=-0.13 mom=-0.29 \u2192bearish"
+      }
+    },
+    "strong_count": 3
+  },
+  {
+    "ts": "2026-05-26T22:08:30.585496+00:00",
+    "symbol": "ARB/USDT",
+    "approved": true,
+    "final_score": 66.5,
+    "threshold": 60.0,
+    "price": 0.10831,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=0.1086 VAH=0.1086 VAL=0.1083 q=1.00 fvg\u2191=0 fvg\u2193=0 OF1 POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 60,
+        "detail": "VWAP=$0.1103 \u043e\u0442\u043a\u043b=-1.83% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(27%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=68% down=32% div=+0.00 POCtr=-0.01 mom=-0.00 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:08:31.846469+00:00",
+    "symbol": "OP/USDT",
+    "approved": true,
+    "final_score": 62.8,
+    "threshold": 60.0,
+    "price": 0.1278,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 50.868000984191895,
+        "detail": "WEAK(0.52)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 45.75,
+        "detail": "rsi=40 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=0.1292 VAH=0.1295 VAL=0.1288 q=0.43 fvg\u2191=0 fvg\u2193=0 OB2 idm bearish idm bearish POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$0.1309 \u043e\u0442\u043a\u043b=-2.40% SPIKE(3.7x) \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=29% down=71% div=-0.47 POCtr=-0.05 \ud83d\udce6acc=88% mom=+0.09 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:08:33.441188+00:00",
+    "symbol": "APT/USDT",
+    "approved": true,
+    "final_score": 80.2,
+    "threshold": 56.0,
+    "price": 0.9675,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 89.79117453098297,
+        "detail": "GOOD(0.66)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 75,
+        "detail": "POC=0.9654 VAH=0.9738 VAL=0.9651 q=0.47 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish OF1 POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$0.9878 \u043e\u0442\u043a\u043b=-2.05% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=40% down=60% div=-0.19 POCtr=-0.03 mom=-0.08 \u2192neutral"
+      }
+    },
+    "strong_count": 3
+  },
+  {
+    "ts": "2026-05-26T22:08:34.607474+00:00",
+    "symbol": "FIL/USDT",
+    "approved": true,
+    "final_score": 62.6,
+    "threshold": 60.0,
+    "price": 0.9983,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 51.0898494720459,
+        "detail": "WEAK(0.53)"
+      },
+      "mtf": {
+        "score": 65.71666666666665,
+        "detail": "5m=20 1h=90 4h=75 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 70,
+        "detail": "POC=1.0070 VAH=1.0165 VAL=1.0023 q=0.95 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 62,
+        "detail": "VWAP=$1.0190 \u043e\u0442\u043a\u043b=-2.03% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(30%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=55% down=45% div=+0.14 POCtr=+0.03 mom=+0.06 \u2192neutral"
+      }
+    },
+    "strong_count": 0
+  },
+  {
+    "ts": "2026-05-26T22:08:35.901570+00:00",
+    "symbol": "ALGO/USDT",
+    "approved": true,
+    "final_score": 74.7,
+    "threshold": 60.0,
+    "price": 0.10894,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.60443806648254,
+        "detail": "GOOD(0.75)"
+      },
+      "mtf": {
+        "score": 31.033333333333328,
+        "detail": "5m=75 1h=5 4h=5 hmm=1 pen=6.3"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=0.1092 VAH=0.1093 VAL=0.1087 q=0.29 fvg\u2191=0 fvg\u2193=0  POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 63,
+        "detail": "VWAP=$0.1115 \u043e\u0442\u043a\u043b=-2.25% \u0442\u0440\u0435\u043d\u0434=flat \u26a1reversion_buy(34%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=30% down=70% div=-0.06 POCtr=-0.01 mom=-0.02 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:08:37.426429+00:00",
+    "symbol": "EGLD/USDT",
+    "approved": true,
+    "final_score": 68.5,
+    "threshold": 58.0,
+    "price": 3.793,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.864110469818115,
+        "detail": "WEAK(0.57)"
+      },
+      "mtf": {
+        "score": 17.65,
+        "detail": "5m=20 1h=5 4h=5 hmm=1 pen=1.3"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=3.7950 VAH=3.8110 VAL=3.7870 q=0.81 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$3.8752 \u043e\u0442\u043a\u043b=-2.12% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=16% down=84% div=-0.30 POCtr=-0.03 mom=-0.11 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:09:26.943138+00:00",
+    "symbol": "ETH/USDT",
+    "approved": true,
+    "final_score": 82.6,
+    "threshold": 55.0,
+    "price": 2072.53,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 94.0194821357727,
+        "detail": "GOOD(0.80)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=2074.3511 VAH=2075.7890 VAL=2067.3488 q=0.36 fvg\u2191=0 fvg\u2193=0 OF1 POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 74,
+        "detail": "VWAP=$2094.5362 \u043e\u0442\u043a\u043b=-1.05% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(61%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=46% down=54% div=-0.07 POCtr=-0.01 mom=-0.03 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:09:28.228722+00:00",
+    "symbol": "SOL/USDT",
+    "approved": false,
+    "final_score": 59.7,
+    "threshold": 60.0,
+    "price": 83.71,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=83.5194 VAH=83.8701 VAL=83.4705 q=0.51 fvg\u2191=0 fvg\u2193=0  POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 55,
+        "detail": "VWAP=$84.5379 \u043e\u0442\u043a\u043b=-0.98% \u0442\u0440\u0435\u043d\u0434=flat \u26a1reversion_buy(15%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=59% down=41% div=-0.11 POCtr=-0.00 mom=-0.04 \u2192neutral"
+      }
+    },
+    "strong_count": 0
+  },
+  {
+    "ts": "2026-05-26T22:09:29.698185+00:00",
+    "symbol": "ADA/USDT",
+    "approved": true,
+    "final_score": 78.5,
+    "threshold": 55.0,
+    "price": 0.2396,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 91.0774278640747,
+        "detail": "GOOD(0.70)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=0.2402 VAH=0.2402 VAL=0.2394 q=0.65 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 56,
+        "detail": "VWAP=$0.2422 \u043e\u0442\u043a\u043b=-1.09% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(16%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=36% down=64% div=-0.12 POCtr=+0.01 mom=-0.04 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:09:30.885790+00:00",
+    "symbol": "DOT/USDT",
+    "approved": true,
+    "final_score": 77.6,
+    "threshold": 58.0,
+    "price": 1.247,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 94.28813397884369,
+        "detail": "GOOD(0.81)"
+      },
+      "mtf": {
+        "score": 37.38333333333333,
+        "detail": "5m=75 1h=20 4h=5 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=1.2480 VAH=1.2510 VAL=1.2450 q=0.43 fvg\u2191=0 fvg\u2193=0  POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 86,
+        "detail": "VWAP=$1.2700 \u043e\u0442\u043a\u043b=-1.81% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(91%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=36% down=64% div=+0.00 POCtr=+0.00 mom=+0.00 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:09:32.115587+00:00",
+    "symbol": "ROSE/USDT",
+    "approved": true,
+    "final_score": 70.6,
+    "threshold": 60.0,
+    "price": 0.00979,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 100,
+        "detail": "POC=0.0099 VAH=0.0099 VAL=0.0098 q=0.30 fvg\u2191=0 fvg\u2193=0 OB1 ext bullish OF1 POC\u2193  OI\ud83d\udd252(+15)"
+      },
+      "volume_vwap": {
+        "score": 64,
+        "detail": "VWAP=$0.0100 \u043e\u0442\u043a\u043b=-2.37% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(35%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=19% down=81% div=+0.10 POCtr=-0.02 mom=+0.03 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:09:33.707999+00:00",
+    "symbol": "MNT/USDT",
+    "approved": true,
+    "final_score": 73.3,
+    "threshold": 60.0,
+    "price": 0.6369,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.36302852630615,
+        "detail": "GOOD(0.75)"
+      },
+      "mtf": {
+        "score": 24.0,
+        "detail": "5m=20 1h=20 4h=5 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=0.6377 VAH=0.6380 VAL=0.6345 q=0.60 fvg\u2191=0 fvg\u2193=0  POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 50,
+        "detail": "VWAP=$0.6415 \u043e\u0442\u043a\u043b=-0.72% \u0442\u0440\u0435\u043d\u0434=flat"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=44% down=56% div=-0.14 POCtr=+0.00 mom=-0.05 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:09:34.871905+00:00",
+    "symbol": "XRP/USDT",
+    "approved": true,
+    "final_score": 80.9,
+    "threshold": 55.0,
+    "price": 1.3314,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 90.17818689346313,
+        "detail": "GOOD(0.67)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=1.3289 VAH=1.3327 VAL=1.3288 q=0.62 fvg\u2191=0 fvg\u2193=0 OB2 idm bearish idm bullish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 71,
+        "detail": "VWAP=$1.3427 \u043e\u0442\u043a\u043b=-0.84% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(53%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=38% down=62% div=+0.11 POCtr=-0.01 mom=+0.04 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:09:36.118670+00:00",
+    "symbol": "LINK/USDT",
+    "approved": true,
+    "final_score": 80.0,
+    "threshold": 56.0,
+    "price": 9.371,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.83746302127838,
+        "detail": "GOOD(0.76)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 75,
+        "detail": "POC=9.3680 VAH=9.4110 VAL=9.3531 q=0.95 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 78,
+        "detail": "VWAP=$9.4980 \u043e\u0442\u043a\u043b=-1.34% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(72%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=24% down=76% div=+0.03 POCtr=-0.02 mom=+0.00 \u2192neutral"
+      }
+    },
+    "strong_count": 3
+  },
+  {
+    "ts": "2026-05-26T22:09:37.729048+00:00",
+    "symbol": "AVAX/USDT",
+    "approved": true,
+    "final_score": 67.0,
+    "threshold": 58.0,
+    "price": 9.141,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 49.86278414726257,
+        "detail": "WEAK(0.50)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=9.1391 VAH=9.1781 VAL=9.1349 q=0.78 fvg\u2191=0 fvg\u2193=0 OB2 idm bullish idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 85,
+        "detail": "VWAP=$9.3078 \u043e\u0442\u043a\u043b=-1.79% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(90%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=13% down=87% div=+0.04 POCtr=-0.01 mom=+0.01 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:09:38.911641+00:00",
+    "symbol": "ATOM/USDT",
+    "approved": true,
+    "final_score": 60.2,
+    "threshold": 60.0,
+    "price": 2.194,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 55.98410606384277,
+        "detail": "WEAK(0.65)"
+      },
+      "mtf": {
+        "score": 89.0,
+        "detail": "5m=75 1h=75 4h=90 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 55,
+        "detail": "POC=2.2060 VAH=2.2140 VAL=2.1880 q=0.95 fvg\u2191=0 fvg\u2193=0  POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 59,
+        "detail": "VWAP=$2.2300 \u043e\u0442\u043a\u043b=-1.61% \u0442\u0440\u0435\u043d\u0434=flat \u26a1reversion_buy(24%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=71% down=29% div=-0.20 POCtr=-0.10 mom=-0.11 \u2192neutral"
+      }
+    },
+    "strong_count": 0
+  },
+  {
+    "ts": "2026-05-26T22:09:40.160927+00:00",
+    "symbol": "DOGE/USDT",
+    "approved": true,
+    "final_score": 78.2,
+    "threshold": 55.0,
+    "price": 0.10082,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 90.29235243797302,
+        "detail": "GOOD(0.68)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=0.1011 VAH=0.1013 VAL=0.1008 q=0.53 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2193 bearish"
+      },
+      "volume_vwap": {
+        "score": 56,
+        "detail": "VWAP=$0.1019 \u043e\u0442\u043a\u043b=-1.08% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(16%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=54% down=46% div=-0.21 POCtr=-0.01 mom=-0.08 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:09:41.760548+00:00",
+    "symbol": "NEAR/USDT",
+    "approved": true,
+    "final_score": 74.8,
+    "threshold": 58.0,
+    "price": 2.613,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.36302852630615,
+        "detail": "GOOD(0.75)"
+      },
+      "mtf": {
+        "score": 21.833333333333336,
+        "detail": "5m=20 1h=5 4h=90 hmm=1 pen=25.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 65,
+        "detail": "POC=2.6069 VAH=2.6420 VAL=2.5990 q=0.92 fvg\u2191=0 fvg\u2193=0  POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$2.7835 \u043e\u0442\u043a\u043b=-6.13% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 31,
+        "detail": "up=63% down=37% div=-0.49 POCtr=-0.12 mom=-0.22 \u2192bearish"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:09:42.961721+00:00",
+    "symbol": "ARB/USDT",
+    "approved": true,
+    "final_score": 66.5,
+    "threshold": 60.0,
+    "price": 0.1084,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=0.1086 VAH=0.1086 VAL=0.1083 q=1.00 fvg\u2191=0 fvg\u2193=0 OF1 POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 60,
+        "detail": "VWAP=$0.1103 \u043e\u0442\u043a\u043b=-1.75% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(26%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=68% down=32% div=+0.00 POCtr=-0.01 mom=-0.00 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:09:44.191408+00:00",
+    "symbol": "OP/USDT",
+    "approved": true,
+    "final_score": 62.8,
+    "threshold": 60.0,
+    "price": 0.1278,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 50.868000984191895,
+        "detail": "WEAK(0.52)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 45.75,
+        "detail": "rsi=40 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=0.1292 VAH=0.1295 VAL=0.1288 q=0.43 fvg\u2191=0 fvg\u2193=0 OB2 idm bearish idm bearish POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$0.1309 \u043e\u0442\u043a\u043b=-2.39% SPIKE(4.3x) \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=30% down=70% div=-0.47 POCtr=-0.05 \ud83d\udce6acc=100% mom=+0.12 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:09:45.819437+00:00",
+    "symbol": "APT/USDT",
+    "approved": true,
+    "final_score": 76.6,
+    "threshold": 58.0,
+    "price": 0.968,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 90.67736208438873,
+        "detail": "GOOD(0.69)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=0.9654 VAH=0.9738 VAL=0.9651 q=0.46 fvg\u2191=0 fvg\u2193=0 OF1 POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 89,
+        "detail": "VWAP=$0.9878 \u043e\u0442\u043a\u043b=-2.00% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(98%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=48% down=52% div=-0.16 POCtr=-0.03 mom=-0.07 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:09:47.027100+00:00",
+    "symbol": "FIL/USDT",
+    "approved": true,
+    "final_score": 65.0,
+    "threshold": 60.0,
+    "price": 1.0002,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 51.0898494720459,
+        "detail": "WEAK(0.53)"
+      },
+      "mtf": {
+        "score": 69.36666666666667,
+        "detail": "5m=20 1h=90 4h=90 hmm=1 pen=6.3"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=1.0070 VAH=1.0165 VAL=1.0023 q=0.93 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 61,
+        "detail": "VWAP=$1.0190 \u043e\u0442\u043a\u043b=-1.84% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(28%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=75% down=25% div=+0.14 POCtr=+0.03 mom=+0.06 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:09:48.290744+00:00",
+    "symbol": "ALGO/USDT",
+    "approved": true,
+    "final_score": 74.7,
+    "threshold": 60.0,
+    "price": 0.10889,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.60443806648254,
+        "detail": "GOOD(0.75)"
+      },
+      "mtf": {
+        "score": 31.033333333333328,
+        "detail": "5m=75 1h=5 4h=5 hmm=1 pen=6.3"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=0.1092 VAH=0.1093 VAL=0.1087 q=0.29 fvg\u2191=0 fvg\u2193=0  POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 63,
+        "detail": "VWAP=$0.1115 \u043e\u0442\u043a\u043b=-2.30% \u0442\u0440\u0435\u043d\u0434=flat \u26a1reversion_buy(34%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=30% down=70% div=-0.08 POCtr=-0.01 mom=-0.03 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:09:49.829405+00:00",
+    "symbol": "EGLD/USDT",
+    "approved": true,
+    "final_score": 68.5,
+    "threshold": 58.0,
+    "price": 3.791,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.864110469818115,
+        "detail": "WEAK(0.57)"
+      },
+      "mtf": {
+        "score": 17.65,
+        "detail": "5m=20 1h=5 4h=5 hmm=1 pen=1.3"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=3.7950 VAH=3.8110 VAL=3.7870 q=0.78 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$3.8751 \u043e\u0442\u043a\u043b=-2.17% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=16% down=84% div=-0.33 POCtr=-0.03 mom=-0.12 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:10:23.960821+00:00",
+    "symbol": "ETH/USDT",
+    "approved": true,
+    "final_score": 80.3,
+    "threshold": 55.0,
+    "price": 2072.32,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.60443806648254,
+        "detail": "GOOD(0.75)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=2074.3511 VAH=2079.0401 VAL=2072.1629 q=0.37 fvg\u2191=0 fvg\u2193=0 OF1 POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 56,
+        "detail": "VWAP=$2094.5362 \u043e\u0442\u043a\u043b=-1.06% \u0442\u0440\u0435\u043d\u0434=flat \u26a1reversion_buy(16%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=61% down=39% div=+0.00 POCtr=-0.01 mom=-0.00 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:10:25.433348+00:00",
+    "symbol": "SOL/USDT",
+    "approved": false,
+    "final_score": 59.7,
+    "threshold": 60.0,
+    "price": 83.7,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 9
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=83.5194 VAH=83.8894 VAL=83.4705 q=0.54 fvg\u2191=0 fvg\u2193=0  POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 55,
+        "detail": "VWAP=$84.5379 \u043e\u0442\u043a\u043b=-0.99% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(15%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=45% down=55% div=-0.11 POCtr=+0.01 mom=-0.04 \u2192neutral"
+      }
+    },
+    "strong_count": 0
+  },
+  {
+    "ts": "2026-05-26T22:10:27.779413+00:00",
+    "symbol": "ADA/USDT",
+    "approved": true,
+    "final_score": 77.4,
+    "threshold": 55.0,
+    "price": 0.2396,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 90.94022572040558,
+        "detail": "GOOD(0.70)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=0.2402 VAH=0.2405 VAL=0.2396 q=0.61 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish POC\u2193 bullish"
+      },
+      "volume_vwap": {
+        "score": 56,
+        "detail": "VWAP=$0.2422 \u043e\u0442\u043a\u043b=-1.09% \u0442\u0440\u0435\u043d\u0434=flat \u26a1reversion_buy(16%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=36% down=64% div=-0.12 POCtr=+0.02 mom=-0.04 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:10:29.110789+00:00",
+    "symbol": "DOT/USDT",
+    "approved": true,
+    "final_score": 85.4,
+    "threshold": 55.0,
+    "price": 1.246,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 94.0194821357727,
+        "detail": "GOOD(0.80)"
+      },
+      "mtf": {
+        "score": 37.38333333333333,
+        "detail": "5m=75 1h=20 4h=5 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 95,
+        "detail": "POC=1.2480 VAH=1.2560 VAL=1.2460 q=0.41 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 87,
+        "detail": "VWAP=$1.2700 \u043e\u0442\u043a\u043b=-1.89% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(94%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=35% down=65% div=-0.08 POCtr=+0.01 mom=-0.02 \u2192neutral"
+      }
+    },
+    "strong_count": 3
+  },
+  {
+    "ts": "2026-05-26T22:10:30.569022+00:00",
+    "symbol": "ROSE/USDT",
+    "approved": true,
+    "final_score": 70.5,
+    "threshold": 60.0,
+    "price": 0.0098,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 54.73524332046509,
+        "detail": "WEAK(0.62)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 100,
+        "detail": "POC=0.0099 VAH=0.0099 VAL=0.0098 q=0.30 fvg\u2191=0 fvg\u2193=0 OB1 ext bullish OF1 POC\u2193  OI\ud83d\udd252(+15)"
+      },
+      "volume_vwap": {
+        "score": 63,
+        "detail": "VWAP=$0.0100 \u043e\u0442\u043a\u043b=-2.27% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(34%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=45% down=55% div=+0.13 POCtr=-0.02 mom=+0.04 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:10:31.710295+00:00",
+    "symbol": "MNT/USDT",
+    "approved": true,
+    "final_score": 74.9,
+    "threshold": 60.0,
+    "price": 0.6368,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.55251586437225,
+        "detail": "GOOD(0.75)"
+      },
+      "mtf": {
+        "score": 24.0,
+        "detail": "5m=20 1h=20 4h=5 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 70,
+        "detail": "POC=0.6377 VAH=0.6392 VAL=0.6371 q=0.60 fvg\u2191=0 fvg\u2193=0  POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 50,
+        "detail": "VWAP=$0.6415 \u043e\u0442\u043a\u043b=-0.74% \u0442\u0440\u0435\u043d\u0434=falling"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=44% down=56% div=-0.12 POCtr=+0.01 mom=-0.04 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:10:32.958703+00:00",
+    "symbol": "XRP/USDT",
+    "approved": true,
+    "final_score": 66.1,
+    "threshold": 60.0,
+    "price": 1.3306,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 54.0871000289917,
+        "detail": "WEAK(0.60)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=1.3289 VAH=1.3326 VAL=1.3288 q=0.61 fvg\u2191=0 fvg\u2193=0 OB2 idm bearish idm bullish POC\u2191 bullish"
+      },
+      "volume_vwap": {
+        "score": 72,
+        "detail": "VWAP=$1.3427 \u043e\u0442\u043a\u043b=-0.90% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(55%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=40% down=60% div=+0.08 POCtr=+0.01 mom=+0.03 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:10:34.592339+00:00",
+    "symbol": "LINK/USDT",
+    "approved": true,
+    "final_score": 65.6,
+    "threshold": 58.0,
+    "price": 9.368,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 54.12750959396362,
+        "detail": "WEAK(0.60)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 75,
+        "detail": "POC=9.3680 VAH=9.4110 VAL=9.3531 q=0.96 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 79,
+        "detail": "VWAP=$9.4980 \u043e\u0442\u043a\u043b=-1.37% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(73%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=26% down=74% div=-0.17 POCtr=+0.00 mom=-0.06 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:10:35.752227+00:00",
+    "symbol": "AVAX/USDT",
+    "approved": true,
+    "final_score": 80.0,
+    "threshold": 55.0,
+    "price": 9.136,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 89.62803542613983,
+        "detail": "GOOD(0.65)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=9.1391 VAH=9.1781 VAL=9.1391 q=0.81 fvg\u2191=0 fvg\u2193=0 OB2 idm bullish idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 86,
+        "detail": "VWAP=$9.3078 \u043e\u0442\u043a\u043b=-1.85% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(92%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=16% down=84% div=+0.02 POCtr=+0.00 mom=+0.01 \u2192neutral"
+      }
+    },
+    "strong_count": 3
+  },
+  {
+    "ts": "2026-05-26T22:10:36.964815+00:00",
+    "symbol": "ATOM/USDT",
+    "approved": true,
+    "final_score": 66.7,
+    "threshold": 58.0,
+    "price": 2.194,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.50539302825928,
+        "detail": "WEAK(0.56)"
+      },
+      "mtf": {
+        "score": 89.0,
+        "detail": "5m=75 1h=75 4h=90 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=2.2060 VAH=2.2140 VAL=2.1880 q=0.95 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 83,
+        "detail": "VWAP=$2.2300 \u043e\u0442\u043a\u043b=-1.61% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(83%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=66% down=34% div=-0.26 POCtr=-0.07 mom=-0.11 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:10:38.581867+00:00",
+    "symbol": "DOGE/USDT",
+    "approved": true,
+    "final_score": 63.5,
+    "threshold": 60.0,
+    "price": 0.1008,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 51.0898494720459,
+        "detail": "WEAK(0.53)"
+      },
+      "mtf": {
+        "score": 29.0,
+        "detail": "5m=20 1h=20 4h=20 hmm=1 pen=0.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=0.1011 VAH=0.1013 VAL=0.1008 q=0.53 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 56,
+        "detail": "VWAP=$0.1019 \u043e\u0442\u043a\u043b=-1.09% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(16%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=58% down=42% div=-0.18 POCtr=+0.00 mom=-0.06 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:10:39.762366+00:00",
+    "symbol": "NEAR/USDT",
+    "approved": true,
+    "final_score": 78.2,
+    "threshold": 55.0,
+    "price": 2.611,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.36302852630615,
+        "detail": "GOOD(0.75)"
+      },
+      "mtf": {
+        "score": 21.833333333333336,
+        "detail": "5m=20 1h=5 4h=90 hmm=1 pen=25.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=2.6070 VAH=2.6421 VAL=2.5990 q=0.95 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2193 bearish"
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$2.7835 \u043e\u0442\u043a\u043b=-6.20% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 28,
+        "detail": "up=43% down=57% div=-0.64 POCtr=-0.13 mom=-0.27 \u2192bearish"
+      }
+    },
+    "strong_count": 3
+  },
+  {
+    "ts": "2026-05-26T22:10:41.015370+00:00",
+    "symbol": "ARB/USDT",
+    "approved": true,
+    "final_score": 65.5,
+    "threshold": 60.0,
+    "price": 0.10834,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.08826780319214,
+        "detail": "WEAK(0.55)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 85,
+        "detail": "POC=0.1086 VAH=0.1086 VAL=0.1083 q=1.00 fvg\u2191=0 fvg\u2193=0 OF1 POC\u2193 bullish"
+      },
+      "volume_vwap": {
+        "score": 60,
+        "detail": "VWAP=$0.1103 \u043e\u0442\u043a\u043b=-1.80% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(27%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=72% down=28% div=+0.00 POCtr=+0.04 mom=+0.01 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:10:42.590456+00:00",
+    "symbol": "OP/USDT",
+    "approved": true,
+    "final_score": 60.0,
+    "threshold": 60.0,
+    "price": 0.1278,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 55.46111583709717,
+        "detail": "WEAK(0.64)"
+      },
+      "mtf": {
+        "score": 30.833333333333336,
+        "detail": "5m=20 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=0.1292 VAH=0.1295 VAL=0.1286 q=0.46 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$0.1309 \u043e\u0442\u043a\u043b=-2.39% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 33,
+        "detail": "up=30% down=70% div=-0.43 POCtr=-0.05 mom=-0.17 \u2192bearish"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:10:43.808436+00:00",
+    "symbol": "APT/USDT",
+    "approved": true,
+    "final_score": 67.7,
+    "threshold": 58.0,
+    "price": 0.968,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 53.84063005447388,
+        "detail": "WEAK(0.60)"
+      },
+      "mtf": {
+        "score": 49.16666666666666,
+        "detail": "5m=75 1h=20 4h=75 hmm=1 pen=16.5"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=0.9654 VAH=0.9738 VAL=0.9651 q=0.46 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish OF1 POC\u2193 bullish"
+      },
+      "volume_vwap": {
+        "score": 89,
+        "detail": "VWAP=$0.9878 \u043e\u0442\u043a\u043b=-2.00% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(98%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=40% down=60% div=-0.18 POCtr=-0.03 mom=-0.07 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:10:45.091422+00:00",
+    "symbol": "FIL/USDT",
+    "approved": true,
+    "final_score": 63.9,
+    "threshold": 60.0,
+    "price": 1.0003,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 51.0898494720459,
+        "detail": "WEAK(0.53)"
+      },
+      "mtf": {
+        "score": 69.36666666666667,
+        "detail": "5m=20 1h=90 4h=90 hmm=1 pen=6.3"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=1.0070 VAH=1.0165 VAL=1.0023 q=0.92 fvg\u2191=0 fvg\u2193=0 OB1 idm bearish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 60,
+        "detail": "VWAP=$1.0190 \u043e\u0442\u043a\u043b=-1.83% \u0442\u0440\u0435\u043d\u0434=falling \u26a1reversion_buy(27%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=76% down=24% div=+0.10 POCtr=+0.04 mom=+0.05 \u2192neutral"
+      }
+    },
+    "strong_count": 1
+  },
+  {
+    "ts": "2026-05-26T22:10:46.613755+00:00",
+    "symbol": "ALGO/USDT",
+    "approved": true,
+    "final_score": 76.6,
+    "threshold": 58.0,
+    "price": 0.10889,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 93.10083627700806,
+        "detail": "GOOD(0.77)"
+      },
+      "mtf": {
+        "score": 31.033333333333328,
+        "detail": "5m=75 1h=5 4h=5 hmm=1 pen=6.3"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 60,
+        "detail": "POC=0.1092 VAH=0.1093 VAL=0.1087 q=0.30 fvg\u2191=0 fvg\u2193=0  POC\u2193 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$0.1115 \u043e\u0442\u043a\u043b=-2.30% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=27% down=73% div=+0.00 POCtr=-0.00 mom=-0.00 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:10:47.795687+00:00",
+    "symbol": "EGLD/USDT",
+    "approved": true,
+    "final_score": 67.5,
+    "threshold": 58.0,
+    "price": 3.789,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 52.864110469818115,
+        "detail": "WEAK(0.57)"
+      },
+      "mtf": {
+        "score": 17.65,
+        "detail": "5m=20 1h=5 4h=5 hmm=1 pen=1.3"
+      },
+      "rsi_vol_btc": {
+        "score": 78.75,
+        "detail": "rsi=100 btc=55 vol=50"
+      },
+      "liquidity": {
+        "score": 80,
+        "detail": "POC=3.7950 VAH=3.8110 VAL=3.7910 q=0.80 fvg\u2191=0 fvg\u2193=0 OB1 idm bullish POC\u2191 "
+      },
+      "volume_vwap": {
+        "score": 90,
+        "detail": "VWAP=$3.8751 \u043e\u0442\u043a\u043b=-2.22% \u0442\u0440\u0435\u043d\u0434=rising \u26a1reversion_buy(100%)"
+      },
+      "vsa": {
+        "score": 50,
+        "detail": "up=15% down=85% div=-0.33 POCtr=-0.02 mom=-0.12 \u2192neutral"
+      }
+    },
+    "strong_count": 2
+  },
+  {
+    "ts": "2026-05-26T22:11:33.108364+00:00",
+    "symbol": "ETH/USDT",
+    "approved": true,
+    "final_score": 76.9,
+    "threshold": 58.0,
+    "price": 2070.68,
+    "weights": {
+      "ml_v2": 0.1,
+      "advisor": 0.35,
+      "mtf": 0.0,
+      "rsi_vol_btc": 0.0,
+      "liquidity": 0.25,
+      "volume_vwap": 0.1,
+      "vsa": 0.2
+    },
+    "bonus": {
+      "price": 0,
+      "reversal": 0,
+      "btc": 8
+    },
+    "votes": {
+      "ml_v2": {
+        "score": 20,
+        "detail": "SKIP(prob=0.50)"
+      },
+      "advisor": {
+        "score": 92.92092084884644,
+        "detail": "GOOD(0.76)"
+      },
+      "mtf": {
+        "score": 42.38333333333333,
+        "detail": "5m=75 1h=20 4h=20 hmm=1 pen=5.0"
+      },
+      "rsi_vol_btc": {
+        "score": 62.25,
+        "detail": "rsi=70 btc=55 vol=50"
+      },
+      "liquidity": {
+        

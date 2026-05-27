@@ -162,10 +162,23 @@ def add_trade(symbol: str, side: str, price: float, quantity: float,
                 return existing[0]
 
         _ts = ts or datetime.now(timezone.utc).isoformat()
+        _exit_ts = _ts  # сохраняем реальное время выхода
 
         entry_price = price if side == 'buy' else None
         exit_price = price if side == 'sell' else None
         status = 'open' if side == 'buy' else 'closed'
+
+        # 🩹 Для sell находим entry_price/entry_time из buy-записи (партиция trades_2026_05 NOT NULL)
+        if side == 'sell' and entry_price is None:
+            try:
+                cur.execute("SELECT entry_price, entry_time FROM trades WHERE symbol=%s AND side='long' AND entry_price IS NOT NULL ORDER BY id DESC LIMIT 1", (symbol,))
+                row = cur.fetchone()
+                if row:
+                    entry_price = float(row[0]) if hasattr(row[0], 'item') else float(row[0])
+                    if len(row) > 1 and row[1]:
+                        _ts = str(row[1])
+            except Exception:
+                entry_price = 0.0
 
         notes_val = None
         if order_id or exchange_id:
@@ -193,8 +206,8 @@ def add_trade(symbol: str, side: str, price: float, quantity: float,
             RETURNING id
         """, (
             symbol, _convert_side(side), status,
-            entry_price, quantity, _ts if side == 'buy' else None,
-            exit_price, quantity, _ts if side == 'sell' else None,
+            entry_price, quantity, _ts,
+            exit_price, quantity, _exit_ts if side == 'sell' else None,
             pnl, pnl_pct if pnl_pct else None,
             notes_val,
         ))
@@ -793,6 +806,84 @@ def position_exists(symbol: str) -> bool:
             (symbol,))
         return cur.fetchone()[0] > 0
     return _with_conn(_get)
+
+
+def update_pos_meta(symbol: str, meta: dict) -> None:
+    """Сохраняет мета-данные открытой позиции (SL/TP/пик/трейлинг и т.д.)"""
+    def _upd(conn):
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE trades SET pos_meta = %s::jsonb, updated_at = NOW() WHERE symbol=%s AND status='open'",
+            (json.dumps(meta), symbol))
+        conn.commit()
+    _with_conn(_upd)
+
+
+def save_all_positions(positions: dict) -> None:
+    """Пакетное сохранение всех открытых позиций с мета-данными."""
+    def _save(conn):
+        cur = conn.cursor()
+        for symbol, pos in positions.items():
+            meta = {
+                'max_profit': pos.get('max_profit', 0),
+                '_highest_price': pos.get('_highest_price', 0),
+                '_created_at': pos.get('_created_at', 0),
+                '_sl_price': pos.get('_sl_price'),
+                '_tp_price': pos.get('_tp_price'),
+                '_trail_act': pos.get('_trail_act'),
+                '_trail_dist': pos.get('_trail_dist'),
+                '_max_hold_h': pos.get('_max_hold_h'),
+                '_early_trail_peak': pos.get('_early_trail_peak'),
+                'smart_exit_count': pos.get('smart_exit_count', 0),
+                'entry_time': pos.get('entry_time', ''),
+                'entry_price': pos.get('entry_price', 0),
+                'quantity': pos.get('quantity', 0),
+            }
+            cur.execute(
+                "UPDATE trades SET pos_meta = %s::jsonb, updated_at = NOW() WHERE symbol=%s AND status='open'",
+                (json.dumps(meta), symbol))
+        conn.commit()
+    _with_conn(_save)
+
+
+def load_open_positions() -> dict:
+    """Загружает все открытые позиции с полными мета-данными из pos_meta."""
+    def _load(conn):
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT symbol, pos_meta, entry_price, entry_qty, entry_time FROM trades WHERE status='open'")
+        result = {}
+        for r in cur.fetchall():
+            symbol = r[0]
+            meta_raw = r[1] or {}
+            if isinstance(meta_raw, str):
+                meta = json.loads(meta_raw)
+            else:
+                meta = meta_raw
+            entry_price = float(r[2]) if r[2] else (meta.get('entry_price') or 0)
+            quantity = float(r[3]) if r[3] else (meta.get('quantity') or 0)
+            entry_time = meta.get('entry_time', str(r[4]) if r[4] else '')
+            position = {
+                'quantity': quantity,
+                'entry_price': entry_price,
+                'entry_time': entry_time,
+                'side': 'long',
+                'max_profit': meta.get('max_profit', 0),
+                '_highest_price': meta.get('_highest_price', entry_price),
+                '_created_at': meta.get('_created_at', time.time()),
+                '_sl_price': meta.get('_sl_price'),
+                '_tp_price': meta.get('_tp_price'),
+                '_trail_act': meta.get('_trail_act'),
+                '_trail_dist': meta.get('_trail_dist'),
+                '_max_hold_h': meta.get('_max_hold_h'),
+                '_early_trail_peak': meta.get('_early_trail_peak'),
+                'smart_exit_count': meta.get('smart_exit_count', 0),
+            }
+            # Очищаем None значения (не перезаписываем конфиг умолчаниями)
+            position = {k: v for k, v in position.items() if v is not None}
+            result[symbol] = position
+        return result
+    return _with_conn(_load)
 
 
 def get_db_stats() -> dict:

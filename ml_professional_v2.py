@@ -16,6 +16,7 @@ ML-PRO v2 — Профессиональный ML-советник для вхо
 import json
 import os
 import pickle
+import time
 import logging
 import numpy as np
 from datetime import datetime
@@ -26,6 +27,11 @@ log = logging.getLogger("ML_PRO_V2")
 SKIP_THRESHOLD = 0.45  # стандартный, может меняться HMM
 BUY_THRESHOLD = 0.55   # стандартный, может меняться HMM
 MIN_TRAIN_SAMPLES = 50
+
+# Константы для дообучения 27f модели
+RETRAIN_INTERVAL_27F = 3600       # раз в час
+MIN_SAMPLES_27F = 50              # минимум примеров для ретрейна
+MIN_BOTH_CLASSES_27F = 10         # минимум каждого класса
 
 # HMM-режимы (инициализируем лениво)
 _regime = None
@@ -406,6 +412,13 @@ class MLProfessionalV2:
         self.is_27f = False     # Флаг: 27-признаковая модель?
         self.model_path = model_path or os.path.join(os.path.dirname(__file__), "models", "ml_pro_v2.pkl")
 
+        # 🧠 Буфер для дообучения на реальных сделках
+        self._last_feature_vector = None      # последний вектор признаков (27f)
+        self._last_feature_symbol = None      # символ последнего вектора
+        self._entry_buffer = {}               # {symbol: {'features': np.array, 'ts': float}}
+        self._training_buffer = []            # [(features, label, symbol, ts)]
+        self._last_retrain_27f = 0            # timestamp последнего ретрейна
+
         # 1. Пробуем 25-признаковую мультиТФ модель (приоритет)
         v27f = os.path.join(os.path.dirname(__file__), "models", "ml_pro_v2_27f.pkl")
         if os.path.exists(v27f):
@@ -540,6 +553,10 @@ class MLProfessionalV2:
                 "hour": int(X[-1, 24]),
                 "mom24": round(float(X[-1, 18]), 2),
             }
+            # 🧠 Сохраняем вектор признаков для возможного ретрейна
+            self._last_feature_vector = X[-1].copy()
+            self._last_feature_symbol = symbol
+
             return decision, prob, features
 
         except Exception as e:
@@ -609,7 +626,105 @@ class MLProfessionalV2:
             return float(prob[0])
         return float(prob)
 
-    # ── Обучение ──────────────────────────────────────────────────────────
+    # ── Дообучение 27f модели на реальных сделках ────────────────────────────
+
+    def store_entry_features(self, symbol: str):
+        """Сохранить признаки входа для трейдера."""
+        if self._last_feature_vector is not None and self._last_feature_symbol == symbol:
+            self._entry_buffer[symbol] = {
+                'features': self._last_feature_vector.copy(),
+                'ts': time.time()
+            }
+            log.info(f"[ML-v2] 📝 {symbol}: сохранены признаки входа (27f)")
+
+    def record_outcome(self, symbol: str, pnl_pct: float):
+        """Записать результат сделки для обучения."""
+        entry = self._entry_buffer.pop(symbol, None)
+        if entry is None:
+            log.debug(f"[ML-v2] {symbol}: признаки входа не найдены")
+            return
+        # Успех: PnL > 0 (даже +0.1% — профит)
+        label = 1.0 if pnl_pct > 0 else 0.0
+        self._training_buffer.append((entry['features'], label, symbol, entry['ts']))
+        n = len(self._training_buffer)
+        good = sum(1 for _, l, _, _ in self._training_buffer if l > 0.5)
+        bad = n - good
+        log.info(f"[ML-v2] 🏷️ {symbol}: outcome={'✅' if label else '❌'}, PnL={pnl_pct:+.2f}% "
+                 f"(буфер: {n}, good={good}, bad={bad})")
+
+    def retrain_27f(self, force=False):
+        """Дообучить 27f модель на накопленных сделках."""
+        import lightgbm as lgb
+        now = time.time()
+        if not force and (now - self._last_retrain_27f) < RETRAIN_INTERVAL_27F:
+            return
+
+        n = len(self._training_buffer)
+        if n < MIN_SAMPLES_27F:
+            log.info(f"[ML-v2] ⏭️ Ретрейн 27f: мало данных ({n} < {MIN_SAMPLES_27F})")
+            return
+
+        # Разделяем на X и y
+        X = np.array([row[0] for row in self._training_buffer], dtype=np.float64)
+        y = np.array([row[1] for row in self._training_buffer], dtype=np.int32)
+        good = int(y.sum())
+        bad = n - good
+
+        if good < MIN_BOTH_CLASSES_27F or bad < MIN_BOTH_CLASSES_27F:
+            log.info(f"[ML-v2] ⏭️ Ретрейн 27f: мало одного класса (good={good}, bad={bad})")
+            return
+
+        log.info(f"[ML-v2] 🔄 Ретрейн 27f на {n} примерах (good={good}, bad={bad})...")
+
+        # Train/val split
+        te = int(n * 0.75)
+        params = dict(objective='binary', metric='binary_logloss', boosting='gbdt',
+                      num_leaves=31, learning_rate=0.03, feature_fraction=0.8,
+                      bagging_fraction=0.8, bagging_freq=5, min_child_samples=10, verbose=-1)
+
+        td = lgb.Dataset(X[:te], label=y[:te], feature_name=FEATURE_NAMES)
+        vd = lgb.Dataset(X[te:], label=y[te:], feature_name=FEATURE_NAMES, reference=td)
+
+        # Обучаем с нуля (на всех доступных данных + исторические)
+        self.model = lgb.train(params, td, num_boost_round=500, valid_sets=[vd],
+                               callbacks=[lgb.early_stopping(20), lgb.log_evaluation(0)])
+        self.trained = True
+
+        # Оценка
+        yp = self.model.predict(X[te:])
+        yb = (yp > 0.5).astype(int)
+        acc = float(np.mean(yb == y[te:]))
+        log.info(f"[ML-v2] 🎯 Ретрейн 27f завершён! Точность: {acc:.1%} ({n} samples)")
+
+        # Feature importance
+        try:
+            imp = self.model.feature_importance('gain')
+            top5 = [(FEATURE_NAMES[i] if i < len(FEATURE_NAMES) else f'f{i}', int(imp[i]))
+                    for i in np.argsort(imp)[::-1][:5]]
+            log.info(f"[ML-v2] 📊 Топ-5 признаков: {top5}")
+            self.feature_importance = [{"rank": i+1, "name": n, "gain": g}
+                                       for i, (n, g) in enumerate(top5)]
+        except Exception:
+            pass
+
+        self._last_retrain_27f = now
+        # Сохраняем вместе с основным файлом 27f
+        v27f_path = os.path.join(os.path.dirname(__file__), "models", "ml_pro_v2_27f.pkl")
+        try:
+            with open(v27f_path, "wb") as f:
+                pickle.dump({
+                    "model": self.model,
+                    "trained": True,
+                    "acc": acc,
+                    "samples": n,
+                    "features": FEATURE_NAMES,
+                    "importance": self.feature_importance
+                }, f)
+            log.info(f"[ML-v2] ✅ 27f модель сохранена ({v27f_path})")
+        except Exception as e:
+            log.error(f"[ML-v2] ❌ Ошибка сохранения 27f модели: {e}")
+
+    # ── Обучение (16-признаковая, legacy) ───────────────────────────────────
 
     def train(self, X, y):
         """Обучить LightGBM модель (для 16-признаковой)."""
