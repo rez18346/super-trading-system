@@ -774,7 +774,7 @@ class DecisionEngine:
     
     def decide_entry(self, symbol: str, confidence: float, trend: str,
                      rsi: float, current_price: float,
-                     current_positions_count: int, max_positions: int = 5,
+                     current_positions_count: int, max_positions: int = 8,
                      candles_5m: Optional[list] = None,
                      candles_1h: Optional[list] = None,
                      candles_4h: Optional[list] = None,

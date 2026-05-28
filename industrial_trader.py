@@ -456,7 +456,7 @@ class IndustrialTrader:
         return True
     
     def calculate_position_size(self, symbol: str, price: float, score: float = 65.0) -> float:
-        """Расчет размера позиции (зависит от Score)"""
+        """Расчет размера позиции (зависит от Score и доступного капитала)"""
         risk_config = self.config['risk_management']
         trading_config = self.config['trading']
         
@@ -1081,12 +1081,6 @@ class IndustrialTrader:
                                                        candles_5m=c5m, candles_1h=c1h, candles_4h=c4h)
                             
                             if decision.action == 'enter':
-                                # 🌙 НОЧНОЙ РЕЖИМ: не входить с 23:00 до 08:00 KRAT (UTC+7)
-                                _local_hour = (datetime.now(timezone.utc).hour + 7) % 24
-                                if _local_hour >= 23 or _local_hour < 8:
-                                    logger.info(f"🌙 {symbol}: ночной режим ({_local_hour}:00 KRAT). Пропускаю.")
-                                    continue
-
                                 # 🛑 PORTFOLIO GUARD: если сработал — входы заблокированы
                                 if self._portfolio_guard_triggered:
                                     logger.warning(f"🔒 [GUARD] {symbol}: вход заблокирован (Guard активен)")
