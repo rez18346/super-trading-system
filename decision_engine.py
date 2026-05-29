@@ -191,7 +191,7 @@ class DecisionEngine:
         self._last_decisions: Dict[str, Dict] = {}
         
         # Тайм-аут на повторный вход после продажи (сек)
-        self.reentry_cooldown = 3600  # 1 час (базовый)
+        self.reentry_cooldown = 600  # 10 мин (базовый — доверяем entry ensemble)
         
         # Счётчик последовательных убытков на символ
         self._consecutive_losses: Dict[str, int] = {}
@@ -350,7 +350,9 @@ class DecisionEngine:
                                  current_price: float,
                                  pnl_pct: float,
                                  highest_price: float = None,
-                                 candles_5m: Optional[list] = None) -> Dict:
+                                 candles_5m: Optional[list] = None,
+                                 candles_1h: Optional[list] = None,
+                                 entry_vwap_deviation: Optional[float] = None) -> Dict:
         """
         Профессиональный ансамбль для решения о выходе.
 
@@ -362,6 +364,10 @@ class DecisionEngine:
           3. LiquidityCluster (структура ликвидности)          — 20%
           4. Volume/VWAP (реверсия, спайки)                    — 10%
           5. ML-v2 (LightGBM, резерв)                          — 10%
+
+        Дополнительно:
+          - Multi-TF тренд (1H): если старший тренд bullish → буст hold_confidence
+          - VWAP entry deviation: если цена в зоне накопления → буст
 
         Возвращает:
         {
@@ -550,31 +556,75 @@ class DecisionEngine:
         squeeze_bonus = min(35, oi_squeeze + fr_squeeze)
         squeeze_detail = ' | '.join(filter(None, [oi_detail, fr_detail]))
 
-        # ═══ ИТОГОВЫЙ SCORE HOLD ─────────────────────────────────────────
+        # ═══ БАЗОВЫЙ SCORE HOLD (ансамбль 5 модулей) ──────────────────────
         total_weight = sum(EXIT_WEIGHTS.values())
         hold_confidence = sum(s['score'] * s['weight'] for s in scores.values()) / total_weight if total_weight > 0 else 50
         hold_confidence = max(0, min(100, int(round(hold_confidence))))
         
-        # Применяем squeeze bonus
+        # Применяем squeeze bonus (OI + FR)
         if squeeze_bonus > 0:
             hold_confidence = min(100, hold_confidence + squeeze_bonus)
 
-        # Решение:
+        # ═══ MULTI-TF TREND BOOST (1H) — старший тренд сильный → держим ───
+        mtf_boost = 0
+        mtf_detail = ''
+        if candles_1h is not None and len(candles_1h) >= 10:
+            try:
+                trend_1h = self._calc_trend_from_candles(candles_1h)
+                if trend_1h in ('strong_bullish', 'bullish'):
+                    mtf_boost = 15 if trend_1h == 'strong_bullish' else 10
+                    mtf_detail = f"1H={trend_1h}(+{mtf_boost})"
+                elif trend_1h in ('bearish', 'strong_bearish'):
+                    mtf_boost = -10
+                    mtf_detail = f"1H={trend_1h}({mtf_boost})"
+            except Exception as e:
+                logger.debug(f"[EXIT] Multi-TF trend: {e}")
+        
+        # ═══ VWAP ENTRY DEVIATION — проверка растянутости ────────────────
+        vwap_boost = 0
+        vwap_detail = ''
+        if entry_vwap_deviation is not None:
+            # deviation > 0 = цена выше VWAP (растянута)
+            # deviation < 0 = цена ниже VWAP (в зоне накопления)
+            if entry_vwap_deviation < 1.0:
+                # Цена близка к VWAP entry — зона накопления, держим
+                vwap_boost = 10
+                vwap_detail = f"VWAP_dev={entry_vwap_deviation:+.1f}%(накопление,+{vwap_boost})"
+            elif entry_vwap_deviation > 3.0:
+                # Цена сильно выше VWAP entry — растянута, снижаем уверенность
+                vwap_boost = -10
+                vwap_detail = f"VWAP_dev={entry_vwap_deviation:+.1f}%(растянуто,{vwap_boost})"
+            else:
+                vwap_detail = f"VWAP_dev={entry_vwap_deviation:+.1f}%(норма)"
+
+        # ═══ ИТОГОВЫЙ SCORE HOLD ────────────────────────────────────────
+        # Применяем бусты от старшего тренда и VWAP
+        if mtf_boost != 0:
+            hold_confidence = max(0, min(100, hold_confidence + mtf_boost))
+        if vwap_boost != 0:
+            hold_confidence = max(0, min(100, hold_confidence + vwap_boost))
+        
+        # ═══ ПЕРЕСЧЁТ РЕШЕНИЯ после бустов ───────────────────────────────
         approved = False
         widen_pct = 0.0
         if hold_confidence >= 55:
             if hold_confidence >= 65:
-                approved = True  # полная отмена SL
+                approved = True
                 widen_pct = 0.5
             else:
-                approved = True  # частичное расширение SL
+                approved = True
                 widen_pct = 0.3
-
-        # Собираем детали
+        
+        # ═══ ОБНОВЛЕНИЕ reason с учётом новых модулей ────────────────────
         details = ' | '.join(f"{k}={v['score']}" for k, v in scores.items())
         reason = f"EXIT-VOTE: hold={hold_confidence}% {'✅' if approved else '❌'} [{details}]"
         if squeeze_detail:
             reason += f" | {squeeze_detail}"
+        if mtf_detail:
+            reason += f" | {mtf_detail}"
+        if vwap_detail:
+            reason += f" | {vwap_detail}"
+
         if approved and widen_pct == 0.3:
             reason += " | → расширение SL 30%"
         elif approved and widen_pct == 0.5:
@@ -594,6 +644,8 @@ class DecisionEngine:
             'weights': EXIT_WEIGHTS,
             'squeeze_bonus': squeeze_bonus,
             'oi_heat': oi_heat,
+            'mtf_boost': mtf_boost,
+            'vwap_boost': vwap_boost,
         }
 
     # ─── ВЫХОД ИЗ ПОЗИЦИИ ──────────────────────────────────────────────────
@@ -604,50 +656,76 @@ class DecisionEngine:
                     sl_pct: float, tp_pct: float, trail_act: float,
                     trail_dist: float, max_hold_hours: float = 48,
                     side: str = 'long',
-                    candles_1m: Optional[list] = None) -> Optional[Decision]:
+                    candles_1m: Optional[list] = None,
+                    candles_1h: Optional[list] = None,
+                    entry_vwap_deviation: Optional[float] = None,
+                    current_sl_pct: Optional[float] = None,
+                    max_sl_pct: float = 7.5) -> Optional[Decision]:
         """
         Принять решение о выходе.
         Приоритет: SL > TP > трейлинг > таймаут.
 
-        ⚡ SMART EXIT: перед выходом по TP/трейлингу/таймауту проверяет
+        ⚡ SMART EXIT: перед выходом по SL/TP/трейлингу/таймауту проверяет
            exit-ensemble (VSA + Advisor + Liq + VWAP + ML-v2).
            Если ensemble говорит «держать» (hold_confidence >= 55) —
            возвращает hold_widen_sl с расширенным SL вместо выхода.
-           При 55-64: расширение SL на 30%. При ≥65: полная отмена (50% расширение).
+           При 55-64: расширение SL на 30%. При ≥65: полное (50% расширение).
+
+        ⚡ SL — ТВЁРДЫЙ УРОВЕНЬ:
+           - Пред-SL зона: цена рядом с SL, но не пробила → ensemble расширяет
+           - SL пробит: sell unconditionally, ensemble не слушается
+           - Расширение от текущего SL, не от базы (прогрессивная защита)
 
         ⚡ ЗАЛОЖЕНО ПОД ШОРТ: side='short' инвертирует логику SL/TP/трейлинга.
 
         Параметры:
+            sl_pct: базовый SL из конфига (используется если current_sl_pct не передан)
+            current_sl_pct: текущий эффективный SL (может быть уже расширен).
+                            Если None — используется sl_pct.
+            max_sl_pct: максимальный SL, выше которого нельзя расширять
             candles_1m: 1M свечи для exit ensemble (опционально)
+            candles_1h: 1H свечи для multi-TF тренд-проверки
+            entry_vwap_deviation: отклонение текущей цены от VWAP с момента входа (%)
         """
         self.stats['total_decisions'] += 1
         is_short = (side == 'short')
 
+        # ─── ИСПОЛЬЗУЕМ ТЕКУЩИЙ SL (может быть расширен) ─────────────
+        _effective_sl = current_sl_pct if current_sl_pct is not None else sl_pct
+
         # ═══ ВСПОМОГАТЕЛЬНАЯ: exit ensemble для TP/трейлинга ─────────────
         def _check_exit_ensemble(trigger_type: str, base_reason: str) -> Optional[Decision]:
-            """Проверить exit ensemble: если модули говорят «держать» — отменить выход."""
+            """Проверить exit ensemble: если модули говорят «держать» — расширить SL.
+            
+            Возвращает:
+                Decision с exit_override='hold_widen_sl' — расширить SL
+                Decision с exit_override='exit' — выход подтверждён
+                None — нет данных для ensemble (выход как обычно)
+            """
             if candles_1m is None or len(candles_1m) < 5:
                 return None  # нет данных для ensemble → exit как обычно
 
             exit_vote = self._evaluate_exit_ensemble(
                 symbol, entry_price, current_price, pnl_pct,
-                highest_price=highest_price, candles_5m=candles_1m
+                highest_price=highest_price, candles_5m=candles_1m,
+                candles_1h=candles_1h, entry_vwap_deviation=entry_vwap_deviation
             )
 
             if exit_vote['approved']:
-                # Модули говорят «держать» → расширяем SL вместо выхода
-                widen_pct = exit_vote.get('widen_pct', 0.5)  # 0.3 для частичного, 0.5 для полного
-                widened_sl = sl_pct * (1 + widen_pct)
-                action = 'расширение 30%' if widen_pct < 0.5 else 'отмена SL'
-                reason = (f"{trigger_type} {action}: ensemble hold={exit_vote['hold_confidence']}% [{exit_vote.get('reason','')}]"
-                          f" | SL расширен до {widened_sl:.1f}%")
+                # Модули говорят «держать» → расширяем SL от текущего уровня
+                widen_pct = exit_vote.get('widen_pct', 0.3)  # 0.3 для 30%, 0.5 для 50%
+                new_sl_pct = min(_effective_sl * (1 + widen_pct), max_sl_pct)
+                action = 'расширение 30%' if widen_pct < 0.5 else 'полное (50%)'
+                reason = (f"{trigger_type} {action}: ensemble hold={exit_vote['hold_confidence']}% "
+                          f"[{exit_vote.get('reason','')}]"
+                          f" | SL {_effective_sl:.2f}%→{new_sl_pct:.2f}%")
                 logger.info(f"🧠 [SMART EXIT] {symbol}: {reason}")
 
                 return Decision(
                     symbol, 'hold', side=side, priority=85,
                     reason=reason,
                     signal_type=SignalType.HOLD,
-                    sl_price=entry_price * (1 - widened_sl / 100.0),
+                    sl_price=entry_price * (1 - new_sl_pct / 100.0),
                     exit_override='hold_widen_sl',
                     exit_vote=exit_vote
                 )
@@ -663,18 +741,23 @@ class DecisionEngine:
                     exit_vote=exit_vote
                 )
 
-        # ─── 1. SL — стоп-лосс с exit ensemble ──────────────────────────
-        # SL проверяется через ensemble: если модули говорят «держать» — SL расширяется
-        if pnl_pct <= -sl_pct:
+        # ─── 1. SL — стоп-лосс ──────────────────────────────────────────
+        # 🎯 SL — твёрдый уровень. Если цена пробила — ensemble решает:
+        #    hold → расширить от ТЕКУЩЕГО SL (прогрессивно, до max_sl_pct)
+        #    exit → sell
+        #    нет ensemble данных → sell (безопасность)
+        if pnl_pct <= -_effective_sl:
             self.stats['exit_decisions'] += 1
             ensemble_result = _check_exit_ensemble(
                 'SL',
-                f"SL -{pnl_pct:.2f}% (лимит -{sl_pct}%)"
+                f"SL -{pnl_pct:.2f}% (лимит -{_effective_sl:.2f}%)"
             )
             if ensemble_result:
+                # ensemble сказал hold → SL расширен от текущего уровня
                 return ensemble_result
+            # Нет ensemble данных или сказал exit → sell
             return Decision(symbol, 'exit', side=side,
-                           reason=f"SL -{pnl_pct:.2f}% (лимит -{sl_pct}%)",
+                           reason=f"SL -{pnl_pct:.2f}% (лимит -{_effective_sl:.2f}%)",
                            signal_type=SignalType.STRONG_SELL, priority=100,
                            exit_override='exit')
 
@@ -715,25 +798,34 @@ class DecisionEngine:
                         exit_override='exit'
                     )
         else:
-            trail_active_pct = (highest_price - entry_price) / entry_price * 100
-            if trail_active_pct >= trail_act:
-                trail_level = highest_price * (1 - trail_dist / 100.0)
-                if current_price <= trail_level:
-                    self.stats['exit_decisions'] += 1
-                    ensemble_result = _check_exit_ensemble(
-                        'Long-трейлинг',
-                        f"Long-трейлинг: H={highest_price:.4f}→{current_price:.4f}"
-                        f" (активация: {trail_act}%, дист: {trail_dist}%)"
-                    )
-                    if ensemble_result:
-                        return ensemble_result
-                    return Decision(
-                        symbol, 'exit', side=side, priority=80,
-                        reason=(f"Long-трейлинг: H={highest_price:.4f}→{current_price:.4f}"
-                                f" (активация: {trail_act}%, дист: {trail_dist}%)"),
-                        signal_type=SignalType.SELL,
-                        exit_override='exit'
-                    )
+            # ⚡ На бычьем 1H тренде трейлинг отключается — держим до ensemble/SL
+            _do_trail = True
+            if candles_1h and len(candles_1h) >= 20:
+                _1h_t = self._calc_trend_from_candles(candles_1h)
+                if _1h_t in ('strong_bullish', 'bullish'):
+                    _do_trail = False
+                    logger.info(f"🌡️ [TRAIL→СКИП] {symbol}: 1H={_1h_t} — трейлинг отключён (bullish trend)")
+            
+            if _do_trail:
+                trail_active_pct = (highest_price - entry_price) / entry_price * 100
+                if trail_active_pct >= trail_act:
+                    trail_level = highest_price * (1 - trail_dist / 100.0)
+                    if current_price <= trail_level:
+                        self.stats['exit_decisions'] += 1
+                        ensemble_result = _check_exit_ensemble(
+                            'Long-трейлинг',
+                            f"Long-трейлинг: H={highest_price:.4f}→{current_price:.4f}"
+                            f" (активация: {trail_act}%, дист: {trail_dist}%)"
+                        )
+                        if ensemble_result:
+                            return ensemble_result
+                        return Decision(
+                            symbol, 'exit', side=side, priority=80,
+                            reason=(f"Long-трейлинг: H={highest_price:.4f}→{current_price:.4f}"
+                                    f" (активация: {trail_act}%, дист: {trail_dist}%)"),
+                            signal_type=SignalType.SELL,
+                            exit_override='exit'
+                        )
 
         # ─── 4. Таймаут удержания (48 часов) ──────────────────────────────
         if entry_time.tzinfo is None:
@@ -778,7 +870,9 @@ class DecisionEngine:
                      candles_5m: Optional[list] = None,
                      candles_1h: Optional[list] = None,
                      candles_4h: Optional[list] = None,
-                     side: str = 'long') -> Decision:
+                     side: str = 'long',
+                     last_exit_price: Optional[float] = None,
+                     last_exit_time: Optional[float] = None) -> Decision:
         """
         Принять решение о входе в позицию.
         
@@ -796,6 +890,7 @@ class DecisionEngine:
           - BTC падает >1.5% за 4H → блокировка
           - Максимум N позиций
           - Кулдаун повторного входа
+          - Anti-FOMO: если цена выше последнего выхода на 3%+ в течение 4ч
         """
         self.stats['total_decisions'] += 1
         is_short = (side == 'short')
@@ -813,12 +908,42 @@ class DecisionEngine:
         
         # ═══ ЖЁСТКИЕ БЛОКИРОВКИ ═══════════════════════════════════════════
         
-        # 1. Лимит позиций
+        # 1. Anti-FOMO: не входить если цена значительно выше последнего выхода
+        #    Защита от покупки на хаях после того, как нас высадило
+        if last_exit_price is not None and last_exit_time is not None:
+            fomo_window = 14400  # 4 часа после выхода
+            fomo_threshold = 1.03  # 3% выше цены выхода
+            
+            time_since_exit = now - last_exit_time
+            
+            if time_since_exit < fomo_window:
+                if not is_short:
+                    # Для long: если цена выше last_exit_price * threshold — FOMO
+                    if current_price > last_exit_price * fomo_threshold:
+                        pct_above = (current_price / last_exit_price - 1) * 100
+                        remain = (fomo_window - time_since_exit) / 60
+                        reason = (f"🚫 Anti-FOMO: цена +{pct_above:.1f}% выше последнего выхода "
+                                  f"(${last_exit_price:.4f}), осталось {remain:.0f}мин")
+                        self.stats['veto_fomo'] = self.stats.get('veto_fomo', 0) + 1
+                        self._save_veto_vote(symbol, current_price, reason, side)
+                        return Decision(symbol, 'hold', side=side, reason=reason)
+                else:
+                    # Для short: если цена ниже last_exit_price / threshold — FOMO
+                    if current_price < last_exit_price / fomo_threshold:
+                        pct_below = (1 - current_price / last_exit_price) * 100
+                        remain = (fomo_window - time_since_exit) / 60
+                        reason = (f"🚫 Anti-FOMO: цена -{pct_below:.1f}% ниже последнего выхода "
+                                  f"(${last_exit_price:.4f}), осталось {remain:.0f}мин")
+                        self.stats['veto_fomo'] = self.stats.get('veto_fomo', 0) + 1
+                        self._save_veto_vote(symbol, current_price, reason, side)
+                        return Decision(symbol, 'hold', side=side, reason=reason)
+        
+        # 2. Лимит позиций
         if current_positions_count >= max_positions:
             self._save_veto_vote(symbol, current_price, f"Максимум {max_positions} позиций", side)
             return Decision(symbol, 'hold', side=side, reason=f"Максимум {max_positions} позиций")
         
-        # 2. Кулдаун повторного входа (прогрессивный)
+        # 3. Кулдаун повторного входа (прогрессивный)
         if symbol in self._last_decisions:
             last_exit = self._last_decisions[symbol]
             time_since = now - last_exit.get('exit_time', 0)

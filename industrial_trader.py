@@ -49,6 +49,9 @@ class IndustrialTrader:
         self._portfolio_guard_triggered = False  # Флаг: Guard сработал
         self._current_market_mode = 'neutral'
         
+        # 🚫 Anti-FOMO: последняя цена выхода по каждому символу {symbol: {'price': float, 'time': seconds}}
+        self._last_exit_prices: Dict[str, Dict] = {}
+        
         # Статистика
         self.stats = {
             'total_trades': 0,
@@ -761,6 +764,20 @@ class IndustrialTrader:
         """Основной торговый цикл"""
         logger.info("Запуск торгового цикла")
         
+        # 📜 Загрузка исторических сделок для дообучения ML-Pro v2 (один раз при старте)
+        try:
+            from decision_engine import DecisionEngine
+            de = DecisionEngine._instance
+            if de:
+                de._lazy_init_ml()
+            if de and getattr(de, '_ml_pro_v2', None) and hasattr(de._ml_pro_v2, 'seed_from_db'):
+                added = de._ml_pro_v2.seed_from_db(exchange=self.exchange)
+                if added:
+                    logger.info(f"[ML-v2] Исторических сделок загружено: {added}")
+                    de._ml_pro_v2.retrain_27f(force=True)
+        except Exception as e:
+            logger.debug(f"[ML-v2] seed_from_db: {e}")
+        
         trading_config = self.config['trading']
         symbols = trading_config['enabled_pairs']
         
@@ -1076,9 +1093,16 @@ class IndustrialTrader:
                             c5m = df.to_dict('records') if hasattr(df, 'to_dict') else None
                             c1h = mtf_candles_1h.get(symbol, None)
                             c4h = mtf_candles_4h.get(symbol, None)
+                            # 🚫 Anti-FOMO: передаём последнюю цену выхода по этому символу
+                            last_exit_info = self._last_exit_prices.get(symbol, {})
+                            last_exit_price = last_exit_info.get('price')
+                            last_exit_time = last_exit_info.get('time')
+                            
                             decision = de.decide_entry(symbol, de_confidence, de_trend, de_rsi,
                                                        de_price, de_positions, max_pos,
-                                                       candles_5m=c5m, candles_1h=c1h, candles_4h=c4h)
+                                                       candles_5m=c5m, candles_1h=c1h, candles_4h=c4h,
+                                                       last_exit_price=last_exit_price,
+                                                       last_exit_time=last_exit_time)
                             
                             if decision.action == 'enter':
                                 # 🛑 PORTFOLIO GUARD: если сработал — входы заблокированы
@@ -1114,7 +1138,7 @@ class IndustrialTrader:
                                 if hasattr(de, '_last_decisions') and symbol in de._last_decisions:
                                     last_exit = de._last_decisions[symbol]
                                     time_since = time.time() - last_exit.get('exit_time', 0)
-                                    cooldown = getattr(de, 'reentry_cooldown', 3600)
+                                    cooldown = getattr(de, 'reentry_cooldown', 600)
                                     if time_since < cooldown:
                                         remain = cooldown - time_since
                                         logger.warning(f"🛡️ {symbol}: кулдаун {remain/60:.0f}мин (SL защита). Пропускаю BUY.")
@@ -1331,6 +1355,31 @@ class IndustrialTrader:
                                     logger.debug(f"[IMPULSE] {symbol}: {e}")
 
                         # ═══ DecisionEngine: SL/TP/трейлинг/таймаут (с exit ensemble) ─
+                        # 📊 VWAP ENTRY DEVIATION: насколько цена растянута от VWAP с момента входа
+                        entry_vwap_dev = None
+                        c1h_for_exit = mtf_candles_1h.get(symbol, [])
+                        if c1h_for_exit and len(c1h_for_exit) >= 3:
+                            try:
+                                # Берём свечи с момента входа
+                                pos_ts = pos_time.timestamp() if hasattr(pos_time, 'timestamp') else 0
+                                candles_since_entry = [
+                                    c for c in c1h_for_exit
+                                    if c.get('t', 0) >= pos_ts * 1000 and c.get('v', 0) > 0
+                                ]
+                                if len(candles_since_entry) >= 2:
+                                    cum_pv = sum(c['c'] * c['v'] for c in candles_since_entry)
+                                    cum_v = sum(c['v'] for c in candles_since_entry)
+                                    vwap_entry = cum_pv / cum_v if cum_v > 0 else current_price
+                                    entry_vwap_dev = ((current_price - vwap_entry) / vwap_entry) * 100
+                            except Exception as e:
+                                logger.debug(f"[VWAP-ENTRY] {symbol}: {e}")
+                        
+                        # Рассчитываем текущий SL из позиции (может быть расширен ensemble)
+                        _sl_p = position.get('_sl_price', None)
+                        current_sl_pct = None
+                        if _sl_p and _sl_p < entry_price:
+                            current_sl_pct = (entry_price - _sl_p) / entry_price * 100
+                        
                         exit_decision = de.decide_exit(
                             symbol, entry_price, current_price,
                             highest_price=position.get('_highest_price', current_price * (1 + position.get('max_profit', 0) / 100)),
@@ -1339,7 +1388,11 @@ class IndustrialTrader:
                             sl_pct=rp['sl_pct'], tp_pct=rp['tp_pct'],
                             trail_act=rp['trail_act'], trail_dist=rp['trail_dist'],
                             max_hold_hours=max_hold, side='long',
-                            candles_1m=candles_1m
+                            candles_1m=candles_1m,
+                            candles_1h=c1h_for_exit,
+                            entry_vwap_deviation=entry_vwap_dev,
+                            current_sl_pct=current_sl_pct,
+                            max_sl_pct=7.5
                         )
 
                         # ═══ SMART EXIT: проверяем exit_override ──────────────
@@ -1381,7 +1434,9 @@ class IndustrialTrader:
                                         et_vote = de._evaluate_exit_ensemble(
                                             symbol, entry_price, current_price, pnl_percent,
                                             highest_price=position.get('_highest_price', current_price),
-                                            candles_5m=ensemble_candles
+                                            candles_5m=ensemble_candles,
+                                            candles_1h=mtf_candles_1h.get(symbol, []),
+                                            entry_vwap_deviation=entry_vwap_dev
                                         )
                                         hold_conf = et_vote.get('hold_confidence', 0)
                                         et_approved = hold_conf >= hold_threshold
@@ -1414,10 +1469,23 @@ class IndustrialTrader:
                                 should_sell = True
                                 sell_reason = exit_decision.reason
 
-                        # 3) Импульсный выход
+                        # 3) Импульсный выход (с ensemble-проверкой)
+                        # 3) Импульсный выход (защита от слива на падающем рынке)
+                        # ⚡ На растущем тренде (1H bullish) — импульсный выход НЕ срабатывает
                         if not should_sell and impulse_exit_signal is not None:
-                            should_sell = True
-                            sell_reason = impulse_exit_signal
+                            c1h_for_impulse = mtf_candles_1h.get(symbol, [])
+                            if c1h_for_impulse and len(c1h_for_impulse) >= 20:
+                                try:
+                                    ht = de._calc_trend_from_candles(c1h_for_impulse)
+                                    if ht in ('strong_bullish', 'bullish'):
+                                        impulse_exit_signal = None
+                                        logger.info(f"🌡️ [IMPULSE→СКИП] {symbol}: 1H={ht} — импульс заблокирован "
+                                                    f"(тренд вверх, держим)")
+                                except Exception:
+                                    pass
+                            if impulse_exit_signal is not None:
+                                should_sell = True
+                                sell_reason = impulse_exit_signal
 
                         # 4) Stale sell
                         if not should_sell and stale_sell_reason is not None:
@@ -1432,7 +1500,7 @@ class IndustrialTrader:
                         # ═══ SMART SL WIDENING: обновляем SL если ensemble отменил выход ─
                         if exit_widened and exit_decision and exit_decision.sl_price is not None:
                             new_sl = exit_decision.sl_price
-                            old_sl = entry_price * (1 - rp['sl_pct'] / 100.0)
+                            old_sl = position.get('_sl_price', entry_price * (1 - rp['sl_pct'] / 100.0))
                             if new_sl < old_sl:  # SL расширяется (ниже текущего)
                                 # Обновляем SL в позиции — ключ _sl_price а не sl_price (см. __init__)
                                 position['_sl_price'] = new_sl
@@ -1510,6 +1578,12 @@ class IndustrialTrader:
                                 entry_price_pos = pos.get('entry_price', current_price)
                                 was_loss = current_price < entry_price_pos
                                 de.record_exit(symbol, sell_reason, was_loss=was_loss)
+                                
+                                # 🚫 Anti-FOMO: запоминаем цену и время выхода
+                                self._last_exit_prices[symbol] = {
+                                    'price': current_price,
+                                    'time': time.time()
+                                }
                             
                             # 🧠 ML: обучаем на результате сделки
                             if result is not None and symbol in self.positions:

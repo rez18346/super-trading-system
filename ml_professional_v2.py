@@ -417,7 +417,11 @@ class MLProfessionalV2:
         self._last_feature_symbol = None      # символ последнего вектора
         self._entry_buffer = {}               # {symbol: {'features': np.array, 'ts': float}}
         self._training_buffer = []            # [(features, label, symbol, ts)]
+        self._training_buffer_path = os.path.join(os.path.dirname(self.model_path), 'ml_pro_v2_training.pkl')
         self._last_retrain_27f = 0            # timestamp последнего ретрейна
+        
+        # 🗂️ Загружаем сохранённый training_buffer (включая исторические сделки)
+        self._load_training_buffer()
 
         # 1. Пробуем 25-признаковую мультиТФ модель (приоритет)
         v27f = os.path.join(os.path.dirname(__file__), "models", "ml_pro_v2_27f.pkl")
@@ -651,7 +655,151 @@ class MLProfessionalV2:
         bad = n - good
         log.info(f"[ML-v2] 🏷️ {symbol}: outcome={'✅' if label else '❌'}, PnL={pnl_pct:+.2f}% "
                  f"(буфер: {n}, good={good}, bad={bad})")
+        
+        # 💾 Сохраняем буфер на диск, чтобы не терять при перезапусках
+        self._save_training_buffer()
 
+    def _save_training_buffer(self):
+        """Сохранить training_buffer в pickle."""
+        try:
+            import pickle
+            os.makedirs(os.path.dirname(self._training_buffer_path), exist_ok=True)
+            with open(self._training_buffer_path, 'wb') as f:
+                pickle.dump(self._training_buffer, f)
+        except Exception as e:
+            log.warning(f"[ML-v2] ⚠️ Не удалось сохранить training buffer: {e}")
+    
+    def _load_training_buffer(self):
+        """Загрузить training_buffer из pickle (персистентность через рестарты)."""
+        try:
+            import pickle
+            if os.path.exists(self._training_buffer_path):
+                with open(self._training_buffer_path, 'rb') as f:
+                    loaded = pickle.load(f)
+                if isinstance(loaded, list) and len(loaded) > 0:
+                    self._training_buffer = loaded
+                    log.info(f"[ML-v2] 📂 Загружен training_buffer: {len(loaded)} примеров")
+        except Exception as e:
+            log.warning(f"[ML-v2] ⚠️ Не удалось загрузить training buffer: {e}")
+        return len(self._training_buffer) > 0
+    
+    def seed_from_db(self, exchange=None):
+        """Загрузить исторические сделки из БД (вызов после init, когда модули готовы).
+        
+        Принимает опциональный exchange (ccxt) для загрузки свечей.
+        Вызывать один раз при старте системы, когда всё инициализировано.
+        """
+        try:
+            import db_pg
+            trades = db_pg.get_trade_history(limit=2000)
+        except Exception as e:
+            log.warning(f"[ML-v2] seed_from_db: БД недоступна ({e})")
+            return 0
+        
+        if not trades:
+            return 0
+        
+        existing_ts = {row[3] for row in self._training_buffer}
+        log.info(f"[ML-v2] 📜 Загрузка исторических сделок из БД ({len(trades)} всего, {len(existing_ts)} уже есть)...")
+        
+        # Группируем по символам
+        from collections import defaultdict
+        by_symbol = defaultdict(list)
+        for t in trades:
+            sym = t.get('symbol')
+            et = t.get('entry_time')
+            xt = t.get('exit_time')
+            pnl = t.get('pnl')
+            pct = t.get('pnl_percent') or 0
+            ep = t.get('entry_price', 0)
+            qty = t.get('quantity', 0)
+            if not all([sym, et, xt, pnl is not None, ep]):
+                continue
+            try:
+                entry_ts = __import__('datetime').datetime.fromisoformat(et).timestamp()
+                if any(abs(entry_ts - ts) < 10 for ts in existing_ts):
+                    continue
+            except Exception:
+                continue
+            by_symbol[sym].append({
+                'entry_time': et, 'entry_ts': entry_ts,
+                'entry_price': ep, 'quantity': qty,
+                'pnl': pnl, 'pnl_pct': pct,
+                'exit_time': xt,
+            })
+        
+        if not by_symbol:
+            log.info(f"[ML-v2] 📜 Нет новых исторических сделок")
+            return 0
+        
+        total_trades = sum(len(v) for v in by_symbol.values())
+        log.info(f"[ML-v2] 📜 {len(by_symbol)} символов, нужно обработать {total_trades} сделок")
+        
+        # Используем переданный exchange или создаём новый
+        ex = exchange
+        if ex is None:
+            import ccxt
+            ex = ccxt.bybit()
+        
+        added = 0
+        errors = 0
+        for sym, strades in by_symbol.items():
+            if not strades:
+                continue
+            try:
+                raw_5m = ex.fetch_ohlcv(sym, '5m', limit=100)
+                raw_1h = ex.fetch_ohlcv(sym, '1h', limit=100)
+                if not raw_5m or not raw_1h:
+                    continue
+                
+                c5m = [{'o':c[1],'h':c[2],'l':c[3],'c':c[4],'v':c[5],'t':c[0]/1000} for c in raw_5m]
+                
+                vsa_score = 50.0
+                try:
+                    from vsa_analyzer import analyze_volume_spread
+                    vsa_r = analyze_volume_spread(c5m)
+                    if vsa_r:
+                        vsa_score = vsa_r.score
+                except Exception:
+                    pass
+                
+                vwap_5m = 0.0
+                total_v = sum(c['v'] for c in c5m[:12])
+                if total_v > 0:
+                    vwap_5m = sum(c['c']*c['v'] for c in c5m[:12]) / total_v
+                
+                for s in strades:
+                    try:
+                        features = np.zeros(27, dtype=np.float64)
+                        entry_p = s['entry_price']
+                        features[0] = 60.0
+                        features[1] = entry_p
+                        features[2] = s['quantity']
+                        features[3] = vsa_score
+                        features[4] = s['pnl_pct']
+                        features[5] = s['pnl']
+                        features[6] = 55.0
+                        features[14] = vwap_5m / max(entry_p, 0.0001) * 100 if vwap_5m > 0 else 50.0
+                        # Остальные — нейтральные (модель будет учиться на реальных сделках)
+                        for i in range(27):
+                            if features[i] == 0.0 and i != 26:
+                                features[i] = 50.0
+                        label = 1.0 if s['pnl'] > 0 else 0.0
+                        self._training_buffer.append((features, label, sym, s['entry_ts']))
+                        existing_ts.add(s['entry_ts'])
+                        added += 1
+                    except Exception:
+                        errors += 1
+                        continue
+            except Exception:
+                errors += 1
+                continue
+        
+        log.info(f"[ML-v2] 📜 Исторические: +{added} сделок (ошибок: {errors}). Буфер: {len(self._training_buffer)}")
+        if added:
+            self._save_training_buffer()
+        return added
+    
     def retrain_27f(self, force=False):
         """Дообучить 27f модель на накопленных сделках."""
         import lightgbm as lgb
