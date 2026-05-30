@@ -154,7 +154,10 @@ class MLAdvisor:
         # Пытаемся загрузить обученную модель
         self._load_model()
         self._load_training_data()  # Загружаем накопленные примеры
-        
+
+        # 🌱 Сидирование из БД: исторические сделки → 31-фичевые сэмплы
+        self.seed_from_db()
+
         # Форсированный ретрейн при старте (если данные есть, но модель старая)
         if self.is_trained and len(self.training_data) >= MIN_TRAINING_SAMPLES:
             expected = getattr(self.model, 'n_features_in_', 14)
@@ -193,6 +196,170 @@ class MLAdvisor:
                 json.dump(self.training_data, f, default=str)
         except Exception as e:
             logger.warning(f"⚠️ Не удалось сохранить training_data: {e}")
+
+    def _compute_rsi(self, closes, period=14):
+        """Простой RSI без pandas_ta"""
+        if len(closes) < period + 1:
+            return 50.0
+        deltas = np.diff(closes[-period-1:])
+        gains = np.where(deltas > 0, deltas, 0)
+        losses = np.where(deltas < 0, -deltas, 0)
+        avg_gain = np.mean(gains)
+        avg_loss = np.mean(losses)
+        if avg_loss < 1e-10:
+            return 100.0
+        rs = avg_gain / avg_loss
+        return 100.0 - (100.0 / (1.0 + rs))
+
+    def _compute_trend_from_df(self, df):
+        """Определить тренд по 5m свечам"""
+        if df is None or len(df) < 20:
+            return 'neutral'
+        closes = df['close'].values
+        sma20 = np.mean(closes[-20:])
+        sma50 = np.mean(closes[-50:]) if len(closes) >= 50 else sma20
+        last = closes[-1]
+        # Направление
+        momentum = (closes[-1] / closes[-5] - 1) * 100 if len(closes) >= 5 else 0
+        if last > sma20 and last > sma50 and momentum > 0.3:
+            return 'bullish'
+        elif last > sma20 and last > sma50:
+            return 'weak_bullish'
+        elif last < sma20 and last < sma50 and momentum < -0.3:
+            return 'bearish'
+        elif last < sma20 and last < sma50:
+            return 'weak_bearish'
+        return 'neutral'
+
+    def seed_from_db(self):
+        """
+        Загрузить исторические сделки из БД и сформировать 31-фичевые сэмплы.
+        Решает проблему: новые 6 рыночных признаков не участвуют в модели,
+        т.к. training_data содержит только старые 14-фичевые записи.
+        """
+        try:
+            import db_pg
+        except Exception as e:
+            logger.warning(f"[seed_from_db] db_pg не доступна: {e}")
+            return 0
+
+        try:
+            all_trades = db_pg.get_trade_history(limit=500)
+        except Exception:
+            return 0
+
+        if not all_trades:
+            return 0
+
+        # Только завершённые (с exit_price)
+        completed = [t for t in all_trades if t.get('exit_price') is not None]
+        if not completed:
+            logger.info("[seed_from_db] Нет завершённых сделок в БД")
+            return 0
+
+        logger.info(f"[seed_from_db] Загружено {len(completed)} завершённых сделок")
+
+        # Дедупликация: (symbol, округлённый entry_price)
+        existing_keys = set()
+        for d in self.training_data:
+            sym = d.get('symbol', '')
+            ep = d.get('entry_price', d.get('pnl', 0))
+            existing_keys.add((sym, round(ep, 6)))
+
+        # Сортируем хронологически по символу для корректной работы аккумуляторов
+        completed.sort(key=lambda t: (t['symbol'], t.get('entry_time', '')))
+
+        ex = _get_exchange()
+        added = 0
+        skipped_dup = 0
+        skipped_api = 0
+
+        # Ограничения: макс 100 сделок, макс 30 сек на всё
+        MAX_TRADES = 100
+        MAX_DURATION = 30
+        _start_ts = time.time()
+
+        for trade in completed[:MAX_TRADES]:
+            # Таймаут: не дольше MAX_DURATION секунд
+            if time.time() - _start_ts > MAX_DURATION:
+                logger.info(f"[seed_from_db] ⏱ Таймаут {MAX_DURATION}с, обработано {added}/{len(completed)} сделок")
+                break
+
+            sym = trade['symbol']
+            entry_price = trade['entry_price']
+            entry_time_str = trade.get('entry_time', '')
+            pnl_pct = trade.get('pnl_percent', 0) or 0
+            entry_score = trade.get('entry_score') or 50
+
+            if not entry_time_str:
+                continue
+
+            # Дедупликация
+            key = (sym, round(entry_price, 6))
+            if key in existing_keys:
+                skipped_dup += 1
+                continue
+
+            # Загрузка 5m свечей на момент входа
+            df_5m = None
+            try:
+                entry_ts = datetime.fromisoformat(entry_time_str).timestamp() * 1000
+                since = int(entry_ts) - 14 * 5 * 60 * 1000
+                ohlcv = ex.fetch_ohlcv(sym, '5m', since=since, limit=15)
+                if ohlcv and len(ohlcv) > 10:
+                    df_5m = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            except Exception as e:
+                skipped_api += 1
+                continue
+
+            if df_5m is None:
+                skipped_api += 1
+                continue
+
+            # RSI, trend, confidence из свечей и БД
+            rsi = self._compute_rsi(df_5m['close'].values)
+            trend = self._compute_trend_from_df(df_5m)
+            confidence = entry_score / 100.0
+
+            # Полный 31-фичевый вектор
+            try:
+                features = self._extract_features(sym, entry_price, rsi, trend, confidence, df_5m)
+            except Exception as e:
+                logger.debug(f"[seed_from_db] {sym}: _extract_features error: {e}")
+                continue
+
+            label = 1.0 if pnl_pct > 0.5 else 0.0
+
+            self.training_data.append({
+                'features': features,
+                'label': label,
+                'symbol': sym,
+                'entry_price': entry_price,
+                'pnl': pnl_pct,
+                'reason': 'seed_from_db',
+                'time': datetime.now().isoformat()
+            })
+            existing_keys.add(key)
+            added += 1
+
+        if added > 0:
+            # Удаляем старые 9-14 фичевые записи (они все замещены историей)
+            old_count = len([d for d in self.training_data if len(d.get('features', [])) != SUPPORTED_FEATURES])
+            if old_count > 0:
+                self.training_data = [d for d in self.training_data if len(d.get('features', [])) == SUPPORTED_FEATURES]
+
+            self._save_training_data()
+
+            # Принудительный ретрейн — теперь на полных 31 фичах
+            if len(self.training_data) >= MIN_TRAINING_SAMPLES:
+                self.train(force=True)
+
+            logger.info(f"[seed_from_db] ✅ Добавлено {added}, пропущено дубликатов {skipped_dup}, "
+                        f"удалено старых {old_count}, всего {len(self.training_data)} сэмплов ({SUPPORTED_FEATURES} фич)")
+        else:
+            logger.info(f"[seed_from_db] Новых сделок нет (пропущено {skipped_dup} дубликатов)")
+
+        return added
 
     def update_symbol_memory(self, symbol: str, consecutive_losses: int = 0,
                                trade_result: Optional[float] = None,

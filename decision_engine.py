@@ -873,7 +873,8 @@ class DecisionEngine:
                      side: str = 'long',
                      last_exit_price: Optional[float] = None,
                      last_exit_time: Optional[float] = None,
-                     cvd_data: Optional[Dict] = None) -> Decision:
+                     cvd_data: Optional[Dict] = None,
+                     high_24h: Optional[float] = None) -> Decision:
         """
         Принять решение о входе в позицию.
 
