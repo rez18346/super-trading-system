@@ -236,7 +236,7 @@ def _parse_votes_from_log() -> dict:
 
     # Собираем последнее состояние каждой пары
     for line in reversed(lines):
-        m = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*Score=(\d+).*ML-Pro:(\d+)\(([^)]+)\).*Adv:(\d+)\(([^)]+)\).*MTF:(\d+).*RVB:(\d+).*Liq:(\d+)\([^)]*\)[^V]*VV:(\d+)\(', line)
+        m = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*Score=(\d+).*ML-Pro:(\d+)\(([^)]+)\).*Adv:(\d+)\(([^)]+)\).*MTF:(\d+).*RVB:(\d+).*Liq:(\d+)\([^)]*\)[^V]*VV:(\d+)\([^)]*\)[^C]*CVD:(\d+)\(([^)]*)\)', line)
         if m:
             raw_sym = m.group(2)
             sym = raw_sym + '/USDT'
@@ -267,6 +267,7 @@ def _parse_votes_from_log() -> dict:
                 'rvb': int(m.group(9)),
                 'liq': int(m.group(10)),
                     'vv': int(m.group(11)),
+                    'cvd': f"{m.group(12)}({m.group(13)})",
                     'bonus': int(bonus_match.group(1)) if bonus_match else 0,
                     'rev': int(bonus_match.group(2)) if bonus_match else 0,
                     'btc': int(bonus_match.group(3)) if bonus_match else 0,
@@ -603,6 +604,29 @@ def get_status_snapshot() -> dict:
         log.debug(traceback.format_exc())
         result['oi_liquidation_levels'] = {}
     
+    # CVD — Cumulative Volume Delta (реальный поток агрессивных сделок)
+    try:
+        from ws_client import get_ws_client
+        ws = get_ws_client()
+        if ws and hasattr(ws, 'get_symbol_cvd_summary'):
+            cvd_status = {}
+            for sym in list(result.get('positions', {}).keys())[:6]:
+                cvd = ws.get_symbol_cvd_summary(sym, n_minutes=30)
+                if cvd:
+                    cvd_status[sym] = {
+                        'trend': cvd.get('trend'),
+                        'buy_pct': cvd.get('buy_pct'),
+                        'cvd_net': cvd.get('cvd_net'),
+                        'volume_usd': cvd.get('volume_usd'),
+                        'minutes': cvd.get('minutes'),
+                    }
+            result['cvd'] = {
+                'symbols_tracked': len(ws._cvd_data),
+                'positions': cvd_status,
+            }
+    except Exception:
+        pass
+    
     return result
 
 
@@ -751,12 +775,13 @@ canvas{width:100%!important;height:200px!important;background:#0d1117;border-rad
     <h2>📊 Мониторинг голосов <span style="font-size:12px;color:#8b949e;font-weight:normal">— вход при Score ≥ 65</span></h2>
     <!-- Легенда голосов -->
     <div style="margin-bottom:12px;padding:8px 10px;background:#1c2128;border-radius:6px;font-size:12px;display:flex;flex-wrap:wrap;gap:6px 16px">
-      <span><span style="color:#3fb950;font-weight:700">🔵ML</span>=ML-Pro (20%)</span>
-      <span><span style="color:#3fb950;font-weight:700">🟢Ad</span>=ML-Advisor (10%)</span>
-      <span><span style="color:#3fb950;font-weight:700">🟡TF</span>=TimeFrame (25%)</span>
-      <span><span style="color:#3fb950;font-weight:700">🟣RV</span>=RSI/Vol/BTC</span>
+      <span><span style="color:#3fb950;font-weight:700">🔵ML</span>=ML-Pro (10%)</span>
+      <span><span style="color:#3fb950;font-weight:700">🟢Ad</span>=ML-Advisor (25%)</span>
+      <span><span style="color:#3fb950;font-weight:700">🟡TF</span>=MTF (0%)</span>
+      <span><span style="color:#3fb950;font-weight:700">🟣RV</span>=RSI/Vol (0%)</span>
       <span><span style="color:#3fb950;font-weight:700">🟠LQ</span>=Liquidity (25%)</span>
-      <span><span style="color:#3fb950;font-weight:700">🔴VV</span>=Volume/VWAP (20%)</span>
+      <span><span style="color:#3fb950;font-weight:700">🔴VV</span>=Volume/VWAP (10%)</span>
+      <span><span style="color:#3fb950;font-weight:700">🧊CV</span>=CVD OrderFlow (10%) 🆕</span>
       <span><span style="color:#8b949e;font-size:11px">Цвет:</span> 🟢≥90 🟡≥75 ⚪&lt;75</span>
       <span><span style="color:#8b949e;font-size:11px">Пороги:</span> ✅≥65 🔶50–64 ⚪&lt;50 ⛔вето</span>
     </div>
@@ -873,6 +898,7 @@ function updPos(pos){
           '<span title="'+v.rvb+'" style="cursor:help;color:'+vc(v.rvb,90,75)+'">🟣'+v.rvb+'</span> '+
           '<span title="'+v.liq+'" style="cursor:help;color:'+vc(v.liq,90,75)+'">🟠'+v.liq+'</span> '+
           '<span title="'+v.vv+'" style="cursor:help;color:'+vc(v.vv,90,75)+'">🔴'+v.vv+'</span> '+
+          '<span title="CVD: '+v.cvd+'" style="cursor:help;color:'+vc(parseInt(v.cvd),85,60)+'">🧊'+shortVote(v.cvd)+'</span> '+
           '<span style="font-size:10px;color:'+(v.bonus>0?'#3fb950':v.bonus<0?'#f85149':'#555')+'">B'+(v.bonus||0)+'</span> '+
           '<span style="font-size:10px;color:'+(v.rev>0?'#d2d268':v.rev<0?'#f85149':'#555')+'">R'+(v.rev||0)+'</span> '+
           '<span style="font-size:10px;color:'+(v.btc>0?'#3fb950':v.btc<0?'#f85149':'#555')+'">₿'+(v.btc||0)+'</span>'+

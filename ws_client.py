@@ -94,6 +94,9 @@ class BybitWebSocketClient:
         self.kline_intervals = kline_intervals or ['60', '240']  # 1H, 4H
         self.cvd_collector: Optional['CVDCollector'] = cvd_collector
         
+        # Per-symbol CVD данные (все монеты, не только BTC)
+        self._cvd_data: Dict[str, Dict[int, dict]] = {}
+        
         # Состояние соединения
         self.state = ConnectionState.DISCONNECTED
         self._ws: Optional[websocket.WebSocketApp] = None
@@ -180,6 +183,71 @@ class BybitWebSocketClient:
             'reconnects': self.reconnects,
             'last_message_ago': f"{now - self._last_message_time:.1f}s" if self._last_message_time else 'never',
             'last_pong_ago': f"{now - self._last_pong:.1f}s" if self._last_pong else 'never',
+            'cvd_symbols': len(self._cvd_data),
+        }
+    
+    def get_symbol_cvd_summary(self, symbol: str, n_minutes: int = 30) -> Optional[Dict]:
+        """
+        Вернуть CVD сводку для символа за последние n минут.
+        
+        Returns:
+            dict с ключами:
+            - cvd_net: buy_usd - sell_usd (чистый поток)
+            - cvd_ratio: buy_vol / sell_vol
+            - buy_pct: процент buy от общего объёма
+            - volume_usd: общий объём
+            - minutes: количество минут с данными
+            - trend: 'bullish'|'bearish'|'neutral' (тренд за 30 мин)
+            Или None если данных нет.
+        """
+        bucket = self._cvd_data.get(symbol)
+        if not bucket:
+            return None
+        
+        keys = sorted(bucket.keys())
+        if len(keys) < 2:
+            return None
+        
+        recent = keys[-n_minutes:]
+        minute_data = [bucket[k] for k in recent]
+        
+        total_buy_usd = sum(m['buy_usd'] for m in minute_data)
+        total_sell_usd = sum(m['sell_usd'] for m in minute_data)
+        total_buy_vol = sum(m['buy_vol'] for m in minute_data)
+        total_sell_vol = sum(m['sell_vol'] for m in minute_data)
+        total_vol_usd = total_buy_usd + total_sell_usd
+        
+        if total_vol_usd < 1:
+            return None
+        
+        cvd_net = total_buy_usd - total_sell_usd
+        cvd_ratio = total_buy_vol / (total_sell_vol + 1e-10)
+        buy_pct = total_buy_usd / total_vol_usd * 100
+        
+        # Определяем тренд: смотрим последние 10 минут vs предыдущие 20
+        if len(recent) >= 10:
+            recent10 = minute_data[-10:]
+            earlier20 = minute_data[:-10] if len(minute_data) > 10 else minute_data
+            
+            r_net = sum(m['buy_usd'] - m['sell_usd'] for m in recent10)
+            e_net = sum(m['buy_usd'] - m['sell_usd'] for m in earlier20) / max(len(earlier20), 1) * 10
+            
+            if r_net > e_net * 1.2:
+                trend = 'bullish'  # покупают активнее
+            elif r_net < e_net * 0.8:
+                trend = 'bearish'  # продают активнее
+            else:
+                trend = 'neutral'
+        else:
+            trend = 'neutral'
+        
+        return {
+            'cvd_net': cvd_net,
+            'cvd_ratio': round(cvd_ratio, 3),
+            'buy_pct': round(buy_pct, 1),
+            'volume_usd': round(total_vol_usd, 0),
+            'trend': trend,
+            'minutes': len(recent),
         }
     
     # ─── ВНУТРЕННЯЯ ЛОГИКА ─────────────────────────────────────────────
@@ -297,10 +365,9 @@ class BybitWebSocketClient:
         """Подписаться на все каналы."""
         args = self._build_ticker_args() + self._build_kline_args()
         
-        # Добавляем publicTrade для CVD, если есть коллектор
-        if self.cvd_collector:
-            trade_args = ['publicTrade.BTCUSDT']
-            args += trade_args
+        # Добавляем publicTrade для CVD — подписываемся на ВСЕ символы
+        trade_args = [f"publicTrade.{s}" for s in self.symbols]
+        args += trade_args
         
         if not args:
             logger.warning("Нет символов для подписки")
@@ -315,16 +382,15 @@ class BybitWebSocketClient:
                 "args": batch
             }))
         
-        trade_count = len(trade_args) if self.cvd_collector else 0
         logger.info(f"📡 Подписан на {len(self.symbols)} ticker'ов + "
                      f"{len(self.symbols) * len(self.kline_intervals)} kline'ов + "
-                     f"{trade_count} trade(arg)")
+                     f"{len(self.symbols)} publicTrade(ов)")
     
     def _subscribe(self, symbols: List[str]):
         """Подписаться на новые символы."""
         if not self._ws:
             return
-        args = self._build_ticker_args(symbols) + self._build_kline_args(symbols)
+        args = self._build_ticker_args(symbols) + self._build_kline_args(symbols) + [f"publicTrade.{s}" for s in symbols]
         if args:
             for i in range(0, len(args), 10):
                 batch = args[i:i + 10]
@@ -407,11 +473,15 @@ class BybitWebSocketClient:
     # ─── CVD TRADE ─────────────────────────────────────────────────────
     
     def _handle_trade(self, data: dict):
-        """Обработать publicTrade сообщение для CVD."""
-        if not self.cvd_collector:
-            return
-        
+        """Обработать publicTrade сообщение для CVD (все символы)."""
         try:
+            # Извлекаем символ из темы: publicTrade.SOLUSDT → SOL/USDT
+            topic = data.get('topic', '')
+            sym_raw = topic.replace('publicTrade.', '') if 'publicTrade.' in topic else ''
+            if not sym_raw:
+                return
+            symbol = self._normalize_symbol(sym_raw)
+            
             trades = data.get('data', [])
             if not isinstance(trades, list):
                 trades = [trades]
@@ -419,16 +489,56 @@ class BybitWebSocketClient:
             for trade in trades:
                 if not isinstance(trade, dict):
                     continue
-                # Bybit V5 format: T=trade_time_ms, S=Buy/Sell, p=price, v=volume
                 ts = int(trade.get('T') or trade.get('timestamp') or 0)
                 side = (trade.get('S') or trade.get('side') or 'Buy').upper()
                 price = self._safe_float(trade.get('p') or trade.get('price'))
                 volume = self._safe_float(trade.get('v') or trade.get('size') or trade.get('volume'))
                 
-                if price and volume and ts:
+                if not price or not volume or not ts:
+                    continue
+                
+                # BTC тоже сохраняем в старый collector для совместимости
+                if symbol == 'BTC/USDT' and self.cvd_collector:
                     self.cvd_collector.add_trade(price, volume, side, ts)
+                
+                # Per-symbol CVD
+                self._add_cvd_trade(symbol, price, volume, side, ts)
         except Exception as e:
             logger.debug(f"[CVD] _handle_trade error: {e}")
+    
+    def _add_cvd_trade(self, symbol: str, price: float, volume: float, side: str, ts: int):
+        """Добавить сделку в per-symbol CVD корзину."""
+        minute_key = (ts // 60000) * 60
+        
+        if symbol not in self._cvd_data:
+            self._cvd_data[symbol] = {}
+        
+        bucket = self._cvd_data[symbol]
+        if minute_key not in bucket:
+            bucket[minute_key] = {
+                'ts': minute_key,
+                'buy_vol': 0.0,
+                'sell_vol': 0.0,
+                'buy_usd': 0.0,
+                'sell_usd': 0.0,
+                'count': 0,
+            }
+        
+        entry = bucket[minute_key]
+        volume_usd = price * volume
+        if side == 'BUY':
+            entry['buy_vol'] += volume
+            entry['buy_usd'] += volume_usd
+        else:
+            entry['sell_vol'] += volume
+            entry['sell_usd'] += volume_usd
+        entry['count'] += 1
+        
+        # Ограничение размера кеша (24ч = 1440 минут)
+        if len(bucket) > 1500:
+            keys = sorted(bucket.keys())
+            for k in keys[:len(keys) - 1440]:
+                del bucket[k]
     
     # ─── ВСПОМОГАТЕЛЬНЫЕ ───────────────────────────────────────────────
     

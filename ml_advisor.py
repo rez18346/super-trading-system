@@ -115,7 +115,7 @@ MIN_TRAINING_SAMPLES = 50        # Минимум для обучения
 CONFIDENCE_HIGH = 0.65           # XGBoost калиброван лучше, порог можно ниже
 CONFIDENCE_LOW = 0.35            # Ниже этого — SKIP
 RETRAIN_INTERVAL = 3600          # Переобучение раз в час (в секундах)
-SUPPORTED_FEATURES = 25         # 17 базовых + 8 портфельных фич
+SUPPORTED_FEATURES = 31         # 17 базовых + 8 портфельных + 6 рыночных фич
 
 
 class MLAdvisor:
@@ -135,6 +135,10 @@ class MLAdvisor:
         self._symbol_trade_count: Dict[str, int] = {}  # symbol → всего сделок
         self._symbol_win_count: Dict[str, int] = {}    # symbol → прибыльных сделок
         self._recent_trades: Dict[str, deque] = {}     # symbol → deque(pnl_pct, maxlen=10)
+
+        # Рыночная память — history для расчёта дивергенций и затухания
+        self._rsi_history: Dict[str, deque] = {}       # symbol → deque(rsi, maxlen=5)
+        self._candle_range_history: Dict[str, deque] = {}  # symbol → deque(range, maxlen=10)
 
         # 📊 Портфельные метрики (обновляются трейдером каждый цикл)
         self._pf_daily_pnl = 0.0              # PnL за сегодня
@@ -329,6 +333,13 @@ class MLAdvisor:
             'pf_open_positions_pct': 0.0,          # кол-во позиций / max (0-1)
             'pf_exposure_pct_norm': 0.0,           # % капитала в позициях / 100
             'pf_avg_position_value_norm': 0.0,     # средний размер позиции / 90
+            # 🔬 Рыночные фичи контекста — чтобы отличать «ранний вход» от «погони за хаем»
+            'consecutive_green_5m': 0.0,            # сколько 5m свеч подряд зелёные (0-1, /10)
+            'from_24h_high': 0.0,                   # насколько близко к 24h хаю (0-1)
+            'body_strength': 0.5,                   # отношение тела к теням (0=шипы, 1=сильное тело)
+            'volume_divergence': 0.0,               # расхождение цена↑ объём↓ (0=норма, 1=сильное расхождение)
+            'rsi_divergence_bear': 0.0,             # цена↑ RSI↓ (0=нет, 1=медвежья дивергенция)
+            'shrinking_candles': 0.0,               # сколько свеч подряд диапазон сужается (0-1, /5)
         }
 
         features['trend'] = (1.0 if trend == 'bullish' else (0.0 if trend == 'bearish' else 0.5))
@@ -363,6 +374,62 @@ class MLAdvisor:
             features['candle_doji'] = 1.0 if patterns.get('doji') else 0.0
             features['candle_hammer'] = 1.0 if patterns.get('hammer') else 0.0
             features['candle_engulfing'] = 1.0 if (patterns.get('engulfing_bull') or patterns.get('engulfing_bear')) else 0.0
+
+            # 🔬 РЫНОЧНЫЙ КОНТЕКСТ — 6 признаков
+            # --- consecutive_green_5m: сколько свеч подряд зелёные
+            _green_streak = 0
+            for i in range(len(closes) - 1, -1, -1):
+                if closes[i] > (df['open'].values[i] if 'open' in df else closes[i]):
+                    _green_streak += 1
+                else:
+                    break
+            features['consecutive_green_5m'] = min(_green_streak / 10.0, 1.0)
+
+            # --- body_strength: отношение тела свечи к полному диапазону
+            opens_arr = df['open'].values if 'open' in df else np.roll(closes, 1)
+            _body = abs(closes[-1] - opens_arr[-1])
+            _total_range = highs[-1] - lows[-1]
+            features['body_strength'] = _body / (_total_range + 0.0001)  # 0=шипы, 1=сильная свеча
+
+            # --- volume_divergence: расхождение цена↑ объём↓ за 5 свеч
+            if len(closes) >= 6:
+                _price_dir = 1 if closes[-1] > closes[-5] else (-1 if closes[-1] < closes[-5] else 0)
+                _vol_trend = np.mean(volumes[-3:]) / (np.mean(volumes[-6:-3]) + 0.0001)  # >1 = объём растёт
+                if _price_dir > 0 and _vol_trend < 0.85:
+                    features['volume_divergence'] = min(1.0, (1.0 - _vol_trend) / 0.3)  # 0.85→0.5, 0.7→1.0
+                elif _price_dir < 0 and _vol_trend > 1.15:
+                    features['volume_divergence'] = min(1.0, (_vol_trend - 1.0) / 0.3)  # падение с объёмом
+            
+            # --- shrinking_candles: сколько свеч подряд диапазон уменьшается
+            if symbol not in self._candle_range_history:
+                self._candle_range_history[symbol] = deque(maxlen=10)
+            self._candle_range_history[symbol].append(_total_range)
+            _ranges = list(self._candle_range_history[symbol])
+            _shrink_streak = 0
+            for i in range(len(_ranges) - 1, -1, -1):
+                if i > 0 and _ranges[i] < _ranges[i - 1] * 1.05:
+                    _shrink_streak += 1
+                else:
+                    break
+            features['shrinking_candles'] = min(_shrink_streak / 5.0, 1.0)
+
+        # --- RSI дивергенция: цена делает новый хай, RSI — нет
+        if symbol not in self._rsi_history:
+            self._rsi_history[symbol] = deque(maxlen=5)
+        self._rsi_history[symbol].append(rsi)
+        _rsi_list = list(self._rsi_history[symbol])
+        if df is not None and len(df) >= 3 and len(_rsi_list) >= 3:
+            closes_arr = df['close'].values
+            _price_higher = closes_arr[-1] > closes_arr[-3]
+            _rsi_lower = _rsi_list[-1] < _rsi_list[-3] - 2
+            if _price_higher and _rsi_lower:
+                features['rsi_divergence_bear'] = 1.0
+            else:
+                # Цена ниже, RSI выше = бычья дивергенция (потенциал роста)
+                _price_lower = closes_arr[-1] < closes_arr[-3]
+                _rsi_higher = _rsi_list[-1] > _rsi_list[-3] + 2
+                if _price_lower and _rsi_higher:
+                    features['rsi_divergence_bear'] = -0.5  # бычья дивергенция = небольшой бонус
 
         # BTC-корреляция
         try:
@@ -400,6 +467,19 @@ class MLAdvisor:
             logger.debug("bare except in ml_advisor: %s", _e)
             pass
 
+        # 📏 from_24h_high: близость цены к 24h максимуму
+        try:
+            ex = _get_exchange()
+            _ticker = ex.fetch_ticker(symbol)
+            _high_24h = _ticker.get('high')
+            _low_24h = _ticker.get('low')
+            if _high_24h and _low_24h and _high_24h > _low_24h:
+                features['from_24h_high'] = (current_price - _low_24h) / (_high_24h - _low_24h)
+                features['from_24h_high'] = max(0.0, min(1.0, features['from_24h_high']))
+        except Exception as _e:
+            logger.debug("bare except in ml_advisor: %s", _e)
+            pass
+
         # 🧠 Память — поведение ММ на символе
         cl = self._consecutive_losses.get(safe_sym, 0)
         features['consecutive_losses'] = min(float(cl), 5.0)  # кап на 5
@@ -430,7 +510,10 @@ class MLAdvisor:
                 features['pf_daily_pnl'], features['pf_daily_profit_ratio'],
                 features['pf_daily_trade_count'], features['pf_consecutive_profits'],
                 features['pf_consecutive_losses_global'], features['pf_open_positions_pct'],
-                features['pf_exposure_pct_norm'], features['pf_avg_position_value_norm']]
+                features['pf_exposure_pct_norm'], features['pf_avg_position_value_norm'],
+                features['consecutive_green_5m'], features['from_24h_high'],
+                features['body_strength'], features['volume_divergence'],
+                features['rsi_divergence_bear'], features['shrinking_candles']]
 
     def update_portfolio_stats(self, daily_pnl=0.0, profit_count=0, loss_count=0,
                                 trade_count=0, consecutive_profits=0,
@@ -457,37 +540,46 @@ class MLAdvisor:
                 'consecutive_losses', 'loss_streak_active', 'recent_win_rate_10',
                 'pf_daily_pnl', 'pf_daily_profit_ratio', 'pf_daily_trade_count',
                 'pf_consecutive_profits', 'pf_consecutive_losses_global',
-                'pf_open_positions_pct', 'pf_exposure_pct_norm', 'pf_avg_position_value_norm']
+                'pf_open_positions_pct', 'pf_exposure_pct_norm', 'pf_avg_position_value_norm',
+                'consecutive_green_5m', 'from_24h_high', 'body_strength',
+                'volume_divergence', 'rsi_divergence_bear', 'shrinking_candles']
 
     def add_trade_result(self, symbol, entry_price, exit_price, rsi, trend, confidence,
                          hold_hours, reason, volume_ratio=None):
         """
         Добавляет результат сделки в обучающую выборку.
+        Использует _extract_features для полного вектора признаков (31 фича).
         label = 1 если сделка прибыльная > 0.5% (хороший сигнал)
         label = 0 если убыточная или нулевая (плохой сигнал)
         """
         pnl_pct = (exit_price - entry_price) / entry_price * 100
         label = 1.0 if pnl_pct > 0.5 else 0.0
 
-        features = {
-            'rsi': rsi, 'confidence': confidence, 'price': entry_price,
-            'trend_bullish': 1.0 if trend == 'bullish' else 0.0,
-            'trend_bearish': 1.0 if trend == 'bearish' else 0.0,
-            'price_change_1h': 0.0, 'volume_ratio': volume_ratio or 1.0,
-            'price_std': 0.0, 'price_slope': 0.0,
-        }
+        # Пробуем получить 5m свечи для полного вектора признаков
+        df_5m = None
+        try:
+            import copy
+            raw = _fetch_tf_data(symbol, '5m', 12)
+            if raw is not None and len(raw) > 10:
+                df_5m = raw
+        except Exception:
+            pass
 
-        self.training_data.append({
-            'features': [features[k] for k in sorted(features.keys())],
+        # Полный вектор через _extract_features (с entry_price на момент входа)
+        full_features = self._extract_features(symbol, entry_price, rsi, trend, confidence, df_5m)
+
+        sample = {
+            'features': full_features,
             'label': label,
             'symbol': symbol,
             'pnl': pnl_pct,
             'reason': reason,
             'time': datetime.now().isoformat()
-        })
+        }
+        self.training_data.append(sample)
         self._save_training_data()
 
-        logger.info(f"📚 ML: обучение на {symbol} (PnL={pnl_pct:+.2f}%, label={int(label)})")
+        logger.info(f"📚 ML: обучение на {symbol} (PnL={pnl_pct:+.2f}%, label={int(label)}, фич={len(full_features)})")
 
     def train(self, force=False):
         """
@@ -502,8 +594,18 @@ class MLAdvisor:
             logger.info(f"⏳ ML: ждём данные ({len(self.training_data)}/{MIN_TRAINING_SAMPLES})")
             return
 
-        X = np.array([d['features'] for d in self.training_data])
-        y = np.array([d['label'] for d in self.training_data])
+        # ═══ НОРМАЛИЗАЦИЯ ПРИЗНАКОВ ═══════════════════════════════════
+        # Обратная совместимость: старые выборки с 9 признаками → дополняем нулями
+        max_features = max(len(d['features']) for d in self.training_data)
+        normalized_data = []
+        for d in self.training_data:
+            f = d['features']
+            if len(f) < max_features:
+                f = f + [0.0] * (max_features - len(f))
+            normalized_data.append({'features': f, 'label': d['label']})
+
+        X = np.array([d['features'] for d in normalized_data])
+        y = np.array([d['label'] for d in normalized_data])
 
         # Проверка: если все метки одного класса — не обучаем
         if len(np.unique(y)) < 2:

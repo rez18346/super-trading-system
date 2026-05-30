@@ -19,6 +19,31 @@ import signal
 import sys
 import db_pg as db  # PostgreSQL
 
+# CVD данные из WebSocket
+_ws_client_for_cvd = None
+
+def _get_ws_client():
+    """Получить WebSocket-клиент (с ленивой инициализацией)."""
+    global _ws_client_for_cvd
+    if _ws_client_for_cvd is None:
+        try:
+            from ws_client import get_ws_client
+            _ws_client_for_cvd = get_ws_client()
+        except ImportError:
+            pass
+    return _ws_client_for_cvd
+
+
+def _get_symbol_cvd(symbol: str) -> Optional[Dict]:
+    """Получить CVD сводку для символа из WebSocket."""
+    try:
+        ws = _get_ws_client()
+        if ws and hasattr(ws, 'get_symbol_cvd_summary'):
+            return ws.get_symbol_cvd_summary(symbol, n_minutes=30)
+    except Exception:
+        pass
+    return None
+
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -495,7 +520,9 @@ class IndustrialTrader:
     def execute_trade(self, symbol: str, side: str, quantity: float, price: float,
                       sl_price: Optional[float] = None, tp_price: Optional[float] = None,
                       trail_act: Optional[bool] = None, trail_dist: Optional[float] = None,
-                      max_hold_h: Optional[int] = None) -> Optional[Dict]:
+                      max_hold_h: Optional[int] = None,
+                      exit_reason: str = None,
+                      scores: Optional[Dict] = None) -> Optional[Dict]:
         """Выполнение торговой операции"""
         try:
             # В режиме бумажной торговли только симулируем
@@ -532,7 +559,7 @@ class IndustrialTrader:
                         '_created_at': time.time(),  # 🛡️ Для защиты от sync-удаления
                     }
                     self.available_capital -= quantity * price
-                    db.add_trade(symbol, 'buy', float(price), float(quantity), ts=timestamp)
+                    db.add_trade(symbol, 'buy', float(price), float(quantity), ts=timestamp, scores=scores)
                 elif side == 'sell' and symbol in self.positions:
                     with self._lock:
                         position = self.positions.pop(symbol)
@@ -544,7 +571,7 @@ class IndustrialTrader:
                     
                     trade['pnl'] = pnl
                     trade['pnl_percent'] = (pnl / (position['entry_price'] * quantity)) * 100
-                    db.add_trade(symbol, 'sell', float(price), float(quantity), pnl=float(pnl), pnl_pct=float(trade['pnl_percent']), ts=timestamp)
+                    db.add_trade(symbol, 'sell', float(price), float(quantity), pnl=float(pnl), pnl_pct=float(trade['pnl_percent']), exit_reason=exit_reason, ts=timestamp)
                 
                 self.trades_history.append(trade)
                 logger.info(f"Бумажная сделка: {side} {quantity} {symbol} @ ${price}")
@@ -633,7 +660,8 @@ class IndustrialTrader:
                         quantity=float(filled_qty),
                         order_id=str(order['id']),
                         exchange_id=str(order['id']),
-                        ts=datetime.now().isoformat()
+                        ts=datetime.now().isoformat(),
+                        scores=scores
                     )
                     
                     # Берём реальное количество из order.filled или quantity
@@ -710,6 +738,7 @@ class IndustrialTrader:
                             quantity=float(filled),
                             pnl=float(pnl),
                             pnl_pct=float(pnl_pct),
+                            exit_reason=exit_reason,
                             order_id=str(order['id']),
                             exchange_id=str(order['id']),
                             ts=datetime.now().isoformat()
@@ -851,7 +880,7 @@ class IndustrialTrader:
                         
                         # BTC свечи для Regime Tracker
                         raw_btc_5m = fetcher.get_ohlcv('BTC/USDT', '5m', 50)
-                        raw_btc_1h = fetcher.get_ohlcv('BTC/USDT', '1h', 48)
+                        raw_btc_1h = fetcher.get_ohlcv('BTC/USDT', '1h', 100)
                         if raw_btc_5m:
                             import pandas as pd
                             btc_5m_candles = pd.DataFrame(
@@ -888,6 +917,28 @@ class IndustrialTrader:
                         btc_price = btc_ticker['last']
                     except Exception as _e:
                         logger.debug(f"[trading_cycle] btc fetch: {_e}")
+                
+                # 🧠 Вычисляем 1H тренд для каждого символа (один раз за цикл)
+                # Используется для: отключение раннего трейлинга/break-even на бычьем тренде
+                self._trend_1h = {}
+                for sym, h1_list in mtf_candles_1h.items():
+                    if len(h1_list) >= 20:
+                        closes = [c['c'] for c in h1_list[-20:]]
+                        ema7 = sum(closes[-7:]) / 7
+                        ema20 = sum(closes[-20:]) / 20
+                        change = (closes[-1] - closes[-20]) / closes[-20] * 100
+                        if ema7 > ema20 and change > 2:
+                            self._trend_1h[sym] = 'strong_bullish'
+                        elif ema7 > ema20:
+                            self._trend_1h[sym] = 'bullish'
+                        elif ema7 < ema20 and change < -2:
+                            self._trend_1h[sym] = 'strong_bearish'
+                        elif ema7 < ema20:
+                            self._trend_1h[sym] = 'bearish'
+                        else:
+                            self._trend_1h[sym] = 'neutral'
+                    else:
+                        self._trend_1h[sym] = 'neutral'
                 
                 # Инициализация DecisionEngine (синглтон — один на весь процесс)
                 if not hasattr(self, '_de'):
@@ -1097,12 +1148,22 @@ class IndustrialTrader:
                             last_exit_info = self._last_exit_prices.get(symbol, {})
                             last_exit_price = last_exit_info.get('price')
                             last_exit_time = last_exit_info.get('time')
+
+                            # 📏 24h high для контроля входа у вершины
+                            _high_24h = None
+                            try:
+                                _ticker = self.exchange.fetch_ticker(symbol)
+                                _high_24h = _ticker.get('high')
+                            except Exception:
+                                pass
                             
                             decision = de.decide_entry(symbol, de_confidence, de_trend, de_rsi,
                                                        de_price, de_positions, max_pos,
                                                        candles_5m=c5m, candles_1h=c1h, candles_4h=c4h,
                                                        last_exit_price=last_exit_price,
-                                                       last_exit_time=last_exit_time)
+                                                       last_exit_time=last_exit_time,
+                                                       cvd_data=_get_symbol_cvd(symbol),
+                                                       high_24h=_high_24h)
                             
                             if decision.action == 'enter':
                                 # 🛑 PORTFOLIO GUARD: если сработал — входы заблокированы
@@ -1195,7 +1256,8 @@ class IndustrialTrader:
                                     self.execute_trade(symbol, 'buy', quantity, de_price,
                                         sl_price=decision.sl_price, tp_price=decision.tp_price,
                                         trail_act=decision.trail_act, trail_dist=decision.trail_dist,
-                                        max_hold_h=decision.max_hold_h)
+                                        max_hold_h=decision.max_hold_h,
+                                        scores=decision.metadata)
                                 else:
                                     logger.warning(f"⏭️ [DE] {symbol}: недостаточно капитала")
                             else:
@@ -1273,12 +1335,17 @@ class IndustrialTrader:
                         # (исправлено: раньше проверка была внутри pnl_percent >= 1.5,
                         #  из-за чего при падении PnL ниже 1.5% трейлинг переставал проверяться)
                         if '_early_trail_peak' in position and not early_trail_triggered:
-                            peak = position['_early_trail_peak']
-                            trail_price = peak * (1 - 0.003)
-                            if current_price <= trail_price and pnl_percent >= 0.8:
-                                early_trail_triggered = True
-                                early_trail_reason = f"Ранний трейлинг: пик={peak:.4f}, откат до {current_price:.4f} ({pnl_percent:+.2f}%)"
-                                logger.info(f"🎯 [Ранний трейлинг] {symbol}: {early_trail_reason}")
+                            # 🛡 На бычьем 1H тренде отключаем ранний трейлинг — держим до ensemble/SL
+                            _trend = getattr(self, '_trend_1h', {}).get(symbol, 'neutral')
+                            if _trend in ('bullish', 'strong_bullish'):
+                                logger.debug(f"🌡️ [ETRAIL→СКИП] {symbol}: 1H={_trend} — ранний трейлинг отключён")
+                            else:
+                                peak = position['_early_trail_peak']
+                                trail_price = peak * (1 - 0.003)
+                                if current_price <= trail_price and pnl_percent >= 0.8:
+                                    early_trail_triggered = True
+                                    early_trail_reason = f"Ранний трейлинг: пик={peak:.4f}, откат до {current_price:.4f} ({pnl_percent:+.2f}%)"
+                                    logger.info(f"🎯 [Ранний трейлинг] {symbol}: {early_trail_reason}")
                         
                         # ═══════════════════════════════════════════════════════
 
@@ -1287,14 +1354,55 @@ class IndustrialTrader:
                         # Не ждём SL, не ждём чуда — освобождаем капитал
                         be_sell_reason = None
                         if hold_hours >= 4.0 and not early_trail_triggered:
-                            peak_pnl = position.get('max_profit', 0)
-                            if peak_pnl < rp.get('tp_pct', 3.0) * 0.7:
-                                if pnl_percent >= -0.2 and pnl_percent <= 1.0:
-                                    be_sell_reason = f"Break-even: {hold_hours:.0f}ч, пик={peak_pnl:+.2f}%, PnL={pnl_percent:+.2f}%"
-                                    logger.info(f"🥬 [BE] {symbol}: {be_sell_reason}. Продаю в безубыток")
+                            # 🛡 На бычьем 1H тренде отключаем break-even — держим до ensemble/SL
+                            _trend = getattr(self, '_trend_1h', {}).get(symbol, 'neutral')
+                            if _trend in ('bullish', 'strong_bullish'):
+                                logger.debug(f"🥬 [BE→СКИП] {symbol}: 1H={_trend} — break-even отключён")
+                            else:
+                                peak_pnl = position.get('max_profit', 0)
+                                if peak_pnl < rp.get('tp_pct', 3.0) * 0.7:
+                                    if pnl_percent >= -0.2 and pnl_percent <= 1.0:
+                                        be_sell_reason = f"Break-even: {hold_hours:.0f}ч, пик={peak_pnl:+.2f}%, PnL={pnl_percent:+.2f}%"
+                                        logger.info(f"🥬 [BE] {symbol}: {be_sell_reason}. Продаю в безубыток")
 
                         # ═══════════════════════════════════════════════════════
-                        # ⚡ ИМПУЛЬСНЫЙ ВЫХОД (1M свечи) + EXIT ENSEMBLE (модули)
+                        # 🛡️ PROGRESSIVE STOP-LOSS: SL автоматически вверх
+                        # ═══════════════════════════════════════════════════════
+                        # Принцип: ни одна сделка, побывавшая в плюсе, не уходит в минус.
+                        # SL двигается ТОЛЬКО вверх, никогда не расширяется.
+                        # PnL ≥ 1.5% → безубыток | PnL ≥ 3.0% → фиксация +1%
+                        #
+                        if pnl_percent >= 1.5 and not early_trail_triggered:
+                            # Текущий SL позиции
+                            cur_sl = position.get('_sl_price', entry_price * (1 - rp['sl_pct'] / 100.0))
+                            
+                            # Целевой SL: всегда минимум entry (безубыток)
+                            target_sl = entry_price  # 0%
+                            if pnl_percent >= 3.0:
+                                target_sl = entry_price * 1.01  # +1%
+                            
+                            # Двигаем SL только если новый SL выше текущего
+                            if target_sl > cur_sl:
+                                position['_sl_price'] = target_sl
+                                sl_pct = ((target_sl / entry_price) - 1) * 100
+                                logger.info(f"🛡️ [SL→BE] {symbol}: PnL={pnl_percent:+.2f}% — SL на {sl_pct:+.2f}%")
+
+                        # ═══════════════════════════════════════════════════════
+                        # 🛡️ PROFIT PROTECTION: защита накопленной прибыли
+                        # ═══════════════════════════════════════════════════════
+                        profit_sell = None
+                        if pnl_percent >= 2.5 and not early_trail_triggered:
+                            _trend = getattr(self, '_trend_1h', {}).get(symbol, 'neutral')
+                            
+                            # 2) Широкий трейлинг от пика (0.5% на бычьем, 1% на нейтральном)
+                            highest = position.get('_highest_price', current_price)
+                            if highest > entry_price * 1.03:  # был пик выше entry
+                                trail_buffer = 0.005 if _trend in ('bullish', 'strong_bullish') else 0.01
+                                trail_level = highest * (1 - trail_buffer)
+                                if current_price <= trail_level:
+                                    profit_sell = f"Profit Protection: пик={highest:.4f}, откат {trail_buffer*100:.1f}% до {current_price:.4f}"
+                                    logger.info(f"🛡️ [PROFIT→SELL] {symbol}: {profit_sell}")
+
                         # ═══════════════════════════════════════════════════════
                         impulse_exit_signal = None
                         candles_1m = None
@@ -1458,6 +1566,46 @@ class IndustrialTrader:
                                 should_sell = True
                                 sell_reason = early_trail_reason
 
+                        # 1.5) Profit Protection — защита накопленной прибыли
+                        # Сначала SL в безубыток, потом ensemble решает: держать или продавать
+                        if not should_sell and profit_sell:
+                            # Пробуем ensemble перед продажей — может рынок ещё держится
+                            _pp_ensemble_override = False
+                            _pp_ensemble_candles = None
+                            _pp_ensemble_label = ""
+                            _pp_hold_threshold = 65
+
+                            if candles_1m and len(candles_1m) >= 10:
+                                _pp_ensemble_candles = candles_1m
+                                _pp_ensemble_label = "1m"
+                            elif df is not None and len(df) >= 10:
+                                _pp_ensemble_candles = df.to_dict('records')
+                                _pp_ensemble_label = "5m⚠️"
+                                _pp_hold_threshold = 70
+
+                            if _pp_ensemble_candles is not None and hasattr(self, '_de'):
+                                try:
+                                    de = self._de
+                                    _pp_vote = de._evaluate_exit_ensemble(
+                                        symbol, entry_price, current_price, pnl_percent,
+                                        highest_price=position.get('_highest_price', current_price),
+                                        candles_5m=_pp_ensemble_candles,
+                                        candles_1h=mtf_candles_1h.get(symbol, []),
+                                        entry_vwap_deviation=entry_vwap_dev
+                                    )
+                                    _pp_hold = _pp_vote.get('hold_confidence', 0)
+                                    if _pp_hold >= _pp_hold_threshold:
+                                        _pp_ensemble_override = True
+                                        logger.info(f"🛡️ [PROFIT→HOLD] {symbol}: ensemble hold={_pp_hold}% ≥ {_pp_hold_threshold} — держим, SL в безубытке")
+                                    else:
+                                        logger.info(f"🛡️ [PROFIT→SELL] {symbol}: ensemble hold={_pp_hold}% < {_pp_hold_threshold} — {profit_sell}")
+                                except Exception as _pp_e:
+                                    logger.debug(f"[PROFIT] ensemble: {_pp_e}")
+
+                            if not _pp_ensemble_override:
+                                should_sell = True
+                                sell_reason = profit_sell
+
                         # 2) DecisionEngine exit (SL/TP/трейлинг/таймаут с exit ensemble)
                         if not should_sell and exit_decision is not None:
                             if exit_decision.exit_override == 'hold_widen_sl':
@@ -1468,6 +1616,21 @@ class IndustrialTrader:
                                 # Ensemble подтвердил выход
                                 should_sell = True
                                 sell_reason = exit_decision.reason
+
+                        # 2.1) ⏰ Time-based exit: если позиция >8ч в минусе — принудительный выход
+                        #     Ensemble может блокировать SL, но если мы в минусе полдня — пора
+                        if not should_sell and hold_hours >= 8 and pnl_percent < 0:
+                            if exit_widened:
+                                # Ensemble блокировал SL, но мы выходим по времени
+                                logger.info(f"⏰ [TIME→EXIT] {symbol}: {hold_hours:.0f}ч в минусе ({pnl_percent:+.2f}%) — принудительный выход")
+                                should_sell = True
+                                sell_reason = f"Время: {hold_hours:.0f}ч в минусе"
+                                exit_widened = False
+                            elif pnl_percent <= -2:
+                                # Даже без SMART EXIT — если >8ч и >-2%, пора
+                                logger.info(f"⏰ [TIME→EXIT] {symbol}: {hold_hours:.0f}ч, PnL={pnl_percent:+.2f}% — принудительный выход")
+                                should_sell = True
+                                sell_reason = f"Время: {hold_hours:.0f}ч, PnL={pnl_percent:+.2f}%"
 
                         # 3) Импульсный выход (с ensemble-проверкой)
                         # 3) Импульсный выход (защита от слива на падающем рынке)
@@ -1497,16 +1660,12 @@ class IndustrialTrader:
                             should_sell = True
                             sell_reason = be_sell_reason
 
-                        # ═══ SMART SL WIDENING: обновляем SL если ensemble отменил выход ─
+                        # ═══ SMART SL WIDENING: ОТКЛЮЧЁН по просьбе Ксюши
+                        # SL фиксированный — не расширяется ensemble. Быстрый выход = быстрый ре-вход.
+                        # Вместо SL: exit_widened=True, но без обновления _sl_price
                         if exit_widened and exit_decision and exit_decision.sl_price is not None:
-                            new_sl = exit_decision.sl_price
-                            old_sl = position.get('_sl_price', entry_price * (1 - rp['sl_pct'] / 100.0))
-                            if new_sl < old_sl:  # SL расширяется (ниже текущего)
-                                # Обновляем SL в позиции — ключ _sl_price а не sl_price (см. __init__)
-                                position['_sl_price'] = new_sl
-                                position['smart_exit_count'] = position.get('smart_exit_count', 0) + 1
-                                logger.info(f"🧠 SL РАСШИРЕН: {symbol} {old_sl:.6f}→{new_sl:.6f} "
-                                            f"(счётчик: {position.get('smart_exit_count')})")
+                            logger.info(f"🧠 [SL→ФИКС] {symbol}: ensemble просил SL {exit_decision.sl_price:.6f}, но SL фиксирован")
+                            pass  # exit_widened=True, sell не происходит — но SL не расширен
 
                         # ═══ RE-ENTRY SUPPRESSION: если только что вышли и снова хотим войти ─
                         reentry_check_cooldown = 300  # 5 мин
@@ -1569,7 +1728,20 @@ class IndustrialTrader:
                             if safe_qty < quantity * 0.9:
                                 logger.warning(f"⚠️ {symbol}: free={free_asset:.6f} < qty={quantity:.6f}. Использую free.")
                             
-                            result = self.execute_trade(symbol, 'sell', safe_qty, current_price)
+                            # 📝 Логируем решение о продаже в signal_log
+                            try:
+                                from db_pg import log_signal
+                                log_signal(
+                                    symbol=symbol,
+                                    decision='sell',
+                                    score=0,
+                                    threshold=0,
+                                    components={'reason': sell_reason[:200] if sell_reason else 'manual'},
+                                )
+                            except Exception:
+                                pass
+                            
+                            result = self.execute_trade(symbol, 'sell', safe_qty, current_price, exit_reason=sell_reason)
 
                             # 🚫 Кулдаун re-entry: запомнить время выхода
                             if result is not None:
@@ -1655,7 +1827,7 @@ class IndustrialTrader:
                                 df_g = self.get_market_data(sym, '1m', 1)
                                 if not df_g.empty:
                                     cur_price = df_g['close'].iloc[-1]
-                                    self.execute_trade(sym, 'sell', pos['quantity'], cur_price)
+                                    self.execute_trade(sym, 'sell', pos['quantity'], cur_price, exit_reason='portfolio_guard')
                                     logger.info(f"🔒 [GUARD] принудительное закрытие {sym}")
                             except Exception as e_g:
                                 logger.error(f"[GUARD] ошибка закрытия {sym}: {e_g}")

@@ -21,6 +21,14 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 
+# Models (trained ML models, large binaries)
+models/*.pkl
+models/*.pickle
+
+# Logs
+*.log
+system.log
+
 # Python
 __pycache__/
 *.pyc

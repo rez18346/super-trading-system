@@ -173,6 +173,13 @@ def _detect_engulfing(o1, c1, o2, c2):
 # Feature Engineering — 25 признаков напрямую из 1H+4H свечей
 # ============================================================================
 
+def _listify(candles):
+    """Преобразовать DataFrame в list[dict] (если ещё не list)."""
+    if hasattr(candles, 'iloc'):
+        return candles.to_dict('records') if hasattr(candles, 'to_dict') else []
+    return candles
+
+
 def _normalize_candle_dict(d):
     """Привести словарь свечи к формату {o,h,l,c,v,t} из любого входа."""
     if 'o' in d:
@@ -412,16 +419,16 @@ class MLProfessionalV2:
         self.is_27f = False     # Флаг: 27-признаковая модель?
         self.model_path = model_path or os.path.join(os.path.dirname(__file__), "models", "ml_pro_v2.pkl")
 
-        # 🧠 Буфер для дообучения на реальных сделках
-        self._last_feature_vector = None      # последний вектор признаков (27f)
-        self._last_feature_symbol = None      # символ последнего вектора
-        self._entry_buffer = {}               # {symbol: {'features': np.array, 'ts': float}}
-        self._training_buffer = []            # [(features, label, symbol, ts)]
+        # 🧠 Буфер для дообучения на реальных сделках (Professional: храним СВЕЧИ, не фичи)
+        self._last_candles = None             # (candles_1h, candles_4h) — последние свечи из evaluate
+        self._last_candles_symbol = None      # символ последних свечей
+        self._entry_buffer = {}               # {symbol: {'candles_1h': [...], 'candles_4h': [...], 'ts': float}}
+        self._training_buffer = []            # [{'candles_1h': [...], 'candles_4h': [...], 'label': 1.0/0.0, 'symbol': str, 'ts': float}]
         self._training_buffer_path = os.path.join(os.path.dirname(self.model_path), 'ml_pro_v2_training.pkl')
         self._last_retrain_27f = 0            # timestamp последнего ретрейна
         
         # 🗂️ Загружаем сохранённый training_buffer (включая исторические сделки)
-        self._load_training_buffer()
+        buf_was_cleaned = self._load_training_buffer()
 
         # 1. Пробуем 25-признаковую мультиТФ модель (приоритет)
         v27f = os.path.join(os.path.dirname(__file__), "models", "ml_pro_v2_27f.pkl")
@@ -438,6 +445,12 @@ class MLProfessionalV2:
                 self.feature_names = feats if feats else FEAT_25
                 self.feature_importance = data.get("importance")
                 log.info(f"[ML-v2] ✅ 25-признаковая мультиТФ (1H+4H) ({n:,} обр., {acc:.2%} acc)")
+                # Если буфер был очищен (старые багнутые данные) — не используем старую модель
+                if buf_was_cleaned:
+                    log.warning(f"[ML-v2] 🧹 Буфер очищен — старая модель обучена на багнутых данных. Отключаем до накопления чистых.")
+                    self.model = None
+                    self.trained = False
+                    self.is_27f = False
             except Exception as e:
                 log.warning(f"[ML-v2] 27f не загрузилась: {e}")
 
@@ -480,6 +493,14 @@ class MLProfessionalV2:
             return ("BUY" if confidence >= 55 else "SKIP"), confidence / 100.0, {}
 
         try:
+            # 🧠 Сохраняем свечи для дообучения (Professional: source of truth)
+            # Делаем это всегда, когда есть 1H+4H, независимо от загруженной модели
+            if len(candles_1h or []) >= 100 and len(candles_4h or []) >= 25:
+                h1_list = _listify(candles_1h)
+                h4_list = _listify(candles_4h)
+                self._last_candles = (h1_list[:] if h1_list else [], h4_list[:] if h4_list else [])
+                self._last_candles_symbol = symbol
+
             # Выбираем путь в зависимости от типа модели
             if self.is_27f:
                 if candles_1h and len(candles_1h) >= 100:
@@ -557,9 +578,9 @@ class MLProfessionalV2:
                 "hour": int(X[-1, 24]),
                 "mom24": round(float(X[-1, 18]), 2),
             }
-            # 🧠 Сохраняем вектор признаков для возможного ретрейна
-            self._last_feature_vector = X[-1].copy()
-            self._last_feature_symbol = symbol
+            # 🧠 Сохраняем свечи для возможного ретрейна (Professional: храним source of truth, а не фичи)
+            self._last_candles = (h1_list[:] if h1_list else [], h4_list[:] if h4_list else [])
+            self._last_candles_symbol = symbol
 
             return decision, prob, features
 
@@ -633,25 +654,33 @@ class MLProfessionalV2:
     # ── Дообучение 27f модели на реальных сделках ────────────────────────────
 
     def store_entry_features(self, symbol: str):
-        """Сохранить признаки входа для трейдера."""
-        if self._last_feature_vector is not None and self._last_feature_symbol == symbol:
+        """Сохранить свечи входа для трейдера (Professional: храним сырые свечи, не фичи)."""
+        if self._last_candles is not None and self._last_candles_symbol == symbol:
+            h1, h4 = self._last_candles
             self._entry_buffer[symbol] = {
-                'features': self._last_feature_vector.copy(),
+                'candles_1h': h1[:] if h1 else [],
+                'candles_4h': h4[:] if h4 else [],
                 'ts': time.time()
             }
-            log.info(f"[ML-v2] 📝 {symbol}: сохранены признаки входа (27f)")
+            log.info(f"[ML-v2] 📝 {symbol}: сохранены свечи входа ({len(h1)}x1H / {len(h4)}x4H)")
 
     def record_outcome(self, symbol: str, pnl_pct: float):
-        """Записать результат сделки для обучения."""
+        """Записать результат сделки для обучения (Professional: сохраняем свечи + outcome)."""
         entry = self._entry_buffer.pop(symbol, None)
         if entry is None:
-            log.debug(f"[ML-v2] {symbol}: признаки входа не найдены")
+            log.debug(f"[ML-v2] {symbol}: свечи входа не найдены")
             return
         # Успех: PnL > 0 (даже +0.1% — профит)
         label = 1.0 if pnl_pct > 0 else 0.0
-        self._training_buffer.append((entry['features'], label, symbol, entry['ts']))
+        self._training_buffer.append({
+            'candles_1h': entry['candles_1h'],
+            'candles_4h': entry['candles_4h'],
+            'label': label,
+            'symbol': symbol,
+            'ts': entry['ts']
+        })
         n = len(self._training_buffer)
-        good = sum(1 for _, l, _, _ in self._training_buffer if l > 0.5)
+        good = sum(1 for e in self._training_buffer if e['label'] > 0.5)
         bad = n - good
         log.info(f"[ML-v2] 🏷️ {symbol}: outcome={'✅' if label else '❌'}, PnL={pnl_pct:+.2f}% "
                  f"(буфер: {n}, good={good}, bad={bad})")
@@ -666,32 +695,48 @@ class MLProfessionalV2:
             os.makedirs(os.path.dirname(self._training_buffer_path), exist_ok=True)
             with open(self._training_buffer_path, 'wb') as f:
                 pickle.dump(self._training_buffer, f)
+            log.info(f"[ML-v2] 💾 Буфер сохранён: {len(self._training_buffer)} примеров")
         except Exception as e:
             log.warning(f"[ML-v2] ⚠️ Не удалось сохранить training buffer: {e}")
     
     def _load_training_buffer(self):
-        """Загрузить training_buffer из pickle (персистентность через рестарты)."""
+        """Загрузить training_buffer из pickle (персистентность через рестарты).
+        Поддерживает миграцию из старого формата [(features, label, symbol, ts)] в новый.
+        Возвращает: True если буфер был очищен (старый формат), False иначе.
+        """
+        cleaned = False
         try:
-            import pickle
             if os.path.exists(self._training_buffer_path):
                 with open(self._training_buffer_path, 'rb') as f:
                     loaded = pickle.load(f)
                 if isinstance(loaded, list) and len(loaded) > 0:
-                    self._training_buffer = loaded
-                    log.info(f"[ML-v2] 📂 Загружен training_buffer: {len(loaded)} примеров")
+                    # Проверка формата: старый = tuple, новый = dict
+                    first = loaded[0]
+                    if isinstance(first, tuple):
+                        # Старый формат [(features, label, symbol, ts)] — дропаем
+                        log.warning(f"[ML-v2] 🧹 Обнаружен старый формат training_buffer ({len(loaded)} примеров). Очищаем — данные содержат багнутые константные фичи.")
+                        self._training_buffer = []
+                        self._save_training_buffer()
+                        cleaned = True
+                    else:
+                        self._training_buffer = loaded
+                        log.info(f"[ML-v2] 📂 Загружен training_buffer: {len(loaded)} примеров")
         except Exception as e:
             log.warning(f"[ML-v2] ⚠️ Не удалось загрузить training buffer: {e}")
-        return len(self._training_buffer) > 0
+        return cleaned
     
     def seed_from_db(self, exchange=None):
         """Загрузить исторические сделки из БД (вызов после init, когда модули готовы).
+        
+        Профессиональная версия: загружает реальные свечи 1H и 4H с биржи
+        и сохраняет их как source of truth для ретрейна.
         
         Принимает опциональный exchange (ccxt) для загрузки свечей.
         Вызывать один раз при старте системы, когда всё инициализировано.
         """
         try:
             import db_pg
-            trades = db_pg.get_trade_history(limit=2000)
+            trades = db_pg.get_trade_history(limit=500)
         except Exception as e:
             log.warning(f"[ML-v2] seed_from_db: БД недоступна ({e})")
             return 0
@@ -699,7 +744,7 @@ class MLProfessionalV2:
         if not trades:
             return 0
         
-        existing_ts = {row[3] for row in self._training_buffer}
+        existing_ts = {e['ts'] for e in self._training_buffer if isinstance(e, dict)}
         log.info(f"[ML-v2] 📜 Загрузка исторических сделок из БД ({len(trades)} всего, {len(existing_ts)} уже есть)...")
         
         # Группируем по символам
@@ -711,21 +756,17 @@ class MLProfessionalV2:
             xt = t.get('exit_time')
             pnl = t.get('pnl')
             pct = t.get('pnl_percent') or 0
-            ep = t.get('entry_price', 0)
-            qty = t.get('quantity', 0)
-            if not all([sym, et, xt, pnl is not None, ep]):
+            if not all([sym, et, xt, pnl is not None]):
                 continue
             try:
-                entry_ts = __import__('datetime').datetime.fromisoformat(et).timestamp()
+                entry_ts = datetime.fromisoformat(et).timestamp()
                 if any(abs(entry_ts - ts) < 10 for ts in existing_ts):
                     continue
             except Exception:
                 continue
             by_symbol[sym].append({
                 'entry_time': et, 'entry_ts': entry_ts,
-                'entry_price': ep, 'quantity': qty,
                 'pnl': pnl, 'pnl_pct': pct,
-                'exit_time': xt,
             })
         
         if not by_symbol:
@@ -747,45 +788,35 @@ class MLProfessionalV2:
             if not strades:
                 continue
             try:
-                raw_5m = ex.fetch_ohlcv(sym, '5m', limit=100)
-                raw_1h = ex.fetch_ohlcv(sym, '1h', limit=100)
-                if not raw_5m or not raw_1h:
+                # Загружаем реальные свечи с биржи (Professional: source of truth)
+                raw_1h = ex.fetch_ohlcv(sym, '1h', limit=200)
+                raw_4h = ex.fetch_ohlcv(sym, '4h', limit=50)
+                if not raw_1h or not raw_4h:
+                    log.warning(f"[ML-v2] ⚠️ {sym}: свечи не загружены")
                     continue
                 
-                c5m = [{'o':c[1],'h':c[2],'l':c[3],'c':c[4],'v':c[5],'t':c[0]/1000} for c in raw_5m]
-                
-                vsa_score = 50.0
-                try:
-                    from vsa_analyzer import analyze_volume_spread
-                    vsa_r = analyze_volume_spread(c5m)
-                    if vsa_r:
-                        vsa_score = vsa_r.score
-                except Exception:
-                    pass
-                
-                vwap_5m = 0.0
-                total_v = sum(c['v'] for c in c5m[:12])
-                if total_v > 0:
-                    vwap_5m = sum(c['c']*c['v'] for c in c5m[:12]) / total_v
+                c1h = [{'o':c[1],'h':c[2],'l':c[3],'c':c[4],'v':c[5],'t':c[0]/1000} for c in raw_1h]
+                c4h = [{'o':c[1],'h':c[2],'l':c[3],'c':c[4],'v':c[5],'t':c[0]/1000} for c in raw_4h]
                 
                 for s in strades:
                     try:
-                        features = np.zeros(27, dtype=np.float64)
-                        entry_p = s['entry_price']
-                        features[0] = 60.0
-                        features[1] = entry_p
-                        features[2] = s['quantity']
-                        features[3] = vsa_score
-                        features[4] = s['pnl_pct']
-                        features[5] = s['pnl']
-                        features[6] = 55.0
-                        features[14] = vwap_5m / max(entry_p, 0.0001) * 100 if vwap_5m > 0 else 50.0
-                        # Остальные — нейтральные (модель будет учиться на реальных сделках)
-                        for i in range(27):
-                            if features[i] == 0.0 and i != 26:
-                                features[i] = 50.0
+                        # Смещаем свечи к моменту входа
+                        ets = s['entry_ts']
+                        aligned_1h = [c for c in c1h if c['t'] <= ets][-200:]
+                        aligned_4h = [c for c in c4h if c['t'] <= ets][-50:]
+                        
+                        if len(aligned_1h) < 50 or len(aligned_4h) < 10:
+                            errors += 1
+                            continue
+                        
                         label = 1.0 if s['pnl'] > 0 else 0.0
-                        self._training_buffer.append((features, label, sym, s['entry_ts']))
+                        self._training_buffer.append({
+                            'candles_1h': aligned_1h,
+                            'candles_4h': aligned_4h,
+                            'label': label,
+                            'symbol': sym,
+                            'ts': s['entry_ts']
+                        })
                         existing_ts.add(s['entry_ts'])
                         added += 1
                     except Exception:
@@ -801,7 +832,11 @@ class MLProfessionalV2:
         return added
     
     def retrain_27f(self, force=False):
-        """Дообучить 27f модель на накопленных сделках."""
+        """Дообучить 27f модель на накопленных сделках.
+        
+        Professional: пересчитывает фичи из сырых свечей актуальной версией build_features_27f.
+        Это гарантирует, что изменения в фича-инжиниринге не сломают исторические данные.
+        """
         import lightgbm as lgb
         now = time.time()
         if not force and (now - self._last_retrain_27f) < RETRAIN_INTERVAL_27F:
@@ -812,20 +847,41 @@ class MLProfessionalV2:
             log.info(f"[ML-v2] ⏭️ Ретрейн 27f: мало данных ({n} < {MIN_SAMPLES_27F})")
             return
 
-        # Разделяем на X и y
-        X = np.array([row[0] for row in self._training_buffer], dtype=np.float64)
-        y = np.array([row[1] for row in self._training_buffer], dtype=np.int32)
+        # Пересчитываем фичи из свечей (Professional: актуальная версия кода)
+        X_list = []
+        y_list = []
+        for entry in self._training_buffer:
+            h1 = entry.get('candles_1h', [])
+            h4 = entry.get('candles_4h', [])
+            if len(h1) < 50 or len(h4) < 10:
+                continue
+            try:
+                X_row = build_features_27f(h1, h4)
+                if X_row is not None and len(X_row) > 0:
+                    # Берем все 33 колонки (FEATURE_NAMES = FEATURE_NAMES_33)
+                    feat = X_row[-1, :33].copy()
+                    X_list.append(feat)
+                    y_list.append(int(entry['label']))
+            except Exception:
+                continue
+
+        if len(X_list) < MIN_SAMPLES_27F:
+            log.info(f"[ML-v2] ⏭️ Ретрейн 27f: после пересчёта фичей осталось {len(X_list)} (нужно >= {MIN_SAMPLES_27F})")
+            return
+
+        X = np.array(X_list, dtype=np.float64)
+        y = np.array(y_list, dtype=np.int32)
         good = int(y.sum())
-        bad = n - good
+        bad = len(y) - good
 
         if good < MIN_BOTH_CLASSES_27F or bad < MIN_BOTH_CLASSES_27F:
             log.info(f"[ML-v2] ⏭️ Ретрейн 27f: мало одного класса (good={good}, bad={bad})")
             return
 
-        log.info(f"[ML-v2] 🔄 Ретрейн 27f на {n} примерах (good={good}, bad={bad})...")
+        log.info(f"[ML-v2] 🔄 Ретрейн 27f на {len(X)} примерах (good={good}, bad={bad})...")
 
         # Train/val split
-        te = int(n * 0.75)
+        te = int(len(X) * 0.75)
         params = dict(objective='binary', metric='binary_logloss', boosting='gbdt',
                       num_leaves=31, learning_rate=0.03, feature_fraction=0.8,
                       bagging_fraction=0.8, bagging_freq=5, min_child_samples=10, verbose=-1)
@@ -833,7 +889,7 @@ class MLProfessionalV2:
         td = lgb.Dataset(X[:te], label=y[:te], feature_name=FEATURE_NAMES)
         vd = lgb.Dataset(X[te:], label=y[te:], feature_name=FEATURE_NAMES, reference=td)
 
-        # Обучаем с нуля (на всех доступных данных + исторические)
+        # Обучаем с нуля (на всех доступных данных)
         self.model = lgb.train(params, td, num_boost_round=500, valid_sets=[vd],
                                callbacks=[lgb.early_stopping(20), lgb.log_evaluation(0)])
         self.trained = True
@@ -842,7 +898,7 @@ class MLProfessionalV2:
         yp = self.model.predict(X[te:])
         yb = (yp > 0.5).astype(int)
         acc = float(np.mean(yb == y[te:]))
-        log.info(f"[ML-v2] 🎯 Ретрейн 27f завершён! Точность: {acc:.1%} ({n} samples)")
+        log.info(f"[ML-v2] 🎯 Ретрейн 27f завершён! Точность: {acc:.1%} ({len(X)} samples)")
 
         # Feature importance
         try:
@@ -864,7 +920,7 @@ class MLProfessionalV2:
                     "model": self.model,
                     "trained": True,
                     "acc": acc,
-                    "samples": n,
+                    "samples": len(X),
                     "features": FEATURE_NAMES,
                     "importance": self.feature_importance
                 }, f)
@@ -937,16 +993,9 @@ def ml_pro_v2_evaluate(symbol, candles_5m, candles_1h, candles_4h, confidence, t
 # ============================================================================
 # (сохранена для обратной совместимости, не используется в 27f)
 
-NUM_FEATURES = 27
+NUM_FEATURES = 33
 
-FEATURE_NAMES = [
-    'rsi_5m', 'rsi_1h', 'rsi_4h', 'trend_5m', 'trend_1h', 'trend_4h', 'trend_aligned',
-    'atr_1h', 'atr_4h', 'atr_ratio_6_48',
-    'price_vs_ema12_1h', 'price_vs_ema26_4h', 'ema12_dist_1h', 'ema26_dist_4h',
-    'sma20_dist_1h', 'sma20_dist_4h', 'volume_ratio_1h', 'volume_ratio_4h', 'vwap_dist_1h',
-    'mom_5m_3', 'mom_1h_3', 'mom_1h_7',
-    'candle_body_ratio_1h', 'pinbar_1h', 'engulfing_1h', 'dist_from_24h_high', 'rsi_divergence',
-]
+FEATURE_NAMES = FEATURE_NAMES_33
 
 
 def build_features_5m(candles_5m, candles_1h, candles_4h):

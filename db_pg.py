@@ -145,11 +145,13 @@ def ensure_future_partitions():
 
 def add_trade(symbol: str, side: str, price: float, quantity: float,
               pnl: float = 0.0, pnl_pct: float = 0.0,
-              order_id: str = None, exchange_id: str = None,
-              ts: str = None, db_path=None) -> int:
+              exit_reason: str = None, order_id: str = None, exchange_id: str = None,
+              ts: str = None, db_path=None,
+              scores: Optional[Dict] = None) -> int:
     """
     Добавляет сделку в таблицу trades.
     Аналог add_trade из db.py, но для новой схемы.
+    scores: dict с ключами ml_pro, advisor, mtf, vsa, liquidity, rsi_vol_btc, volume_vwap, final_score
     """
     def _add(conn):
         cur = conn.cursor()
@@ -189,19 +191,57 @@ def add_trade(symbol: str, side: str, price: float, quantity: float,
                 parts.append(f"exch_id={exchange_id}")
             notes_val = ", ".join(parts)
 
+        # Извлекаем скоринг из scores (только для buy)
+        s_ml = None
+        s_adv = None
+        s_mtf = None
+        s_vsa = None
+        s_liq = None
+        s_rvb = None
+        s_vv = None
+        s_entry = None
+        if scores and side == 'buy':
+            # Поддержка двух форматов: плоский (signal_log) и вложенный (entry_checks)
+            s_ml = scores.get('ml_pro') or (scores.get('ml_v2') or {}).get('score')
+            s_adv = scores.get('advisor') or (scores.get('advisor') or {}).get('score')
+            s_mtf = scores.get('mtf') or (scores.get('mtf') or {}).get('score')
+            s_vsa = scores.get('vsa') or (scores.get('vsa') or {}).get('score')
+            s_liq = scores.get('liquidity') or (scores.get('liquidity') or {}).get('score')
+            s_rvb = scores.get('rsi_vol_btc') or (scores.get('rsi_vol_btc') or {}).get('score')
+            s_vv = scores.get('volume_vwap') or (scores.get('volume_vwap') or {}).get('score')
+            s_entry = scores.get('final_score')
+
+        # 🩹 Приводим numpy-типы к float (psycopg2 не умеет в np.float64)
+        def _to_float(v): return float(v) if v is not None else None
+        
+        s_ml = _to_float(s_ml)
+        s_adv = _to_float(s_adv)
+        s_mtf = _to_float(s_mtf)
+        s_vsa = _to_float(s_vsa)
+        s_liq = _to_float(s_liq)
+        s_rvb = _to_float(s_rvb)
+        s_vv = _to_float(s_vv)
+        s_entry = _to_float(s_entry)
+
         cur.execute("""
             INSERT INTO trades
                 (symbol, side, status, account_id,
                  entry_price, entry_qty, entry_time,
                  exit_price, exit_qty, exit_time,
                  pnl, pnl_percent,
+                 exit_reason,
                  notes,
+                 entry_score, ml_pro, adv_score, mtf_score,
+                 vsa_score, liq_score, rvb_score, vv_score,
                  created_at, updated_at)
             VALUES (%s, %s, %s, 1,
                     %s, %s, %s,
                     %s, %s, %s,
                     %s, %s,
                     %s,
+                    %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
                     NOW(), NOW())
             RETURNING id
         """, (
@@ -209,7 +249,10 @@ def add_trade(symbol: str, side: str, price: float, quantity: float,
             entry_price, quantity, _ts,
             exit_price, quantity, _exit_ts if side == 'sell' else None,
             pnl, pnl_pct if pnl_pct else None,
+            exit_reason if side == 'sell' else None,
             notes_val,
+            s_entry, s_ml, s_adv, s_mtf,
+            s_vsa, s_liq, s_rvb, s_vv,
         ))
         return cur.fetchone()[0]
 
@@ -795,6 +838,29 @@ def get_recent_pnls(limit: int = 20) -> list:
         """, (limit,))
         return [float(r[0]) for r in cur.fetchall()]
     return _with_conn(_get)
+
+
+def log_signal(symbol: str, decision: str, score: float = None, threshold: float = None,
+               components: dict = None, db_path=None):
+    """
+    Логирует решение торгового движка в signal_log.
+    decision: 'hold' | 'buy' | 'sell'
+    components: словарь со скорами всех модулей (ml_pro, advisor, mtf, rvb, liq, vv, vsa)
+    """
+    def _log(conn):
+        cur = conn.cursor()
+        import json
+        cur.execute(
+            """INSERT INTO signal_log (symbol, decision, score, threshold, components)
+               VALUES (%s, %s, %s, %s, %s::jsonb)""",
+            (symbol, decision, score, threshold,
+             json.dumps(components) if components else None)
+        )
+        conn.commit()
+    try:
+        _with_conn(_log)
+    except Exception as e:
+        logger.debug(f"[db_pg] log_signal error: {e}")
 
 
 def position_exists(symbol: str) -> bool:

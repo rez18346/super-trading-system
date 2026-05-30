@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 """
-decision_engine.py — Единый центр принятия торговых решений.
+decision_engine.py - Единый центр принятия торговых решений.
 
 Архитектура:
-  DecisionEngine — синглтон, который решает:
+  DecisionEngine - синглтон, который решает:
     - ВХОДИТЬ ли в позицию (ML-ансамбль: 4 голоса + multi-timeframe)
     - ВЫХОДИТЬ из позиции (SL, TP, трейл, детектор разворота)
-  
+
   Все остальные модули (trader, monitor) только собирают данные.
   Решение принимается в одном месте → выполняется в trader.
 
 Голоса на вход (DecisionEngine._evaluate_entry_ensemble):
-  1. MLProfessionalV2 (LightGBM, 27/16 признаков, 5M+1H+4H)  — 20%
-  2. MLAdvisor (RandomForest, 9 признаков, паттерны+VWAP+D1) — 35%  🏆 усилен (забрал голос RVB)
-  3. RSI/Vol/BTC (RSI<30 oversold + объёмный spike)          — 0%   ❌ отключён (дублирует Advisor)
-  4. LiquidityCluster v2 (Order Flow/Block/Sweep)            — 25%
-  5. Volume/VWAP (VWAP реверсия + Volume Spike)              — 20%
+  1. MLProfessionalV2 (LightGBM, 27/16 признаков, 5M+1H+4H)  - 20%
+  2. MLAdvisor (RandomForest, 9 признаков, паттерны+VWAP+D1) - 35%  🏆 усилен (забрал голос RVB)
+  3. RSI/Vol/BTC (RSI<30 oversold + объёмный spike)          - 0%   ❌ отключён (дублирует Advisor)
+  4. LiquidityCluster v2 (Order Flow/Block/Sweep)            - 25%
+  5. Volume/VWAP (VWAP реверсия + Volume Spike)              - 20%
   ──────────────────────────────────────────────────────────
-  MTF — 0% (информационно, без веса)
-  VSA — 10% (качество движения: дивергенция, накопление/распределение)
-  VSA — 10% (качество движения: дивергенция, накопление/распределение)
+  MTF - 0% (информационно, без веса)
+  VSA - 10% (качество движения: дивергенция, накопление/распределение)
+  VSA - 10% (качество движения: дивергенция, накопление/распределение)
   Порог входа: 60 (адаптивный: CALM=52, NORMAL=60, VOLATILE=65)
-  VETO: макс(1H=-15, 4H=-25) + BTC(до -25) — не складываем таймфреймы
+  VETO: макс(1H=-15, 4H=-25) + BTC(до -25) - не складываем таймфреймы
   Override VETO: Liq≥75 + VV≥70 + Adv≥80 → игнорировать VETO
 
 Приоритеты на выход: SL > TP > трейлинг > 48ч таймаут
@@ -64,23 +64,23 @@ class Decision:
     ⚡ ЗАЛОЖЕНО ПОД SMART EXIT: exit_override, exit_vote.
 
       Атрибуты:
-      symbol        — тикер (XRP/USDT)
-      action        — 'enter' | 'hold' | 'exit'
-      side          — 'long' | 'short'
-      score         — итоговый скор 0-100 (enter) или None
-      position_size — доля от max 2% капитала (0.0-1.0)
-      tp_levels     — уровни частичного тейка [(price,pct), ...] или None
-      sl_price      — цена стоп-лосса (None = стандартный из конфига)
-      tp_price      — цена тейк-профита (None = стандартный)
-      trail_act     — % активации трейлинга (None = стандартный)
-      trail_dist    — % дистанции трейлинга от пика (None = стандартный)
-      max_hold_h    — макс. часов удержания (None = 48)
-      reason        — причина решения
-      signal_type   — тип сигнала (SignalType)
-      priority      — приоритет (50 по умолч.)
-      metadata      — полная раскладка голосов
-      exit_override — 'exit' | 'hold_widen_sl' | 'hold_tighten_sl': как поступить (для exit)
-      exit_vote     — полная раскладка exit ensemble (для exit & hold_widen_sl)
+      symbol        - тикер (XRP/USDT)
+      action        - 'enter' | 'hold' | 'exit'
+      side          - 'long' | 'short'
+      score         - итоговый скор 0-100 (enter) или None
+      position_size - доля от max 2% капитала (0.0-1.0)
+      tp_levels     - уровни частичного тейка [(price,pct), ...] или None
+      sl_price      - цена стоп-лосса (None = стандартный из конфига)
+      tp_price      - цена тейк-профита (None = стандартный)
+      trail_act     - % активации трейлинга (None = стандартный)
+      trail_dist    - % дистанции трейлинга от пика (None = стандартный)
+      max_hold_h    - макс. часов удержания (None = 48)
+      reason        - причина решения
+      signal_type   - тип сигнала (SignalType)
+      priority      - приоритет (50 по умолч.)
+      metadata      - полная раскладка голосов
+      exit_override - 'exit' | 'hold_widen_sl' | 'hold_tighten_sl': как поступить (для exit)
+      exit_vote     - полная раскладка exit ensemble (для exit & hold_widen_sl)
     """
     def __init__(self, symbol: str, action: str = 'hold',
                  side: str = 'long',
@@ -123,7 +123,7 @@ class Decision:
     @property
     def is_short(self) -> bool:
         return self.side == 'short'
-    
+
     def __repr__(self) -> str:
         if self.action == 'hold':
             return f"[HOLD] {self.symbol}: {self.reason}"
@@ -153,74 +153,74 @@ RECOMMENDED_PAIRS = [
 class DecisionEngine:
     """
     Единый центр принятия решений.
-    
+
     Вход: ML-ансамбль (MLProfessionalV2 + MLAdvisor + RSI + HMM)
     Выход: SL / TP / трейлинг / таймаут
     """
-    
+
     _instance = None
-    
+
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def __init__(self, config_path: str = None):
         if hasattr(self, '_initialized') and self._initialized:
             return
         self._initialized = True
-        
+
         self.config_path = config_path
         self.config = {}
         if config_path:
             with open(config_path) as f:
                 self.config = json.load(f)
-        
+
         # HMM-режим (кэшируется, обновляется из монитора)
         self.hmm_regime = 1  # NORMAL по умолчанию
-        
+
         # Делегаты для внешних функций
         self.quick_struct_exit_fn: Optional[Callable] = None
         self.ml_exit_check_fn: Optional[Callable] = None
         self.confirm_15m_reversal_fn: Optional[Callable] = None
-        
+
         # Комиссия биржи
         self.fee_rate = 0.001  # 0.1%
-        
+
         # Защита от повторных решений
         self._last_decisions: Dict[str, Dict] = {}
-        
+
         # Тайм-аут на повторный вход после продажи (сек)
-        self.reentry_cooldown = 600  # 10 мин (базовый — доверяем entry ensemble)
-        
+        self.reentry_cooldown = 600  # 10 мин (базовый - доверяем entry ensemble)
+
         # Счётчик последовательных убытков на символ
         self._consecutive_losses: Dict[str, int] = {}
         # Максимум убытков подряд перед блокировкой
-        self.max_consecutive_losses = 2  # после 2х убытков подряд — блокировка
+        self.max_consecutive_losses = 2  # после 2х убытков подряд - блокировка
         # Файл для сохранения счётчика (переживает перезагрузки)
         self._losses_file = os.path.join(os.path.dirname(__file__), 'data', 'consecutive_losses.json')
         self._maybe_restore_losses()
-        
+
         # Инициализация ML-модулей (ленивая)
         self._ml_pro_v2 = None
         self._ml_advisor = None
         self._liquidity = None
         self._volume_vwap = None
-        
+
         # Кэшированные данные multi-timeframe
         self._candles_1h: Optional[list] = None
         self._candles_4h: Optional[list] = None
         self._btc_price: Optional[float] = None
         self._candle_cache_time = 0
         self._candle_cache_ttl = 120  # обновлять раз в 2 мин
-        
+
         # BTC Direction Predictor
         self._btc_predictor = None  # Ленивая инициализация
-        
+
         # Базовая цена BTC для корреляции (загружается при первом вызове)
         self._btc_reference_price: Optional[float] = None
         self._btc_reference_time = 0
-        
+
         # Статистика
         self.stats = {
             'total_decisions': 0,
@@ -237,7 +237,7 @@ class DecisionEngine:
             'veto_mtf_conflict': 0,
             'liquidity_scores': 0,
         }
-    
+
     def _lazy_init_ml(self):
         """Ленивая инициализация ML-модулей с reload для горячей замены."""
         if self._ml_pro_v2 is None:
@@ -250,7 +250,7 @@ class DecisionEngine:
             except Exception as e:
                 logger.warning(f"[DE] MLProfessionalV2 не загрузился: {e}")
                 self._ml_pro_v2 = None
-        
+
         if self._ml_advisor is None:
             try:
                 from ml_advisor import get_advisor
@@ -259,7 +259,7 @@ class DecisionEngine:
             except Exception as e:
                 logger.warning(f"[DE] MLAdvisor не загрузился: {e}")
                 self._ml_advisor = None
-        
+
         if self._liquidity is None:
             try:
                 from liquidity_cluster import get_liquidity_cluster
@@ -268,7 +268,7 @@ class DecisionEngine:
             except Exception as e:
                 logger.warning(f"[DE] LiquidityCluster не загрузился: {e}")
                 self._liquidity = None
-        
+
         if self._volume_vwap is None:
             try:
                 import volume_vwap
@@ -277,10 +277,10 @@ class DecisionEngine:
             except Exception as e:
                 logger.warning(f"[DE] Volume/VWAP не загрузился: {e}")
                 self._volume_vwap = None
-    
+
     def _push_memory_to_ml(self) -> None:
         """Передать память о поведении ММ в MLAdvisor.
-        
+
         Вызывается после record_exit() и в начале decide() для синхронизации.
         """
         if self._ml_advisor is None:
@@ -289,7 +289,7 @@ class DecisionEngine:
         advisor = get_advisor()
         for sym, losses in self._consecutive_losses.items():
             advisor.update_symbol_memory(sym, consecutive_losses=losses)
-    
+
     def set_multi_tf_data(self, candles_1h: Optional[list] = None,
                           candles_4h: Optional[list] = None,
                           btc_price: Optional[float] = None) -> None:
@@ -327,23 +327,23 @@ class DecisionEngine:
             'max_hold_h': 48.0,
             'side': side,
         }
-    
+
     def _get_clean_data(self, symbol: str, is_reference: bool = False) -> Optional[list]:
         """
         Получить чистые свечи для symbol.
-        Если не закэшированы — вернуть None (трейдер обновляет раз в N циклов).
+        Если не закэшированы - вернуть None (трейдер обновляет раз в N циклов).
         """
         # Для BTC используем set_multi_tf_data
         if symbol == 'BTC/USDT':
             return None
         return self._candles_1h  # fallback на общие данные
-    
+
     def update_hmm_regime(self, regime: int) -> None:
         """Обновить HMM-режим рынка (вызывается из монитора)."""
         self.hmm_regime = regime
         logger.debug(f"[DE] HMM: {regime}")
 
-    # ─── EXIT ENSEMBLE — МОДУЛЬНОЕ ГОЛОСОВАНИЕ НА ВЫХОД ───────────────────
+    # ─── EXIT ENSEMBLE - МОДУЛЬНОЕ ГОЛОСОВАНИЕ НА ВЫХОД ───────────────────
 
     def _evaluate_exit_ensemble(self, symbol: str,
                                  entry_price: float,
@@ -359,11 +359,11 @@ class DecisionEngine:
         Отвечает на вопрос: «Рынок всё ещё за позицию?»
 
         Веса (exit-специфичные, отличаются от entry):
-          1. VSA (качество движения, распределение/накопление) — 35%
-          2. MLAdvisor (уверенность в тренде)                  — 25%
-          3. LiquidityCluster (структура ликвидности)          — 20%
-          4. Volume/VWAP (реверсия, спайки)                    — 10%
-          5. ML-v2 (LightGBM, резерв)                          — 10%
+          1. VSA (качество движения, распределение/накопление) - 35%
+          2. MLAdvisor (уверенность в тренде)                  - 25%
+          3. LiquidityCluster (структура ликвидности)          - 20%
+          4. Volume/VWAP (реверсия, спайки)                    - 10%
+          5. ML-v2 (LightGBM, резерв)                          - 10%
 
         Дополнительно:
           - Multi-TF тренд (1H): если старший тренд bullish → буст hold_confidence
@@ -392,7 +392,7 @@ class DecisionEngine:
         for k, w in EXIT_WEIGHTS.items():
             scores[k] = {'score': 50, 'weight': w, 'detail': 'N/A'}
 
-        # ═══ VSA (35%) — критичен для выхода: видит распределение/накопление
+        # ═══ VSA (35%) - критичен для выхода: видит распределение/накопление
         try:
             from vsa_analyzer import analyze_volume_spread
             vsa_result = analyze_volume_spread(candles_5m or [])
@@ -400,7 +400,7 @@ class DecisionEngine:
                 vsa_score = 60 + vsa_result.strength * 35
                 scores['vsa']['detail'] = f"bullish(strength={vsa_result.strength:.2f})"
             elif vsa_result.signal == 'bearish':
-                vsa_score = 40 - vsa_result.strength * 35  # 5-40 — надо выходить
+                vsa_score = 40 - vsa_result.strength * 35  # 5-40 - надо выходить
                 scores['vsa']['detail'] = f"bearish(strength={vsa_result.strength:.2f})"
             else:
                 vsa_score = 50
@@ -410,7 +410,7 @@ class DecisionEngine:
             logger.debug(f"[EXIT] VSA: {e}")
             scores['vsa']['score'] = 50
 
-        # ═══ Advisor (25%) — уверенность в продолжении тренда
+        # ═══ Advisor (25%) - уверенность в продолжении тренда
         try:
             if self._ml_advisor and self._ml_advisor.is_trained:
                 adv_df = None
@@ -440,7 +440,7 @@ class DecisionEngine:
             logger.debug(f"[EXIT] Advisor: {e}")
             scores['advisor']['score'] = 50
 
-        # ═══ Liquidity (20%) — структура ликвидности всё ещё за?
+        # ═══ Liquidity (20%) - структура ликвидности всё ещё за?
         try:
             if self._liquidity:
                 liq = self._liquidity.evaluate(candles_5m or [], current_price, None, None)
@@ -456,7 +456,7 @@ class DecisionEngine:
             logger.debug(f"[EXIT] Liquidity: {e}")
             scores['liquidity']['score'] = 50
 
-        # ═══ Volume/VWAP (10%) — спайки, реверсия
+        # ═══ Volume/VWAP (10%) - спайки, реверсия
         try:
             if self._volume_vwap and candles_5m:
                 vv = self._volume_vwap.evaluate(symbol, current_price, candles_5m, None, None)
@@ -477,7 +477,7 @@ class DecisionEngine:
             logger.debug(f"[EXIT] VWAP: {e}")
             scores['volume_vwap']['score'] = 50
 
-        # ═══ ML-v2 (10%) — резервный голос
+        # ═══ ML-v2 (10%) - резервный голос
         try:
             if self._ml_pro_v2 and self._ml_pro_v2.trained:
                 ml = self._ml_pro_v2.evaluate(symbol, candles_5m or [], [], [], 50, 'neutral', 50)
@@ -507,7 +507,7 @@ class DecisionEngine:
             oi_collector = get_oi_collector()
             oi_levels = oi_collector.get_liq_levels(symbol, current_price)
             oi_heat = oi_levels.get('heat', 0)
-            
+
             # Если цена в зоне ликвидации шортов
             sz = oi_levels.get('liq_zone_short')
             in_short_zone = False
@@ -517,7 +517,7 @@ class DecisionEngine:
                 # Или цена прямо у нижней границы (шорты начнут гореть при пробое)
                 elif abs(current_price - sz[0]) / current_price < 0.02:
                     in_short_zone = True
-            
+
             if oi_heat >= 1 and in_short_zone:
                 oi_squeeze = 15 + oi_heat * 5  # 20-30 баллов буста
                 oi_detail = f"Liq🔥OI(heat={oi_heat},+{oi_squeeze})"
@@ -526,8 +526,8 @@ class DecisionEngine:
                 oi_detail = f"OI(heat={oi_heat},+{oi_squeeze})"
         except Exception:
             pass
-        
-        # FR (Funding Rate) — негативный FR = сквиз потенциал
+
+        # FR (Funding Rate) - негативный FR = сквиз потенциал
         # Загружаем напрямую из CSV (путь совпадает с btc_direction)
         fr_squeeze = 0
         fr_detail = ''
@@ -551,7 +551,7 @@ class DecisionEngine:
                             fr_detail = f"FR({last_fr:.6f},+{fr_squeeze})"
         except Exception:
             pass
-        
+
         # Итоговый буст: OI + FR, максимум 35
         squeeze_bonus = min(35, oi_squeeze + fr_squeeze)
         squeeze_detail = ' | '.join(filter(None, [oi_detail, fr_detail]))
@@ -560,12 +560,12 @@ class DecisionEngine:
         total_weight = sum(EXIT_WEIGHTS.values())
         hold_confidence = sum(s['score'] * s['weight'] for s in scores.values()) / total_weight if total_weight > 0 else 50
         hold_confidence = max(0, min(100, int(round(hold_confidence))))
-        
+
         # Применяем squeeze bonus (OI + FR)
         if squeeze_bonus > 0:
             hold_confidence = min(100, hold_confidence + squeeze_bonus)
 
-        # ═══ MULTI-TF TREND BOOST (1H) — старший тренд сильный → держим ───
+        # ═══ MULTI-TF TREND BOOST (1H) - старший тренд сильный → держим ───
         mtf_boost = 0
         mtf_detail = ''
         if candles_1h is not None and len(candles_1h) >= 10:
@@ -579,19 +579,19 @@ class DecisionEngine:
                     mtf_detail = f"1H={trend_1h}({mtf_boost})"
             except Exception as e:
                 logger.debug(f"[EXIT] Multi-TF trend: {e}")
-        
-        # ═══ VWAP ENTRY DEVIATION — проверка растянутости ────────────────
+
+        # ═══ VWAP ENTRY DEVIATION - проверка растянутости ────────────────
         vwap_boost = 0
         vwap_detail = ''
         if entry_vwap_deviation is not None:
             # deviation > 0 = цена выше VWAP (растянута)
             # deviation < 0 = цена ниже VWAP (в зоне накопления)
             if entry_vwap_deviation < 1.0:
-                # Цена близка к VWAP entry — зона накопления, держим
+                # Цена близка к VWAP entry - зона накопления, держим
                 vwap_boost = 10
                 vwap_detail = f"VWAP_dev={entry_vwap_deviation:+.1f}%(накопление,+{vwap_boost})"
             elif entry_vwap_deviation > 3.0:
-                # Цена сильно выше VWAP entry — растянута, снижаем уверенность
+                # Цена сильно выше VWAP entry - растянута, снижаем уверенность
                 vwap_boost = -10
                 vwap_detail = f"VWAP_dev={entry_vwap_deviation:+.1f}%(растянуто,{vwap_boost})"
             else:
@@ -603,7 +603,7 @@ class DecisionEngine:
             hold_confidence = max(0, min(100, hold_confidence + mtf_boost))
         if vwap_boost != 0:
             hold_confidence = max(0, min(100, hold_confidence + vwap_boost))
-        
+
         # ═══ ПЕРЕСЧЁТ РЕШЕНИЯ после бустов ───────────────────────────────
         approved = False
         widen_pct = 0.0
@@ -614,7 +614,7 @@ class DecisionEngine:
             else:
                 approved = True
                 widen_pct = 0.3
-        
+
         # ═══ ОБНОВЛЕНИЕ reason с учётом новых модулей ────────────────────
         details = ' | '.join(f"{k}={v['score']}" for k, v in scores.items())
         reason = f"EXIT-VOTE: hold={hold_confidence}% {'✅' if approved else '❌'} [{details}]"
@@ -649,7 +649,7 @@ class DecisionEngine:
         }
 
     # ─── ВЫХОД ИЗ ПОЗИЦИИ ──────────────────────────────────────────────────
-    
+
     def decide_exit(self, symbol: str, entry_price: float, current_price: float,
                     highest_price: float, lowest_price: float,
                     entry_time: datetime, pnl_pct: float,
@@ -667,11 +667,11 @@ class DecisionEngine:
 
         ⚡ SMART EXIT: перед выходом по SL/TP/трейлингу/таймауту проверяет
            exit-ensemble (VSA + Advisor + Liq + VWAP + ML-v2).
-           Если ensemble говорит «держать» (hold_confidence >= 55) —
+           Если ensemble говорит «держать» (hold_confidence >= 55) -
            возвращает hold_widen_sl с расширенным SL вместо выхода.
            При 55-64: расширение SL на 30%. При ≥65: полное (50% расширение).
 
-        ⚡ SL — ТВЁРДЫЙ УРОВЕНЬ:
+        ⚡ SL - ТВЁРДЫЙ УРОВЕНЬ:
            - Пред-SL зона: цена рядом с SL, но не пробила → ensemble расширяет
            - SL пробит: sell unconditionally, ensemble не слушается
            - Расширение от текущего SL, не от базы (прогрессивная защита)
@@ -681,7 +681,7 @@ class DecisionEngine:
         Параметры:
             sl_pct: базовый SL из конфига (используется если current_sl_pct не передан)
             current_sl_pct: текущий эффективный SL (может быть уже расширен).
-                            Если None — используется sl_pct.
+                            Если None - используется sl_pct.
             max_sl_pct: максимальный SL, выше которого нельзя расширять
             candles_1m: 1M свечи для exit ensemble (опционально)
             candles_1h: 1H свечи для multi-TF тренд-проверки
@@ -695,12 +695,12 @@ class DecisionEngine:
 
         # ═══ ВСПОМОГАТЕЛЬНАЯ: exit ensemble для TP/трейлинга ─────────────
         def _check_exit_ensemble(trigger_type: str, base_reason: str) -> Optional[Decision]:
-            """Проверить exit ensemble: если модули говорят «держать» — расширить SL.
-            
+            """Проверить exit ensemble: если модули говорят «держать» - расширить SL.
+
             Возвращает:
-                Decision с exit_override='hold_widen_sl' — расширить SL
-                Decision с exit_override='exit' — выход подтверждён
-                None — нет данных для ensemble (выход как обычно)
+                Decision с exit_override='hold_widen_sl' - расширить SL
+                Decision с exit_override='exit' - выход подтверждён
+                None - нет данных для ensemble (выход как обычно)
             """
             if candles_1m is None or len(candles_1m) < 5:
                 return None  # нет данных для ensemble → exit как обычно
@@ -731,7 +731,7 @@ class DecisionEngine:
                 )
             else:
                 # Модули согласны с выходом
-                reason = f"{base_reason} | exit_ensemble hold={exit_vote['hold_confidence']}% — выход подтверждён"
+                reason = f"{base_reason} | exit_ensemble hold={exit_vote['hold_confidence']}% - выход подтверждён"
                 logger.info(f"🧠 [SMART EXIT] {symbol}: {reason}")
                 return Decision(
                     symbol, 'exit', side=side, priority=80 if trigger_type != 'TP' else 90,
@@ -741,8 +741,8 @@ class DecisionEngine:
                     exit_vote=exit_vote
                 )
 
-        # ─── 1. SL — стоп-лосс ──────────────────────────────────────────
-        # 🎯 SL — твёрдый уровень. Если цена пробила — ensemble решает:
+        # ─── 1. SL - стоп-лосс ──────────────────────────────────────────
+        # 🎯 SL - твёрдый уровень. Если цена пробила - ensemble решает:
         #    hold → расширить от ТЕКУЩЕГО SL (прогрессивно, до max_sl_pct)
         #    exit → sell
         #    нет ensemble данных → sell (безопасность)
@@ -761,7 +761,7 @@ class DecisionEngine:
                            signal_type=SignalType.STRONG_SELL, priority=100,
                            exit_override='exit')
 
-        # ─── 2. TP — тейк-профит с exit ensemble ──────────────────────────
+        # ─── 2. TP - тейк-профит с exit ensemble ──────────────────────────
         if pnl_pct >= tp_pct:
             self.stats['exit_decisions'] += 1
             ensemble_result = _check_exit_ensemble(
@@ -798,14 +798,14 @@ class DecisionEngine:
                         exit_override='exit'
                     )
         else:
-            # ⚡ На бычьем 1H тренде трейлинг отключается — держим до ensemble/SL
+            # ⚡ На бычьем 1H тренде трейлинг отключается - держим до ensemble/SL
             _do_trail = True
             if candles_1h and len(candles_1h) >= 20:
                 _1h_t = self._calc_trend_from_candles(candles_1h)
                 if _1h_t in ('strong_bullish', 'bullish'):
                     _do_trail = False
-                    logger.info(f"🌡️ [TRAIL→СКИП] {symbol}: 1H={_1h_t} — трейлинг отключён (bullish trend)")
-            
+                    logger.info(f"🌡️ [TRAIL→СКИП] {symbol}: 1H={_1h_t} - трейлинг отключён (bullish trend)")
+
             if _do_trail:
                 trail_active_pct = (highest_price - entry_price) / entry_price * 100
                 if trail_active_pct >= trail_act:
@@ -848,7 +848,7 @@ class DecisionEngine:
             )
 
         return None  # держим
-    
+
     def _check_trailing_stop(self, symbol: str, entry_price: float,
                               current_price: float, highest_price: float,
                               pnl_pct: float, trail_act: float,
@@ -861,9 +861,9 @@ class DecisionEngine:
                 return (f"Активирован: H={highest_price:.4f}→{current_price:.4f}"
                         f" (активация: {trail_act}%, дист: {trail_dist}%)")
         return None
-    
+
     # ─── РЕШЕНИЕ НА ВХОД ───────────────────────────────────────────────────
-    
+
     def decide_entry(self, symbol: str, confidence: float, trend: str,
                      rsi: float, current_price: float,
                      current_positions_count: int, max_positions: int = 8,
@@ -872,18 +872,19 @@ class DecisionEngine:
                      candles_4h: Optional[list] = None,
                      side: str = 'long',
                      last_exit_price: Optional[float] = None,
-                     last_exit_time: Optional[float] = None) -> Decision:
+                     last_exit_time: Optional[float] = None,
+                     cvd_data: Optional[Dict] = None) -> Decision:
         """
         Принять решение о входе в позицию.
-        
+
         ⚡ ЗАЛОЖЕНО ПОД ШОРТ: side='short' инвертирует логику.
-        
+
         AN SAMBЛЬ:
-          1. MLProfessionalV2 (LightGBM, 27/16 признаков, 5M+1H+4H) — 35%
-          2. MLAdvisor (RandomForest, 9 признаков)                  — 20%
-          3. HMM + Мульти-таймфрейм согласованность (5M/1H/4H)     — 25%
-          4. RSI + Объём + BTC-корреляция                           — 20%
-        
+          1. MLProfessionalV2 (LightGBM, 27/16 признаков, 5M+1H+4H) - 35%
+          2. MLAdvisor (RandomForest, 9 признаков)                  - 20%
+          3. HMM + Мульти-таймфрейм согласованность (5M/1H/4H)     - 25%
+          4. RSI + Объём + BTC-корреляция                           - 20%
+
         Vetо:
           - 1H или 4H bearish → блокировка (для long)
           - 1H или 4H bullish → блокировка (для short)
@@ -895,30 +896,30 @@ class DecisionEngine:
         self.stats['total_decisions'] += 1
         is_short = (side == 'short')
         self._lazy_init_ml()
-        
+
         # Синхронизируем память о поведении ММ с MLAdvisor
         self._push_memory_to_ml()
-        
+
         # Используем переданные свечи или закэшированные
         c1h = candles_1h if candles_1h is not None else self._candles_1h
         c4h = candles_4h if candles_4h is not None else self._candles_4h
         btc_p = self._btc_price
-        
+
         now = time.time()
-        
+
         # ═══ ЖЁСТКИЕ БЛОКИРОВКИ ═══════════════════════════════════════════
-        
+
         # 1. Anti-FOMO: не входить если цена значительно выше последнего выхода
         #    Защита от покупки на хаях после того, как нас высадило
         if last_exit_price is not None and last_exit_time is not None:
             fomo_window = 14400  # 4 часа после выхода
             fomo_threshold = 1.03  # 3% выше цены выхода
-            
+
             time_since_exit = now - last_exit_time
-            
+
             if time_since_exit < fomo_window:
                 if not is_short:
-                    # Для long: если цена выше last_exit_price * threshold — FOMO
+                    # Для long: если цена выше last_exit_price * threshold - FOMO
                     if current_price > last_exit_price * fomo_threshold:
                         pct_above = (current_price / last_exit_price - 1) * 100
                         remain = (fomo_window - time_since_exit) / 60
@@ -928,7 +929,7 @@ class DecisionEngine:
                         self._save_veto_vote(symbol, current_price, reason, side)
                         return Decision(symbol, 'hold', side=side, reason=reason)
                 else:
-                    # Для short: если цена ниже last_exit_price / threshold — FOMO
+                    # Для short: если цена ниже last_exit_price / threshold - FOMO
                     if current_price < last_exit_price / fomo_threshold:
                         pct_below = (1 - current_price / last_exit_price) * 100
                         remain = (fomo_window - time_since_exit) / 60
@@ -937,21 +938,21 @@ class DecisionEngine:
                         self.stats['veto_fomo'] = self.stats.get('veto_fomo', 0) + 1
                         self._save_veto_vote(symbol, current_price, reason, side)
                         return Decision(symbol, 'hold', side=side, reason=reason)
-        
+
         # 2. Лимит позиций
         if current_positions_count >= max_positions:
             self._save_veto_vote(symbol, current_price, f"Максимум {max_positions} позиций", side)
             return Decision(symbol, 'hold', side=side, reason=f"Максимум {max_positions} позиций")
-        
+
         # 3. Кулдаун повторного входа (прогрессивный)
         if symbol in self._last_decisions:
             last_exit = self._last_decisions[symbol]
             time_since = now - last_exit.get('exit_time', 0)
-            
+
             # Прогрессивный кулдаун: чем больше убытков подряд, тем дольше ждём
             losses = self._consecutive_losses.get(symbol, 0)
             if losses >= self.max_consecutive_losses:
-                # После N убытков подряд — жёсткая блокировка на N*4 часов
+                # После N убытков подряд - жёсткая блокировка на N*4 часов
                 hard_block_hours = losses * 4
                 hard_block_sec = hard_block_hours * 3600
                 if time_since < hard_block_sec:
@@ -959,7 +960,7 @@ class DecisionEngine:
                     reason = f"🚫 {losses} убытка подряд, блокировка на {hard_block_hours}ч (осталось {remain/3600:.1f}ч)"
                     self._save_veto_vote(symbol, current_price, reason, side)
                     return Decision(symbol, 'hold', side=side, reason=reason)
-            
+
             if time_since < self.reentry_cooldown:
                 remain = self.reentry_cooldown - time_since
                 reason = f"Повторный вход через {remain/60:.1f} мин"
@@ -968,11 +969,11 @@ class DecisionEngine:
                     symbol, 'hold', side=side,
                     reason=reason
                 )
-        
+
         # 3. BTC-корреляция: штраф вместо блокировки
         veto_penalty = 0
         veto_reasons = []
-        
+
         if btc_p is not None and self._btc_reference_price is not None:
             btc_change_4h = (btc_p - self._btc_reference_price) / self._btc_reference_price * 100
             if btc_change_4h < -1.5:
@@ -980,15 +981,15 @@ class DecisionEngine:
                 veto_penalty += penalty
                 veto_reasons.append(f"BTC-{btc_change_4h:.1f}%")
                 self.stats['veto_btc_drop'] += 1
-        
+
         # 4. Multi-timeframe veto: штраф к score вместо блокировки
         # Берём максимум из двух, не складываем (1H=-15, 4H=-25, оба=-25)
-        # ⚡ ЗАЛОЖЕНО ПОД ШОРТ: для short — блокировка при bullish
+        # ⚡ ЗАЛОЖЕНО ПОД ШОРТ: для short - блокировка при bullish
         veto_trends_long = ('strong_bearish',)      # Long: не входить на медвежьем ТФ
         veto_trends_short = ('strong_bullish',)     # Short: не входить на бычьем ТФ
         veto_trends = veto_trends_short if is_short else veto_trends_long
         veto_label = 'bullish' if is_short else 'bearish'
-        
+
         max_tf_penalty = 0
         if c1h is not None and len(c1h) > 0:
             try:
@@ -998,7 +999,7 @@ class DecisionEngine:
                     self.stats['veto_mtf_conflict'] += 1
             except Exception as _e:
                 logger.debug(f"[VETO] calc_trend 1h: {_e}")
-        
+
         if c4h is not None and len(c4h) > 0:
             try:
                 trend_4h = self._calc_trend_from_candles(c4h)
@@ -1007,32 +1008,34 @@ class DecisionEngine:
                     self.stats['veto_mtf_conflict'] += 1
             except Exception as _e:
                 logger.debug(f"[VETO] calc_trend 4h: {_e}")
-        
+
         if max_tf_penalty > 0:
             veto_penalty += max_tf_penalty
             veto_reasons.append("TF")
-        
+
         # BTC штраф остаётся отдельно (до -25)
         # Всего: макс TF(-15..-25) + BTC(0..-25) = до -50
-        
+
         # ═══ АНСАМБЛЬ ГОЛОСОВ ═══════════════════════════════════════════════
-        
+
         entry_checks = self._evaluate_entry_ensemble(
             symbol, confidence, trend, rsi, current_price,
             candles_5m=candles_5m, candles_1h=c1h, candles_4h=c4h,
-            side=side
+            side=side, cvd_data=cvd_data, high_24h=high_24h
         )
-        
+
         # ═══ ПРИМЕНЕНИЕ VETO-ШТРАФА ═══════════════════════════════════════
         if veto_penalty > 0:
             # Override: Liq≥75 + VV≥70 + Adv≥80 → сигнал сильнее VETO
             liq_score = entry_checks.get('liquidity_score', 0)
             adv_score = entry_checks.get('advisor_score', 0)
+            # CVD тоже сильный сигнал — если 80+ и Liq≥70, перебивает VETO
+            cvd_score = entry_checks.get('cvd_score', 50)
             vv_votes = entry_checks.get('votes', {}).get('volume_vwap', {})
             vv_score = vv_votes.get('score', 50) if isinstance(vv_votes, dict) else 50
-            
+
             if liq_score >= 75 and vv_score >= 70 and adv_score >= 80:
-                logger.info(f"⚠️ [DE→VETO_OVERRIDE] {symbol}: VETO {'/'.join(veto_reasons)} проигнорирован — сильный объёмный сигнал (Liq={liq_score} VV={vv_score} Adv={adv_score})")
+                logger.info(f"⚠️ [DE→VETO_OVERRIDE] {symbol}: VETO {'/'.join(veto_reasons)} проигнорирован - сильный объёмный сигнал (Liq={liq_score} VV={vv_score} Adv={adv_score})")
             else:
                 score = entry_checks.get('final_score', 65)
                 score -= veto_penalty
@@ -1042,24 +1045,25 @@ class DecisionEngine:
                 if score < entry_checks.get('threshold', 65):
                     entry_checks['approved'] = False
                 logger.debug(f"[DE→VETO] {symbol}: штраф -{veto_penalty} ({veto_reason_str})")
-            
+
             # Сохраняем VETO-голос для дашборда
             self._save_veto_vote(symbol, current_price, f"VETO: {'/'.join(veto_reasons)} -{veto_penalty}pts", side)
-        
+
         if entry_checks['approved']:
             self.stats['entry_decisions'] += 1
-            
+
             # Position size: пропорционально скору
             score = entry_checks.get('final_score', 65)
             # 0.5 при 65, 1.0 при 90+
             position_size = min(1.0, (score - 50) / 30)  # 65→0.50, 80→1.0, 95→1.0
             position_size = max(0.5, min(1.0, position_size))
-            
+
             # SL/TP от HMM-режима
             rp = self.get_sl_tp_params(side)
-            
-            # 🧠 Сохраняем признаки входа для дообучения ML-Pro v2
-            if self._ml_pro_v2 and self._ml_pro_v2.is_27f and self._ml_pro_v2.trained:
+
+            # 🧠 Сохраняем свечи входа для дообучения ML-Pro v2
+            # (store_entry_features сам проверит, есть ли свечи от _evaluate_27f)
+            if self._ml_pro_v2:
                 self._ml_pro_v2.store_entry_features(symbol)
 
             return Decision(
@@ -1080,7 +1084,7 @@ class DecisionEngine:
                 symbol, 'hold', side=side,
                 reason=entry_checks['reason']
             )
-    
+
 
     def _save_veto_vote(self, symbol: str, current_price: float, veto_reason: str, side: str = 'long') -> None:
         """Save a vote record for VETO cases (dashboard fix)."""
@@ -1130,21 +1134,21 @@ class DecisionEngine:
         Поддерживает список списков [ts,o,h,l,c,v] и список словарей {o,h,l,c,v,t}."""
         if not candles or len(candles) < 20:
             return 'neutral'
-        
+
         # Определяем формат: список или словарь
         first = candles[0]
         if isinstance(first, dict):
             closes = [c['c'] for c in candles[-20:]]
         else:
             closes = [c[4] for c in candles[-20:]]
-        
+
         # EMA 7 vs EMA 20
         ema7 = sum(closes[-7:]) / 7
         ema20 = sum(closes[-20:]) / 20
-        
+
         # Процентное изменение
         change = (closes[-1] - closes[-20]) / closes[-20] * 100
-        
+
         if ema7 > ema20 and change > 2:
             return 'strong_bullish'
         elif ema7 > ema20:
@@ -1154,13 +1158,13 @@ class DecisionEngine:
         elif ema7 < ema20:
             return 'bearish'
         return 'neutral'
-    
+
     # ═══════════════════════════════════════════════════════════════════════
     # АНСАМБЛЬ ГОЛОСОВ
     # ═══════════════════════════════════════════════════════════════════════
-    
+
     _ENTRY_THRESHOLD = 60.0
-    
+
     def _get_entry_threshold(self, strong_votes: int = 0, liq_score: float = 0,
                               adv_score: float = 0, vsa_score: float = 0) -> float:
         """Адаптивный порог входа.
@@ -1173,7 +1177,7 @@ class DecisionEngine:
         - Liq >= 80 + Adv >= 85: -3
 
         Returns:
-            float — финальный порог (мин 55)
+            float - финальный порог (мин 55)
         """
         base = self._ENTRY_THRESHOLD
         if self.hmm_regime == 0:   # CALM
@@ -1187,7 +1191,7 @@ class DecisionEngine:
         elif strong_votes >= 2:
             base -= 2
 
-        # Объёмная тройка (Liq + VSA) сильна — сильно снижаем порог
+        # Объёмная тройка (Liq + VSA) сильна - сильно снижаем порог
         if liq_score >= 70 and vsa_score >= 70:
             base -= 5
 
@@ -1196,52 +1200,56 @@ class DecisionEngine:
             base -= 3
 
         return max(55.0, base)     # не ниже 55 никогда
-    
+
     def _evaluate_entry_ensemble(self, symbol: str, confidence: float,
                                    trend: str, rsi: float,
                                    current_price: float,
                                    candles_5m: Optional[list] = None,
                                    candles_1h: Optional[list] = None,
                                    candles_4h: Optional[list] = None,
-                                   side: str = 'long') -> Dict:
+                                   side: str = 'long',
+                                   cvd_data: Optional[Dict] = None,
+                                   high_24h: Optional[float] = None) -> Dict:
         """
         Профессиональный ансамбль из 4 голосов.
-        
+
         ⚡ ЗАЛОЖЕНО ПОД ШОРТ: side='short' инвертирует RSI, тренды, BTC-корреляцию.
         ML-модели пока только для long (заглушка для short).
-        
+
         Веса:
-          1. MLProfessionalV2 (LightGBM, 27/16 признаков, multi-TF) — 20%
-          2. MLAdvisor (RandomForest, 9 признаков, паттерны+VWAP+D1) — 5%
-          3. Согласованность трендов 5M/1H/4H + HMM — 25%
-          4. RSI + Объём + BTC-корреляция — 5%
-          5. LiquidityCluster v2 (Order Flow/Block/Sweep) — 25%
-          6. Volume/VWAP (VWAP реверсия + Volume Spike) — 20%
-        
+          1. MLProfessionalV2 (LightGBM, 27/16 признаков, multi-TF) - 20%
+          2. MLAdvisor (RandomForest, 9 признаков, паттерны+VWAP+D1) - 5%
+          3. Согласованность трендов 5M/1H/4H + HMM - 25%
+          4. RSI + Объём + BTC-корреляция - 5%
+          5. LiquidityCluster v2 (Order Flow/Block/Sweep) - 25%
+          6. Volume/VWAP (VWAP реверсия + Volume Spike) - 20%
+          7. CVD Order Flow (реальный поток агрессивных сделок) - 10% 🆕
+
         Возвращает словарь с approval, score, раскладкой.
         """
         self._lazy_init_ml()
         is_short = (side == 'short')
-        
+
         # Инициализируем результаты голосов
         # ⚡ БАЗОВЫЕ ВЕСА
         BASE_WEIGHTS = {
             'ml_v2': 0.10,
-            'advisor': 0.35,
+            'advisor': 0.25,
             'mtf': 0.00,   # информационно, без веса
-            'rsi_vol_btc': 0.00,  # отключён — дублирует Advisor
+            'rsi_vol_btc': 0.00,  # отключён - дублирует Advisor
             'liquidity': 0.25,
             'volume_vwap': 0.10,
-            'vsa': 0.20,   # VSA — качество движения (повышено для защиты от заходов на вершине)
+            'vsa': 0.20,   # VSA - качество движения (повышено для защиты от заходов на вершине)
+            'cvd': 0.10,   # 🆕 Order Flow CVD
         }
-        # Сумма весов = 1.0 (0.10+0.35+0.00+0.00+0.25+0.10+0.20)
+        # Сумма весов = 1.0 (0.10+0.25+0.00+0.00+0.25+0.10+0.20+0.10)
 
         scores = {}
         for k, w in BASE_WEIGHTS.items():
             scores[k] = {'score': 50, 'weight': w, 'detail': 'N/A'}
         # Веса для бонусов остаются (не входят в BASE_WEIGHTS)
         _bonus_keys = ['_reversal_bonus', '_price_bonus', '_btc_bonus']
-        
+
         # ═══ ГОЛОС 1: MLProfessionalV2 (20%) ═══════════════════════════════
         try:
             if self._ml_pro_v2 and self._ml_pro_v2.trained:
@@ -1260,18 +1268,18 @@ class DecisionEngine:
                     scores['ml_v2']['detail'] = f"WEAK(prob={ml_prob:.2f})"
                     self.stats['ml_v2_weak'] += 1
                 else:
-                    scores['ml_v2']['score'] = 20  # SKIP — штраф
+                    scores['ml_v2']['score'] = 20  # SKIP - штраф
                     scores['ml_v2']['detail'] = f"SKIP(prob={ml_prob:.2f})"
                     self.stats['ml_v2_skips'] += 1
             else:
-                # ML не обучен — доверяем confidence
+                # ML не обучен - доверяем confidence
                 scores['ml_v2']['score'] = min(max(confidence, 0), 100)
                 scores['ml_v2']['detail'] = f"confidence({confidence:.0f})"
         except Exception as e:
             scores['ml_v2']['score'] = 50  # нейтрально при ошибке
             scores['ml_v2']['detail'] = f"error({e})"
             self.stats['ml_v2_errors'] += 1
-        
+
         # ═══ ГОЛОС 2: MLAdvisor (20%) ═══════════════════════════════════════
         try:
             if self._ml_advisor and self._ml_advisor.is_trained:
@@ -1303,58 +1311,58 @@ class DecisionEngine:
                     scores['advisor']['detail'] = f"SKIP({adv['confidence']:.2f})"
                     self.stats['advisor_skips'] += 1
             else:
-                # MLAdvisor не обучен — нейтральный голос
+                # MLAdvisor не обучен - нейтральный голос
                 scores['advisor']['score'] = 50
                 scores['advisor']['detail'] = "not_trained"
         except Exception as e:
             scores['advisor']['score'] = 50
             scores['advisor']['detail'] = f"error({e})"
-        
+
         # ═══ ГОЛОС 3: Multi-timeframe согласованность + HMM (25%) ═════════
         try:
             # 3a. Определяем тренды на 5M, 1H, 4H
             trend_5m_val = self._trend_to_score(trend)  # 0-100
-            
+
             trend_1h_val = 50
             if candles_1h is not None and len(candles_1h) > 0:
                 t1h = self._calc_trend_from_candles(candles_1h)
                 trend_1h_val = self._trend_to_score(t1h)
-            
+
             trend_4h_val = 50
             if candles_4h is not None and len(candles_4h) > 0:
                 t4h = self._calc_trend_from_candles(candles_4h)
                 trend_4h_val = self._trend_to_score(t4h)
-            
+
             # Согласованность: штраф за конфликт между таймфреймами
-            # Если 5M bearish, но 1H и 4H бычьи — это нормальный откат, не штрафуем сильно
+            # Если 5M bearish, но 1H и 4H бычьи - это нормальный откат, не штрафуем сильно
             # Полный штраф только когда все ТФ разнонаправлены
             d1 = abs(trend_5m_val - trend_1h_val)
             d2 = abs(trend_5m_val - trend_4h_val)
             d3 = abs(trend_1h_val - trend_4h_val)
-            
-            # Если старшие ТФ (1H и 4H) согласованы — штраф меньше
+
+            # Если старшие ТФ (1H и 4H) согласованы - штраф меньше
             if d3 < 20:
-                # 1H и 4H смотрят в одну сторону — ослабляем штраф в 3 раза
+                # 1H и 4H смотрят в одну сторону - ослабляем штраф в 3 раза
                 # (5M может быть просто откатом, не стоим за ним стеной)
                 divergence = min(d1, d2) * 0.3
             else:
                 divergence = max(d1, d2, d3)
-            
+
             # divergence 0-100 → penalty 0-30
             penalty = min(30, divergence * 0.3)
-            
+
             # 3b. HMM-режим
             hmm_score = 80
             if self.hmm_regime == 0:   # CALM
                 hmm_score = 50
             elif self.hmm_regime == 2: # VOLATILE
                 hmm_score = 40
-            
+
             # Среднее по всем трендам без штрафа = (5m + 1h + 4h) / 3
             mtf_base = (trend_5m_val + trend_1h_val + trend_4h_val) / 3
             # Итог: база - штраф за конфликт, скорректированная HMM
             mtf_score = max(10, mtf_base + (hmm_score - 50) * 0.3 - penalty)
-            
+
             scores['mtf']['score'] = mtf_score
             scores['mtf']['detail'] = (
                 f"5m={trend_5m_val:.0f} 1h={trend_1h_val:.0f} 4h={trend_4h_val:.0f}"
@@ -1363,7 +1371,7 @@ class DecisionEngine:
         except Exception as e:
             scores['mtf']['score'] = 50
             scores['mtf']['detail'] = f"error({e})"
-        
+
         # ═══ ГОЛОС 4: RSI + Объём + BTC-корреляция (20%) ═════════════════
         # ⚡ ЗАЛОЖЕНО ПОД ШОРТ: для short RSI- и BTC-голоса инвертированы
         try:
@@ -1400,8 +1408,8 @@ class DecisionEngine:
                     rsi_part = 25
                 else:
                     rsi_part = 40
-            
-            # BTC-корреляция (25%) — для short инвертирована
+
+            # BTC-корреляция (25%) - для short инвертирована
             btc_part = 50
             if self._btc_price and self._btc_reference_price:
                 btc_change = (self._btc_price - self._btc_reference_price) / self._btc_reference_price * 100
@@ -1411,12 +1419,12 @@ class DecisionEngine:
                     btc_part = 20 if not is_short else 80  # BTC падает → плохо для long, хорошо для short
                 else:
                     btc_part = 55
-            
-            # Объём (20%) — пока нейтрально
+
+            # Объём (20%) - пока нейтрально
             vol_part = 50
-            
+
             rsi_vol_btc_score = rsi_part * 0.55 + btc_part * 0.25 + vol_part * 0.20
-            
+
             scores['rsi_vol_btc']['score'] = rsi_vol_btc_score
             scores['rsi_vol_btc']['detail'] = (
                 f"rsi={rsi_part:.0f} btc={btc_part:.0f} vol={vol_part:.0f}"
@@ -1424,14 +1432,14 @@ class DecisionEngine:
         except Exception as e:
             scores['rsi_vol_btc']['score'] = 50
             scores['rsi_vol_btc']['detail'] = f"error({e})"
-        
+
         # ═══ ГОЛОС 5: LiquidityCluster (25%) ═══════════════════════════════
         try:
             if self._liquidity:
                 liq = self._liquidity.evaluate(candles_5m, current_price,
                                                 candles_1h, candles_4h)
                 liq_score = liq['score']
-                
+
                 # ─── OI LIQ BONUS ────────────────────────────────────────
                 # Подмешиваем уровни ликвидаций из OI Delta
                 oi_bonus = 0
@@ -1448,7 +1456,7 @@ class DecisionEngine:
                             self.stats['oi_liq_hits'] = self.stats.get('oi_liq_hits', 0) + 1
                 except Exception:
                     pass  # OI collector может быть не загружен
-                
+
                 scores['liquidity']['score'] = liq_score
                 scores['liquidity']['detail'] = liq['detail']
                 if oi_heat > 0:
@@ -1460,7 +1468,7 @@ class DecisionEngine:
         except Exception as e:
             scores['liquidity']['score'] = 50
             scores['liquidity']['detail'] = f"error({e})"
-        
+
         # ═══ ГОЛОС 6: Volume/VWAP (20%) ════════════════════════════════════
         try:
             if self._volume_vwap:
@@ -1476,8 +1484,8 @@ class DecisionEngine:
         except Exception as e:
             scores['volume_vwap']['score'] = 50
             scores['volume_vwap']['detail'] = f"error({e})"
-        
-        # ═══ ГОЛОС 7: VSA — Volume Spread Analysis (10%) ═══════════════════
+
+        # ═══ ГОЛОС 7: VSA - Volume Spread Analysis (10%) ═══════════════════
         try:
             from vsa_analyzer import analyze_volume_spread
             if candles_5m and len(candles_5m) > 20:
@@ -1493,6 +1501,42 @@ class DecisionEngine:
         except Exception as e:
             scores['vsa']['score'] = 50
             scores['vsa']['detail'] = f'error({e})'
+        
+        # ═══ ГОЛОС 8: CVD Order Flow (10%) — реальный поток агрессивных сделок 🆕 ════
+        try:
+            cvd_score = 50
+            cvd_detail = 'N/A'
+            if cvd_data and cvd_data.get('minutes', 0) >= 2:
+                trend = cvd_data.get('trend', 'neutral')
+                buy_pct = cvd_data.get('buy_pct', 50)
+                cvd_ratio = cvd_data.get('cvd_ratio', 1.0)
+                
+                # Основа: buy_pct (50% = нейтрально, 60%+ = бычий, 40%- = медвежий)
+                cvd_score = 50 + (buy_pct - 50) * 1.5
+                cvd_score = max(10, min(100, cvd_score))
+                
+                # Коррекция по тренду
+                if trend == 'bullish':
+                    cvd_score += 10
+                elif trend == 'bearish':
+                    cvd_score -= 10
+                
+                # Если ratio сильно несбалансирован
+                if cvd_ratio > 1.5:
+                    cvd_score += 5  # много покупок
+                elif cvd_ratio < 0.67:
+                    cvd_score -= 5  # много продаж
+                
+                cvd_score = max(10, min(100, cvd_score))
+                cvd_detail = f'trend={trend} buy={buy_pct:.0f}% ratio={cvd_ratio:.2f}'
+                
+                logger.debug(f"[CVD] {symbol}: score={cvd_score:.0f} — {cvd_detail}")
+            
+            scores['cvd']['score'] = cvd_score
+            scores['cvd']['detail'] = cvd_detail
+        except Exception as e:
+            scores['cvd']['score'] = 50
+            scores['cvd']['detail'] = f'error({e})'
 
         # ═══ АДАПТИВНЫЕ ВЕСА ══════════════════════════════════════════════
         # Если Liq сильный (>70) а MTF слабый (<50) — снижаем вес MTF
@@ -1502,17 +1546,17 @@ class DecisionEngine:
         vsa_score = scores['vsa']['score']
 
         if liq_score >= 75 and mtf_score < 50:
-            # Liq уверен, MTF не подтверждает — не даём MTF душить сигнал
+            # Liq уверен, MTF не подтверждает - не даём MTF душить сигнал
             mtf_shrink = 0.5 if adv_score >= 60 else 0.3
             if vsa_score >= 60:
-                mtf_shrink = max(mtf_shrink, 0.4)  # VSA подтверждает — ещё ослабляем MTF
+                mtf_shrink = max(mtf_shrink, 0.4)  # VSA подтверждает - ещё ослабляем MTF
             transfer = BASE_WEIGHTS['mtf'] * mtf_shrink
             scores['mtf']['weight'] = BASE_WEIGHTS['mtf'] - transfer
             scores['liquidity']['weight'] = BASE_WEIGHTS['liquidity'] + transfer * 0.6
             scores['vsa']['weight'] = BASE_WEIGHTS['vsa'] + transfer * 0.4
             logger.debug(f"[DE] Адаптивные веса: MTF {BASE_WEIGHTS['mtf']:.2f}→{scores['mtf']['weight']:.2f}, Liq {BASE_WEIGHTS['liquidity']:.2f}→{scores['liquidity']['weight']:.2f}")
         elif liq_score >= 60 and adv_score >= 80 and mtf_score < 50:
-            # Advisor сильный + Liq умеренный — немного ослабляем MTF
+            # Advisor сильный + Liq умеренный - немного ослабляем MTF
             transfer = BASE_WEIGHTS['mtf'] * 0.25
             scores['mtf']['weight'] = BASE_WEIGHTS['mtf'] - transfer
             scores['advisor']['weight'] = BASE_WEIGHTS['advisor'] + transfer * 0.6
@@ -1534,7 +1578,7 @@ class DecisionEngine:
                         bonus_val = max(0, int((0.50 - pos) * 40))  # 0..20 баллов
                         bonus_val = min(bonus_val, 20)  # макс 20
                         price_bonus = bonus_val
-                    
+
                     # ═══ ДЕТЕКТОР РАННЕГО РАЗВОРОТА ═══
                     # Проверяем последние 5 свечей 5M на паттерн разворота
                     try:
@@ -1542,27 +1586,27 @@ class DecisionEngine:
                         if len(recent) >= 5:
                             closes = [c['c'] for c in recent]
                             volumes = [c['v'] for c in recent]
-                            
+
                             # 1. Цена растёт последние 3 свечи из 4
                             green_count = sum(1 for i in range(-4, 0) if closes[i] > closes[i-1])
-                            
+
                             # 2. Объём растёт на зелёных свечах
                             last3_vol = sum(volumes[-3:])
                             prev3_vol = sum(volumes[-6:-3])
-                            
+
                             # 3. RSI выходит из зоны (был <= 50, идёт вверх)
                             rsi_recovering = 40 < rsi < 65
-                            
+
                             # 4. Цена не на хаях (позиция < 75% чтобы не покупать топ)
                             not_too_high = pos < 0.75
-                            
-                            if (green_count >= 2 and 
-                                last3_vol > prev3_vol * 1.2 and 
-                                rsi_recovering and 
+
+                            if (green_count >= 2 and
+                                last3_vol > prev3_vol * 1.2 and
+                                rsi_recovering and
                                 not_too_high):
                                 # Сила разворота: 0-15 баллов
-                                # Чем сильнее зелёных и объём — тем больше бонус
-                                strength = min(green_count * 3 + 
+                                # Чем сильнее зелёных и объём - тем больше бонус
+                                strength = min(green_count * 3 +
                                               int((last3_vol / prev3_vol - 1) * 5), 15)
                                 reversal_bonus = min(strength, 15)
                     except Exception:
@@ -1571,7 +1615,7 @@ class DecisionEngine:
             pass
         scores['_reversal_bonus'] = {'score': reversal_bonus, 'weight': 1.0}
         scores['_price_bonus'] = {'score': price_bonus, 'weight': 1.0}
-        
+
         # ═══ BTC DIRECTION PREDICTOR ═══════════════════════════════════════
         # Вычисляем ДО final_score, чтобы штраф/бонус BTC влиял на итоговую оценку
         btc_bonus = 0
@@ -1587,13 +1631,26 @@ class DecisionEngine:
         except Exception as e:
             scores['_btc_bonus'] = {'score': 0, 'weight': 1.0}
             logger.debug(f"BTC Direction: ошибка: {e}")
-        
+
+        # ═══ ШТРАФ ЗА БЛИЗОСТЬ К 24H ХАЮ ═════════════════════════════════
+        if high_24h is not None and high_24h > 0 and current_price > 0:
+            _ratio = current_price / high_24h
+            if _ratio >= 0.96:
+                _penalty = min(25, (_ratio - 0.96) * 625)  # 0.96→0, 1.0→25
+                scores['_level_penalty'] = {'score': -_penalty, 'weight': 1.0}
+                logger.info(f"📏 [LEVEL PENALTY] {symbol}: цена {_ratio:.1%} от 24h хая — штраф -{_penalty:.0f}pts")
+            else:
+                scores['_level_penalty'] = {'score': 0, 'weight': 1.0}
+                if _ratio >= 0.85:
+                    _small_penalty = (_ratio - 0.85) * 66
+                    scores['_level_penalty'] = {'score': -_small_penalty, 'weight': 1.0}
+
         # ═══ ИТОГОВЫЙ СКОР ═════════════════════════════════════════════════
         # Теперь в scores есть все компоненты, включая btc_bonus
         final_score = sum(v['score'] * v['weight'] for v in scores.values())
-        
+
         # ═══ БЛОКИРОВКА ОТ BTC ═══════════════════════════════════════════
-        # Если btc_bonus == -999 — жёсткое veto на лонги (BTC падает >2% за 6ч)
+        # Если btc_bonus == -999 - жёсткое veto на лонги (BTC падает >2% за 6ч)
         if btc_bonus <= -999:
             return {
                 'approved': False,
@@ -1602,21 +1659,21 @@ class DecisionEngine:
                 'threshold': 0,
                 'votes': {},
             }
-        
+
         # Сколько модулей дают сильные сигналы (используем ядро голосов, без бонусов)
         core_votes = [scores['ml_v2'], scores['advisor'], scores['liquidity'],
                       scores['volume_vwap'], scores['vsa']]
         strong_votes = sum(1 for v in core_votes if v['score'] >= 75)
-        
+
         threshold = self._get_entry_threshold(
             strong_votes=strong_votes,
             liq_score=scores['liquidity']['score'],
             adv_score=scores['advisor']['score'],
             vsa_score=scores['vsa']['score']
         )
-        
+
         logger.debug(f"[threshold] symbol={symbol} threshold={threshold} strong={strong_votes} liq={scores['liquidity']['score']} adv={scores['advisor']['score']} vsa={scores['vsa']['score']} final_score={final_score}")
-        
+
         # Разбивка голосов для логов/дашборда
         votes_str = (
             f"ML-Pro:{scores['ml_v2']['score']:.0f}({scores['ml_v2']['detail']}) "
@@ -1625,9 +1682,10 @@ class DecisionEngine:
             f"RVB:{scores['rsi_vol_btc']['score']:.0f}({scores['rsi_vol_btc']['detail']}) "
             f"Liq:{scores['liquidity']['score']:.0f}({scores['liquidity']['detail']}) "
             f"VV:{scores['volume_vwap']['score']:.0f}({scores['volume_vwap']['detail']}) "
-            f"VSA:{scores['vsa']['score']:.0f}({scores['vsa']['detail']})"
+            f"VSA:{scores['vsa']['score']:.0f}({scores['vsa']['detail']}) "
+            f"CVD:{scores['cvd']['score']:.0f}({scores['cvd']['detail']})"
         )
-        
+
         votes = {
             'ml_v2': {'score': scores['ml_v2']['score'], 'detail': scores['ml_v2']['detail']},
             'advisor': {'score': scores['advisor']['score'], 'detail': scores['advisor']['detail']},
@@ -1636,8 +1694,11 @@ class DecisionEngine:
             'liquidity': {'score': scores['liquidity']['score'], 'detail': scores['liquidity']['detail']},
             'volume_vwap': {'score': scores['volume_vwap']['score'], 'detail': scores['volume_vwap']['detail']},
             'vsa': {'score': scores['vsa']['score'], 'detail': scores['vsa']['detail']},
+            'cvd': {'score': scores['cvd']['score'], 'detail': scores['cvd']['detail']},
+            'level': {'score': scores.get('_level_penalty', {}).get('score', 0),
+                      'detail': f'{current_price/high_24h*100:.1f}% от 24h хая' if high_24h else 'N/A'},
         }
-        
+
         # ═══ СОХРАНЕНИЕ ИСТОРИИ ГОЛОСОВ ════════════════════════════════
         try:
             now = time.time()
@@ -1646,7 +1707,7 @@ class DecisionEngine:
                 self._last_vote_ts = {}
             last_ts = self._last_vote_ts.get(symbol, 0)
             if now - last_ts < 3.0:
-                pass  # слишком часто — пропускаем запись на диск
+                pass  # слишком часто - пропускаем запись на диск
             else:
                 self._last_vote_ts[symbol] = now
                 vote_record = {
@@ -1670,7 +1731,7 @@ class DecisionEngine:
                         with open(vote_log_path, 'r') as f:
                             history = json.load(f)
                     except Exception as _e:
-                        # Файл битый — создаём новый
+                        # Файл битый - создаём новый
                         history = []
                 history.append(vote_record)
                 # Держим последние 10000 записей
@@ -1684,7 +1745,34 @@ class DecisionEngine:
         except Exception as e:
             logger.debug(f"[DE] vote_history save error: {e}")
         # ════════════════════════════════════════════════════════════════
-        
+
+        # ═══ ЛОГИРОВАНИЕ РЕШЕНИЯ В signal_log ════════════════════════
+        try:
+            from db_pg import log_signal
+            log_signal(
+                symbol=symbol,
+                decision='buy' if final_score >= threshold else 'hold',
+                score=round(final_score, 1),
+                threshold=threshold,
+                components={
+                    'ml_pro': scores['ml_v2']['score'],
+                    'advisor': scores['advisor']['score'],
+                    'mtf': scores['mtf']['score'],
+                    'rsi_vol_btc': scores['rsi_vol_btc']['score'],
+                    'liquidity': scores['liquidity']['score'],
+                    'volume_vwap': scores['volume_vwap']['score'],
+                    'vsa': scores['vsa']['score'],
+                    'cvd': scores['cvd']['score'],
+                    'bonus': {'price': round(price_bonus, 1), 'reversal': round(reversal_bonus, 1), 'btc': round(btc_bonus, 1)},
+                    'final_score': round(final_score, 1),
+                    'threshold': threshold,
+                    'strong_votes': strong_votes,
+                }
+            )
+        except Exception:
+            pass
+        # ════════════════════════════════════════════════════════════════
+
         if final_score >= threshold:
             return {
                 'approved': True,
@@ -1698,6 +1786,8 @@ class DecisionEngine:
                 'rsi_vol_btc_score': scores['rsi_vol_btc']['score'],
                 'liquidity_score': scores['liquidity']['score'],
                 'volume_vwap_score': scores['volume_vwap']['score'],
+                'vsa_score': scores['vsa']['score'],
+                'cvd_score': scores['cvd']['score'],
                 'votes': votes,
             }
         else:
@@ -1708,7 +1798,7 @@ class DecisionEngine:
                 'threshold': threshold,
                 'votes': votes,
             }
-    
+
     def _trend_to_score(self, trend: str) -> float:
         """Преобразовать тренд в скор 0-100."""
         mapping = {
@@ -1721,12 +1811,12 @@ class DecisionEngine:
             'strong_bearish': 5,
         }
         return mapping.get(trend, 50)
-    
+
     # ─── Управление повторными входами ──────────────────────────────────────
-    
+
     def record_exit(self, symbol: str, reason: str = "", was_loss: bool = False) -> None:
         """Запомнить момент выхода (для кулдауна повторного входа).
-        
+
         Args:
             was_loss: True если сделка закрылась в минус
         """
@@ -1734,7 +1824,7 @@ class DecisionEngine:
             'exit_time': time.time(),
             'reason': reason,
         }
-        
+
         # Обновляем счётчик последовательных убытков
         if was_loss:
             self._consecutive_losses[symbol] = self._consecutive_losses.get(symbol, 0) + 1
@@ -1745,7 +1835,7 @@ class DecisionEngine:
             else:
                 logger.info(f"⚠️ {symbol}: {losses}-й убыток подряд")
         else:
-            # На прибыли — не сбрасываем полностью, а уменьшаем на 1
+            # На прибыли - не сбрасываем полностью, а уменьшаем на 1
             # (чтобы одна удачная сделка не обнуляла историю ММ-паттерна)
             old = self._consecutive_losses.get(symbol, 0)
             if old > 0:
@@ -1755,19 +1845,19 @@ class DecisionEngine:
                 else:
                     self._consecutive_losses[symbol] = new_val
                 logger.info(f"✅ {symbol}: серия убытков снижена с {old} до {new_val} (был профит)")
-        
+
         # Сохраняем счётчик в файл (переживает перезагрузки)
         self._save_losses()
-        
+
         # Передаём память в MLAdvisor (чтобы XGBoost учился на этом)
         self._push_memory_to_ml()
-        
+
         logger.info(f"🚫 Кулдаун входа: {symbol} на {self.reentry_cooldown/3600:.01f}ч")
-    
+
     def set_reentry_cooldown(self, seconds: int) -> None:
         """Установить тайм-аут на повторный вход."""
         self.reentry_cooldown = max(seconds, 60)
-    
+
     def update_btc_reference(self, btc_price: float = None) -> None:
         """Обновить референсную цену BTC для расчёта изменения."""
         if btc_price is not None:
@@ -1799,7 +1889,7 @@ class DecisionEngine:
                     logger.info(f"♻️ Восстановлены счётчики убытков для {restored} символов")
         except Exception as e:
             logger.debug(f"[restore_losses] {e}")
-    
+
     def _save_losses(self) -> None:
         """Сохранить счётчик убытков в файл."""
         try:
