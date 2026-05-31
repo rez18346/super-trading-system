@@ -236,7 +236,7 @@ def _parse_votes_from_log() -> dict:
 
     # Собираем последнее состояние каждой пары
     for line in reversed(lines):
-        m = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*Score=(\d+).*ML-Pro:(\d+)\(([^)]+)\).*Adv:(\d+)\(([^)]+)\).*MTF:(\d+).*RVB:(\d+).*Liq:(\d+)\([^)]*\)[^V]*VV:(\d+)\([^)]*\)[^C]*CVD:(\d+)\(([^)]*)\)', line)
+        m = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*Score=(\d+).*ML-Pro:(\d+)\((.+)\)\s+Adv:(\d+)\((.+)\)\s+MTF:(\d+).*RVB:(\d+).*Liq:(\d+)\([^)]*\)\s+VV:(\d+)\(.+?\)\s+VSA:\d+\([^)]*\)\s+CVD:(\d+)\(([^)]*)\)', line)
         if m:
             raw_sym = m.group(2)
             sym = raw_sym + '/USDT'
@@ -627,6 +627,18 @@ def get_status_snapshot() -> dict:
     except Exception:
         pass
     
+    # 🧠 VoteTracker: динамические веса модулей
+    try:
+        from vote_tracker import get_tracker as _vt
+        _vt_inst = _vt()
+        result['vote_tracker'] = {
+            'summary': _vt_inst.get_summary(),
+            'pending': _vt_inst.get_pending_count(),
+            'weights': _vt_inst.get_weights(),
+        }
+    except Exception:
+        pass
+
     return result
 
 

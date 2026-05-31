@@ -37,6 +37,8 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Callable
 from enum import Enum
 
+from vote_tracker import get_tracker as get_vote_tracker
+
 logger = logging.getLogger("decision_engine")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -352,7 +354,8 @@ class DecisionEngine:
                                  highest_price: float = None,
                                  candles_5m: Optional[list] = None,
                                  candles_1h: Optional[list] = None,
-                                 entry_vwap_deviation: Optional[float] = None) -> Dict:
+                                 entry_vwap_deviation: Optional[float] = None,
+                                 cvd_data: Optional[Dict] = None) -> Dict:
         """
         Профессиональный ансамбль для решения о выходе.
 
@@ -381,11 +384,12 @@ class DecisionEngine:
         self._lazy_init_ml()
 
         EXIT_WEIGHTS = {
-            'vsa': 0.35,
+            'vsa': 0.25,        # Было 0.35, убавили в пользу CVD
             'advisor': 0.25,
             'liquidity': 0.20,
             'volume_vwap': 0.10,
             'ml_v2': 0.10,
+            'cvd': 0.10,         # Новый: CVD — видит buy/sell давление
         }
 
         scores = {}
@@ -496,6 +500,41 @@ class DecisionEngine:
         except Exception as e:
             logger.debug(f"[EXIT] ML-v2: {e}")
             scores['ml_v2']['score'] = 50
+
+        # ═══ CVD (10%) — buy/sell давление ────────────────────────────────
+        try:
+            if cvd_data and cvd_data.get('minutes', 0) >= 2:
+                trend = cvd_data.get('trend', 'neutral')
+                buy_pct = cvd_data.get('buy_pct', 50)
+                cvd_ratio = cvd_data.get('cvd_ratio', 1.0)
+                
+                # Основа: buy_pct (50% = нейтрально, 60%+ = бычий, 40%- = медвежий)
+                cvd_score = 50 + (buy_pct - 50) * 1.5
+                cvd_score = max(10, min(100, cvd_score))
+                
+                # Коррекция по тренду
+                if trend == 'bullish':
+                    cvd_score += 10
+                elif trend == 'bearish':
+                    cvd_score -= 10
+                
+                # Если ratio сильно несбалансирован
+                if cvd_ratio > 1.5:
+                    cvd_score += 5  # много покупок
+                elif cvd_ratio < 0.67:
+                    cvd_score -= 5  # много продаж
+                
+                cvd_score = max(10, min(100, cvd_score))
+                scores['cvd']['score'] = cvd_score
+                scores['cvd']['detail'] = f'trend={trend} buy={buy_pct:.0f}% ratio={cvd_ratio:.2f}'
+                logger.debug(f"[EXIT→CVD] {symbol}: score={cvd_score:.0f} — {scores['cvd']['detail']}")
+            else:
+                scores['cvd']['score'] = 50
+                scores['cvd']['detail'] = 'no_data'
+        except Exception as e:
+            logger.debug(f"[EXIT→CVD] {symbol}: {e}")
+            scores['cvd']['score'] = 50
+            scores['cvd']['detail'] = f'error({e})'
 
         # ═══ OI LIQUIDATION + FR BOOST ────────────────────────────────────
         # Если цена в зоне ликвидации шортов → потенциал сквиза → держим
@@ -660,7 +699,8 @@ class DecisionEngine:
                     candles_1h: Optional[list] = None,
                     entry_vwap_deviation: Optional[float] = None,
                     current_sl_pct: Optional[float] = None,
-                    max_sl_pct: float = 7.5) -> Optional[Decision]:
+                    max_sl_pct: float = 7.5,
+                    cvd_data: Optional[Dict] = None) -> Optional[Decision]:
         """
         Принять решение о выходе.
         Приоритет: SL > TP > трейлинг > таймаут.
@@ -708,7 +748,8 @@ class DecisionEngine:
             exit_vote = self._evaluate_exit_ensemble(
                 symbol, entry_price, current_price, pnl_pct,
                 highest_price=highest_price, candles_5m=candles_1m,
-                candles_1h=candles_1h, entry_vwap_deviation=entry_vwap_deviation
+                candles_1h=candles_1h, entry_vwap_deviation=entry_vwap_deviation,
+                cvd_data=cvd_data
             )
 
             if exit_vote['approved']:
@@ -742,20 +783,10 @@ class DecisionEngine:
                 )
 
         # ─── 1. SL - стоп-лосс ──────────────────────────────────────────
-        # 🎯 SL - твёрдый уровень. Если цена пробила - ensemble решает:
-        #    hold → расширить от ТЕКУЩЕГО SL (прогрессивно, до max_sl_pct)
-        #    exit → sell
-        #    нет ensemble данных → sell (безопасность)
+        # 🎯 SL - БЕЗУСЛОВНЫЙ выход. Ensemble не спрашивается.
+        #    Чем быстрее закроем убыток — тем лучше.
         if pnl_pct <= -_effective_sl:
             self.stats['exit_decisions'] += 1
-            ensemble_result = _check_exit_ensemble(
-                'SL',
-                f"SL -{pnl_pct:.2f}% (лимит -{_effective_sl:.2f}%)"
-            )
-            if ensemble_result:
-                # ensemble сказал hold → SL расширен от текущего уровня
-                return ensemble_result
-            # Нет ensemble данных или сказал exit → sell
             return Decision(symbol, 'exit', side=side,
                            reason=f"SL -{pnl_pct:.2f}% (лимит -{_effective_sl:.2f}%)",
                            signal_type=SignalType.STRONG_SELL, priority=100,
@@ -1248,6 +1279,19 @@ class DecisionEngine:
         scores = {}
         for k, w in BASE_WEIGHTS.items():
             scores[k] = {'score': 50, 'weight': w, 'detail': 'N/A'}
+
+        # 🧠 Динамические веса от VoteTracker (accuracy-based)
+        try:
+            _vt_weights = get_vote_tracker().get_weights()
+            for mod in ['ml_v2', 'advisor', 'liquidity', 'volume_vwap', 'vsa', 'cvd']:
+                if mod in scores and mod in _vt_weights:
+                    new_w = _vt_weights[mod]
+                    if abs(new_w - BASE_WEIGHTS.get(mod, 0)) > 0.001:
+                        scores[mod]['weight'] = new_w
+                        logger.debug(f"[DE] 🧠 VoteTracker вес {mod}: {BASE_WEIGHTS.get(mod, 0):.2f}→{new_w:.2f}")
+        except Exception as _e:
+            logger.debug(f"[DE] VoteTracker weight error: {_e}")
+
         # Веса для бонусов остаются (не входят в BASE_WEIGHTS)
         _bonus_keys = ['_reversal_bonus', '_price_bonus', '_btc_bonus']
 
@@ -1699,6 +1743,16 @@ class DecisionEngine:
             'level': {'score': scores.get('_level_penalty', {}).get('score', 0),
                       'detail': f'{current_price/high_24h*100:.1f}% от 24h хая' if high_24h else 'N/A'},
         }
+
+        # 🧠 Сохраняем голоса для VoteTracker (для учёта точности после закрытия сделки)
+        if final_score >= threshold:
+            try:
+                get_vote_tracker().record_entry_votes(
+                    symbol, votes, current_price,
+                    datetime.now(timezone.utc).isoformat()
+                )
+            except Exception as _ve:
+                logger.debug(f"[DE] VoteTracker entry save error: {_ve}")
 
         # ═══ СОХРАНЕНИЕ ИСТОРИИ ГОЛОСОВ ════════════════════════════════
         try:

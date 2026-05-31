@@ -187,6 +187,20 @@ class LiquidityCluster:
         )
 
         # Кэшируем для следующих вызовов
+        # ── Swing Levels (старая ликвидность) ──────────────────────────────
+        swing_near, swing_detail = self._detect_swing_levels(
+            candles_4h or candles_1h, current_price)
+        
+        # Если цена у старого уровня ликвидности — корректируем оценку
+        if swing_near == 'below':
+            # Цена у старого минимума — возможен отскок
+            score = min(100, score + 8)
+            detail += f' 📉SWL{swing_detail}'
+        elif swing_near == 'above':
+            # Цена у старого максимума — возможна ловушка
+            score = max(0, score - 5)
+            detail += f' 📈SWH{swing_detail}'
+
         self._cached_of = order_flows
         self._cached_ob = order_blocks
 
@@ -749,6 +763,74 @@ class LiquidityCluster:
             if two_above and last_two_below and recent_vols[-1] > avg_vol * 1.3:
                 return 'fake_breakout'
         return ''
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # SWING LEVELS (старая ликвидность)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    def _detect_swing_levels(self, candles_htf: Optional[List],
+                              current_price: float) -> Tuple[str, str]:
+        """
+        Ищет ключевые уровни старой ликвидности (swing lows/highs) на 4h.
+
+        Returns:
+            (position, detail):
+              position = 'below' | 'above' | ''
+              detail = '(уровень: цена)'
+        """
+        if not candles_htf or len(candles_htf) < 15:
+            return '', ''
+
+        highs = self._extract_highs(candles_htf)
+        lows = self._extract_lows(candles_htf)
+
+        if len(highs) < 15:
+            return '', ''
+
+        # Ищем swing lows: минимум, который ниже обоих соседей
+        swing_lows = []
+        for i in range(3, len(lows) - 3):
+            if lows[i] < lows[i-1] and lows[i] < lows[i-2] and lows[i] < lows[i-3] \
+               and lows[i] < lows[i+1] and lows[i] < lows[i+2] and lows[i] < lows[i+3]:
+                swing_lows.append(lows[i])
+
+        # Ищем swing highs: максимум, который выше обоих соседей
+        swing_highs = []
+        for i in range(3, len(highs) - 3):
+            if highs[i] > highs[i-1] and highs[i] > highs[i-2] and highs[i] > highs[i-3] \
+               and highs[i] > highs[i+1] and highs[i] > highs[i+2] and highs[i] > highs[i+3]:
+                swing_highs.append(highs[i])
+
+        # Ищем ближайший уровень (снизу или сверху) в радиусе 3%
+        best_level = None
+        best_dist = current_price * 0.03
+        best_pos = ''
+
+        if swing_lows:
+            below_levels = [l for l in swing_lows if 0 < current_price - l < current_price * 0.03]
+            if below_levels:
+                nearest_below = max(below_levels)
+                dist = current_price - nearest_below
+                if dist < best_dist:
+                    best_dist = dist
+                    best_level = nearest_below
+                    best_pos = 'below'
+
+        if swing_highs:
+            above_levels = [h for h in swing_highs if 0 < h - current_price < current_price * 0.03]
+            if above_levels:
+                nearest_above = min(above_levels)
+                dist = nearest_above - current_price
+                if dist < best_dist:
+                    best_dist = dist
+                    best_level = nearest_above
+                    best_pos = 'above'
+
+        if best_level:
+            dist_pct = best_dist / current_price * 100
+            return best_pos, f'{best_level:.4f}({dist_pct:.1f}%)'
+
+        return '', ''
 
     # ──────────────────────────────────────────────────────────────────────────
     # FAIR VALUE GAPS

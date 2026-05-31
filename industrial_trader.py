@@ -731,6 +731,13 @@ class IndustrialTrader:
                         except Exception:
                             pass
 
+                        # 🧠 Записываем outcome для VoteTracker (точность модулей)
+                        try:
+                            from vote_tracker import get_tracker as _get_vt
+                            _get_vt().record_outcome(symbol, pnl_pct)
+                        except Exception:
+                            pass
+
                         db.add_trade(
                             symbol=symbol,
                             side='sell',
@@ -1500,7 +1507,8 @@ class IndustrialTrader:
                             candles_1h=c1h_for_exit,
                             entry_vwap_deviation=entry_vwap_dev,
                             current_sl_pct=current_sl_pct,
-                            max_sl_pct=7.5
+                            max_sl_pct=7.5,
+                            cvd_data=_get_symbol_cvd(symbol)
                         )
 
                         # ═══ SMART EXIT: проверяем exit_override ──────────────
@@ -1526,16 +1534,17 @@ class IndustrialTrader:
                                 ensemble_label = ""
                                 hold_threshold = 65
 
-                                # Сначала пробуем 1м свечи (точнее, порог 65)
-                                if candles_1m and len(candles_1m) >= 10:
-                                    ensemble_candles = candles_1m
-                                    ensemble_label = "1m"
-                                    hold_threshold = 65
-                                # Fallback на 5м если 1м нет (грубее, порог 70)
-                                elif df is not None and len(df) >= 10:
+                                # 🧠 Используем 5м по умолчанию — 1м слишком шумно для exit ensemble
+                                # (0.3% откат на 1м выглядит как разворот, хотя на 5м это норма)
+                                if df is not None and len(df) >= 10:
                                     ensemble_candles = df.to_dict('records')
-                                    ensemble_label = "5m⚠️"
-                                    hold_threshold = 70
+                                    ensemble_label = "5m"
+                                    hold_threshold = 68
+                                # Fallback на 1м если 5м нет (шумно, порог 65)
+                                elif candles_1m and len(candles_1m) >= 10:
+                                    ensemble_candles = candles_1m
+                                    ensemble_label = "1m⚠️"
+                                    hold_threshold = 65
 
                                 if ensemble_candles is not None:
                                     try:
@@ -1544,7 +1553,8 @@ class IndustrialTrader:
                                             highest_price=position.get('_highest_price', current_price),
                                             candles_5m=ensemble_candles,
                                             candles_1h=mtf_candles_1h.get(symbol, []),
-                                            entry_vwap_deviation=entry_vwap_dev
+                                            entry_vwap_deviation=entry_vwap_dev,
+                                            cvd_data=_get_symbol_cvd(symbol)
                                         )
                                         hold_conf = et_vote.get('hold_confidence', 0)
                                         et_approved = hold_conf >= hold_threshold
@@ -1567,44 +1577,11 @@ class IndustrialTrader:
                                 sell_reason = early_trail_reason
 
                         # 1.5) Profit Protection — защита накопленной прибыли
-                        # Сначала SL в безубыток, потом ensemble решает: держать или продавать
+                        # БЕЗУСЛОВНЫЙ выход — ensemble не спрашивается
                         if not should_sell and profit_sell:
-                            # Пробуем ensemble перед продажей — может рынок ещё держится
-                            _pp_ensemble_override = False
-                            _pp_ensemble_candles = None
-                            _pp_ensemble_label = ""
-                            _pp_hold_threshold = 65
-
-                            if candles_1m and len(candles_1m) >= 10:
-                                _pp_ensemble_candles = candles_1m
-                                _pp_ensemble_label = "1m"
-                            elif df is not None and len(df) >= 10:
-                                _pp_ensemble_candles = df.to_dict('records')
-                                _pp_ensemble_label = "5m⚠️"
-                                _pp_hold_threshold = 70
-
-                            if _pp_ensemble_candles is not None and hasattr(self, '_de'):
-                                try:
-                                    de = self._de
-                                    _pp_vote = de._evaluate_exit_ensemble(
-                                        symbol, entry_price, current_price, pnl_percent,
-                                        highest_price=position.get('_highest_price', current_price),
-                                        candles_5m=_pp_ensemble_candles,
-                                        candles_1h=mtf_candles_1h.get(symbol, []),
-                                        entry_vwap_deviation=entry_vwap_dev
-                                    )
-                                    _pp_hold = _pp_vote.get('hold_confidence', 0)
-                                    if _pp_hold >= _pp_hold_threshold:
-                                        _pp_ensemble_override = True
-                                        logger.info(f"🛡️ [PROFIT→HOLD] {symbol}: ensemble hold={_pp_hold}% ≥ {_pp_hold_threshold} — держим, SL в безубытке")
-                                    else:
-                                        logger.info(f"🛡️ [PROFIT→SELL] {symbol}: ensemble hold={_pp_hold}% < {_pp_hold_threshold} — {profit_sell}")
-                                except Exception as _pp_e:
-                                    logger.debug(f"[PROFIT] ensemble: {_pp_e}")
-
-                            if not _pp_ensemble_override:
-                                should_sell = True
-                                sell_reason = profit_sell
+                            logger.info(f"🛡️ [PROFIT→SELL] {symbol}: {profit_sell}")
+                            should_sell = True
+                            sell_reason = profit_sell
 
                         # 2) DecisionEngine exit (SL/TP/трейлинг/таймаут с exit ensemble)
                         if not should_sell and exit_decision is not None:
