@@ -854,11 +854,13 @@ class IndustrialTrader:
                             # Если на бирже нет актива — удаляем из памяти
                             if real_qty < 0.000001:
                                 logger.warning(f"🔄 Синхронизация: {symbol} нет на бирже. Удаляю из кеша/БД.")
+                                logger.info(f"💥 POP (синхронизация_нет_на_бирже): {symbol} | строка=857")  # 🩹 DEBUG
                                 self.positions.pop(symbol, None)
                                 db.remove_position(symbol)
                             # Если осталась пыль (кол-во < 1% от исходного) — удаляем
                             if real_qty < mem_qty * 0.01 and real_qty < 0.1:
                                 logger.warning(f"🔄 Синхронизация: {symbol} пыль ({real_qty:.6f} от {mem_qty:.4f}). Удаляю.")
+                                logger.info(f"💥 POP (синхронизация_пыль): {symbol} | строка=862")  # 🩹 DEBUG
                                 self.positions.pop(symbol, None)
                                 db.remove_position(symbol)
                             # Если актив есть, но сильно меньше закешированного — обновляем
@@ -1687,6 +1689,7 @@ class IndustrialTrader:
                             if total_asset < 0.000001:
                                 logger.warning(f"⏭️ {symbol}: нет на бирже ({currency}=0). Удаляю из памяти.")
                                 if symbol in self.positions:
+                                    logger.info(f"💥 POP (пресейл_нет_на_бирже): {symbol} | строка=1690")  # 🩹 DEBUG
                                     self.positions.pop(symbol, None)
                                 db.remove_position(symbol)
                                 continue
@@ -1696,6 +1699,7 @@ class IndustrialTrader:
                             if pos_value < MIN_POSITION_VALUE:
                                 logger.warning(f"⏭️ {symbol}: остаток ${pos_value:.2f} < ${MIN_POSITION_VALUE:.2f}. Чищу кеш без продажи.")
                                 if symbol in self.positions:
+                                    logger.info(f"💥 POP (пресейл_пыль): {symbol} | строка=1699")  # 🩹 DEBUG
                                     self.positions.pop(symbol, None)
                                 db.remove_position(symbol)
                                 continue
@@ -1750,6 +1754,7 @@ class IndustrialTrader:
                             # 🛡️ Если sell не удался — принудительно удаляем позицию
                             if result is None and symbol in self.positions:
                                 logger.warning(f"⚠️ Sell {symbol} не удался. Принудительно очищаю позицию из памяти.")
+                                logger.info(f"💥 POP (форс_очистка): {symbol} | строка=1753")  # 🩹 DEBUG
                                 self.positions.pop(symbol, None)
                                 db.remove_position(symbol)
                 
