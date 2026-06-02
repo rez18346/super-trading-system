@@ -240,19 +240,16 @@ def _parse_votes_from_log() -> dict:
         if m:
             raw_sym = m.group(2)
             sym = raw_sym + '/USDT'
-            # Всегда перезаписываем — лог может содержать старые строки без VV
-            # Ищем bonus/rev/btc в конце строки
             bonus_match = re.search(r'bonus=([-\d]+) rev=([-\d]+) btc=([-+]\d+)', line)
-            # IDM / Order Block — ищем прямо в строке лога
             idm_match = re.search(r'OB\d+\s+(idm|ext)(?:\s+(bullish|bearish))?', line)
             idm_info = ''
             if idm_match:
                 ob_type = idm_match.group(1)
                 if ob_type == 'idm':
-                    direction = idm_match.group(2)
-                    if direction == 'bullish':
+                    dir_m = idm_match.group(2)
+                    if dir_m == 'bullish':
                         idm_info = 'IDM↑'
-                    elif direction == 'bearish':
+                    elif dir_m == 'bearish':
                         idm_info = 'IDM↓'
                     else:
                         idm_info = 'IDM'
@@ -266,16 +263,56 @@ def _parse_votes_from_log() -> dict:
                 'mtf': int(m.group(8)),
                 'rvb': int(m.group(9)),
                 'liq': int(m.group(10)),
-                    'vv': int(m.group(11)),
-                    'cvd': f"{m.group(12)}({m.group(13)})",
-                    'bonus': int(bonus_match.group(1)) if bonus_match else 0,
-                    'rev': int(bonus_match.group(2)) if bonus_match else 0,
-                    'btc': int(bonus_match.group(3)) if bonus_match else 0,
-                    'idm': idm_info,
-                    'oi_heat': int(m_oi.group(1)) if (m_oi := re.search(r'OI🔥(\d+)\(\+(\d+)\)', line)) else 0,
-                    'oi_bonus': int(m_oi.group(2)) if (m_oi := re.search(r'OI🔥(\d+)\(\+(\d+)\)', line)) else 0,
-                    'price': prices.get(sym, 0),
-                }
+                'vv': int(m.group(11)),
+                'cvd': f"{m.group(12)}({m.group(13)})",
+                'bonus': int(bonus_match.group(1)) if bonus_match else 0,
+                'rev': int(bonus_match.group(2)) if bonus_match else 0,
+                'btc': int(bonus_match.group(3)) if bonus_match else 0,
+                'idm': idm_info,
+                'oi_heat': int(m_oi.group(1)) if (m_oi := re.search(r'OI🔥(\d+)\(\+(\d+)\)', line)) else 0,
+                'oi_bonus': int(m_oi.group(2)) if (m_oi := re.search(r'OI🔥(\d+)\(\+(\d+)\)', line)) else 0,
+                'price': prices.get(sym, 0),
+            }
+        # ⚡ SHORT entry — параллельное голосование
+        sm = re.search(r'\[DE→SHORT\] (\w+)/USDT:.*ML-Pro:(\d+)\((.+)\)\s+Adv:(\d+)\((.+)\)\s+MTF:(\d+).*RVB:(\d+).*Liq:(\d+)\([^)]*\)\s+VV:(\d+)\(.+?\)\s+VSA:\d+\([^)]*\)\s+CVD:(\d+)\(([^)]*)\)', line)
+        if sm:
+            raw_sym = sm.group(1)
+            sym = raw_sym + '/USDT'
+            score_match = re.search(r'score=(\d+)/100', line)
+            bonus_match = re.search(r'bonus=([-\d]+) rev=([-\d]+) btc=([-+]\d+)', line)
+            idm_match = re.search(r'OB\d+\s+(idm|ext)(?:\s+(bullish|bearish))?', line)
+            idm_info = ''
+            if idm_match:
+                ob_type = idm_match.group(1)
+                if ob_type == 'idm':
+                    dir_m = idm_match.group(2)
+                    if dir_m == 'bullish':
+                        idm_info = 'IDM↑'
+                    elif dir_m == 'bearish':
+                        idm_info = 'IDM↓'
+                    else:
+                        idm_info = 'IDM'
+                elif ob_type == 'ext':
+                    idm_info = 'EXT'
+            result[sym] = {
+                'score': int(score_match.group(1)) if score_match else 0,
+                'signal': 'SHORT',
+                'mlpro': f"{sm.group(2)}({sm.group(3)})",
+                'adv': f"{sm.group(4)}({sm.group(5)})",
+                'mtf': int(sm.group(6)),
+                'rvb': int(sm.group(7)),
+                'liq': int(sm.group(8)),
+                'vv': int(sm.group(9)),
+                'cvd': f"{sm.group(10)}({sm.group(11)})",
+                'bonus': int(bonus_match.group(1)) if bonus_match else 0,
+                'rev': int(bonus_match.group(2)) if bonus_match else 0,
+                'btc': int(bonus_match.group(3)) if bonus_match else 0,
+                'idm': idm_info,
+                'oi_heat': int(m_oi.group(1)) if (m_oi := re.search(r'OI🔥(\d+)\(\+(\d+)\)', line)) else 0,
+                'oi_bonus': int(m_oi.group(2)) if (m_oi := re.search(r'OI🔥(\d+)\(\+(\d+)\)', line)) else 0,
+                'price': prices.get(sym, 0),
+                'direction': 'SHORT',
+            }
         # VETO — только если не перезаписана основной строкой
         vm = re.search(r'\[DE→(HOLD|BUY|SELL)\] (\w+)/USDT:.*VETO: (.+)', line)
         if vm:
@@ -362,7 +399,8 @@ def get_status_snapshot() -> dict:
         cur_price = pxc.get_price(sym) or pos.get('highest_price', 0) or 0
         p = {'qty': pos['quantity'], 'entry': pos['entry_price'],
              'current_price': cur_price,
-             'entry_time': pos.get('entry_time', '')}
+             'entry_time': pos.get('entry_time', ''),
+             'direction': pos.get('side', 'long').upper()}
         if sym in votes:
             p['votes'] = votes[sym]
         enriched_positions[sym] = p
@@ -374,8 +412,13 @@ def get_status_snapshot() -> dict:
                 'qty': 0, 'entry': 0,
                 'current_price': v.get('price', 0),
                 'entry_time': '',
+                'direction': v.get('direction', 'LONG'),
                 'votes': v
             }
+        else:
+            # Обновляем направление из голосов, если нет позиции
+            if enriched_positions[sym].get('qty', 0) == 0:
+                enriched_positions[sym]['direction'] = v.get('direction', 'LONG')
 
     # BTC Regime: парсим из лога последнее сообщение
     btc_regime = {}
@@ -887,6 +930,9 @@ function updPos(pos){
       // Score / бар
       const barW=Math.min((v.score||0)/65*100,100);
       const barColor=v.score>=65?'#3fb950':v.score>=50?'#d29922':'#f85149';
+      // Direction: Long 🟢 / Short 🔴
+      const isShort = p.direction === 'SHORT';
+      const dirBadge = isShort ? '<span style="color:#f85149;font-size:10px;font-weight:600">🔴 SHORT</span>' : '<span style="color:#3fb950;font-size:10px;font-weight:600">🟢 LONG</span>';
       // Эмодзи и сигнал
       const isVeto = v.veto;
       const sigEmoji = isVeto ? '⛔' : v.score>=65?'✅':v.score>=50?'🔶':'⚪';

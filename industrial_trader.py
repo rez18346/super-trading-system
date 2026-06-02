@@ -74,6 +74,13 @@ class IndustrialTrader:
         self._portfolio_guard_triggered = False  # Флаг: Guard сработал
         self._current_market_mode = 'neutral'
         
+        # 🩹 BTC Regime Tracker: инициализируем сразу для корректной блокировки шортов
+        try:
+            from btc_regime_tracker import BTCRegimeTracker
+            self._btc_regime = BTCRegimeTracker()
+        except Exception:
+            pass
+        
         # 🚫 Anti-FOMO: последняя цена выхода по каждому символу {symbol: {'price': float, 'time': seconds}}
         self._last_exit_prices: Dict[str, Dict] = {}
         
@@ -89,6 +96,31 @@ class IndustrialTrader:
         
         # СИНХРОНИЗАЦИЯ С РЕАЛЬНЫМИ ПОЗИЦИЯМИ НА БИРЖЕ
         self.sync_with_exchange_positions()
+        
+        # ── НОВАЯ АРХИТЕКТУРА: PM, OM, RM ──────────────────────────────
+        # Эти модули работают параллельно со старыми структурами.
+        # Со временем старый код будет полностью заменён.
+        from integration import init_new_modules
+        _modules = init_new_modules(self)
+        self._pm = _modules['pm']   # PositionManager — единое хранилище позиций
+        self._om = _modules['om']   # OrderManager — ордера через CCXT
+        self._rm = _modules['rm']   # RiskManager — проверка рисков
+
+        # ⚡ ШОРТ: флаг активации (по умолчанию выключен)
+        self._short_trading_enabled = False
+        self._short_positions: Dict[str, Dict] = {}  # short-позиции для старого кода
+        
+        # ⚡ Автовключение шорта из конфига
+        try:
+            _short_cfg = self.config.get('trading', {}).get('short_enabled', False)
+            if _short_cfg:
+                _short_mode = self.config.get('trading', {}).get('trade_mode', 'margin')
+                _short_lev = self.config.get('trading', {}).get('short_leverage', 1.0)
+                if self.enable_short_trading(mode=_short_mode, leverage=_short_lev):
+                    logger.info(f"⚡ Шорт автоматически активирован из конфига: mode={_short_mode}, leverage={_short_lev}x")
+        except Exception as _e_sc:
+            logger.debug(f"[INIT] short config: {_e_sc}")
+        # ────────────────────────────────────────────────────────────────
         
         logger.info(f"Industrial Trader инициализирован с капиталом: ${self.capital}")
     
@@ -870,6 +902,16 @@ class IndustrialTrader:
                 except Exception as e:
                     logger.warning(f"Ошибка синхронизации: {e}")
                 
+                # 🔄 Синхронизация новых модулей (PM, OM, RM) с биржей
+                # Выполняется каждый цикл параллельно со старой синхронизацией
+                if hasattr(self, '_pm'):
+                    self._pm.sync_with_exchange()
+                    self.available_capital = self._pm.available_capital
+                if hasattr(self, '_om'):
+                    self._om.sync_open_orders()
+                if hasattr(self, '_rm'):
+                    self._rm.clean_expired_locks()
+                
                 # 📊 Загрузка multi-timeframe данных для DecisionEngine
                 # (1H, 4H, BTC цена — для ML-голосов: MLProfessionalV2, MLAdvisor, BTC-корреляция)
                 # Используем CachedDataFetcher — данные уже кэшируются WebSocket-клиентом
@@ -886,6 +928,15 @@ class IndustrialTrader:
                     if fetcher:
                         # BTC цена из кеша (или API с троттлингом 3с)
                         btc_price = fetcher.get_ticker('BTC/USDT')
+                        # 🩹 24h high из прямого тикера для sustained drop
+                        try:
+                            _raw_btc_ticker = self.exchange.fetch_ticker('BTC/USDT')
+                            _btc_24h_high = _raw_btc_ticker.get('high', btc_price or 0) or btc_price or 0
+                            if not hasattr(self, '_btc_high_tracker') or _btc_24h_high > self._btc_high_tracker:
+                                self._btc_high_tracker = _btc_24h_high
+                                logger.info(f"📊 BTC 24h high tracker: \${_btc_24h_high:.2f} (price=\${btc_price:.2f})")
+                        except Exception:
+                            pass
                         
                         # BTC свечи для Regime Tracker
                         raw_btc_5m = fetcher.get_ohlcv('BTC/USDT', '5m', 50)
@@ -924,6 +975,10 @@ class IndustrialTrader:
                     try:
                         btc_ticker = self.exchange.fetch_ticker('BTC/USDT')
                         btc_price = btc_ticker['last']
+                        # 🩹 Используем 24h high из тикера для определения sustained drop
+                        _btc_24h_high = btc_ticker.get('high', btc_price)
+                        if not hasattr(self, '_btc_high_tracker') or _btc_24h_high > self._btc_high_tracker:
+                            self._btc_high_tracker = _btc_24h_high
                     except Exception as _e:
                         logger.debug(f"[trading_cycle] btc fetch: {_e}")
                 
@@ -974,13 +1029,58 @@ class IndustrialTrader:
                         # 🎯 ДИНАМИЧЕСКОЕ ПЕРЕКЛЮЧЕНИЕ РЕЖИМОВ ПО ТРЕНДУ BTC
                         # Определяем режим: up_trend или down_trend
                         regime = regime_result['regime']
+                        _chg_1h = regime_result.get('btc_change_1h', 0)
+                        _chg_4h = regime_result.get('btc_change_4h', 0)
+                        
+                        # 🩹 Учитываем долгосрочное движение
+                        # Даже если 30м в боковике (accumulation), 1ч/4ч падение → down_trend
+                        _sustained_drop = (_chg_4h < -2.0) or (_chg_1h < -1.0)
+                        _sustained_rise = (_chg_4h > 2.0) or (_chg_1h > 1.0)
+                        
+                        # 🩹 Падение от 12h-максимума: даже при боковике на 30м
+                        if btc_price and btc_price > 0 and hasattr(self, '_btc_high_tracker') and self._btc_high_tracker:
+                            _drop_from_high = (self._btc_high_tracker - btc_price) / self._btc_high_tracker * 100
+                            if _drop_from_high > 1.5:
+                                _sustained_drop = True
+                                logger.info(f"   📉 Падение от максимума: {_drop_from_high:.1f}% ({_drop_from_high*2:.1f}%) — down_trend")
+
                         
                         # Upward regimes — трейлинг, крупный лот, без импульса
                         # Downward regimes — импульс, мелкий лот
                         up_regimes = ('accumulation', 'recovery')
-                        down_regimes = ('dump', 'distribution', 'pump')
+                        down_regimes = ('dump', 'distribution', 'pump', 'bearish_side')
                         
-                        if regime in up_regimes:
+                        if _sustained_drop:
+                            self._current_market_mode = 'down_trend'
+                            impulse_cfg = {
+                                'exit_score_threshold': 65,
+                                'min_confirmations': 1,
+                                'consecutive_confirmations': 1,
+                                'micro_trend_filter': False,
+                                'min_hold_seconds': 0,
+                                'lookback_candles': 15,
+                                'volume_drop_threshold': 0.3,
+                                'wick_threshold': 0.6,
+                                'strong_volume_drop': 0.5,
+                                'body_shrink_threshold': 0.4
+                            }
+                            logger.info(f"📉 РЕЖИМ DOWN-TREND (sustained drop: 1h={_chg_1h:+.2f}% 4h={_chg_4h:+.2f}%), импульс активен")
+                        elif _sustained_rise:
+                            self._current_market_mode = 'up_trend'
+                            impulse_cfg = {
+                                'exit_score_threshold': 95,
+                                'min_confirmations': 2,
+                                'consecutive_confirmations': 3,
+                                'micro_trend_filter': True,
+                                'min_hold_seconds': 120,
+                                'lookback_candles': 15,
+                                'volume_drop_threshold': 0.3,
+                                'wick_threshold': 0.6,
+                                'strong_volume_drop': 0.5,
+                                'body_shrink_threshold': 0.4
+                            }
+                            logger.info(f"📈 РЕЖИМ UP-TREND (sustained rise: 1h={_chg_1h:+.2f}% 4h={_chg_4h:+.2f}%), трейлинг +50% лота, импульс подавлен")
+                        elif regime in up_regimes:
                             self._current_market_mode = 'up_trend'
                             # Импульс: только при очень сильных сигналах (почти отключён)
                             impulse_cfg = {
@@ -1175,6 +1275,11 @@ class IndustrialTrader:
                                                        high_24h=_high_24h)
                             
                             if decision.action == 'enter':
+                                # ⚡ ШОРТ-ПРИОРИТЕТ: если включён шорт — не покупаем (только шортим)
+                                if getattr(self, '_short_trading_enabled', False):
+                                    logger.info(f"⏭️ [SHORT_MODE] {symbol}: LONG отключён (активен шорт)")
+                                    continue
+
                                 # 🛑 PORTFOLIO GUARD: если сработал — входы заблокированы
                                 if self._portfolio_guard_triggered:
                                     logger.warning(f"🔒 [GUARD] {symbol}: вход заблокирован (Guard активен)")
@@ -1254,30 +1359,145 @@ class IndustrialTrader:
                                 except Exception as _e:
                                     logger.debug(f"[buy_lock] DB check: {_e}")
                                 logger.info(f"⚡ [DE→BUY] {symbol}: score={score:.0f}/100 size={size_mult:.2f} | ${de_price:.4f} | {decision.reason}")
-                                # Размер позиции = стандартный * size_mult от DE, с учётом Score
-                                base_qty = self.calculate_position_size(symbol, de_price, score)
-                                quantity = base_qty * size_mult
-                                if quantity * de_price <= self.available_capital:
-                                    # ✅ ЗАПОМИНАЕМ buy_lock ТОЛЬКО при реальной покупке
-                                    _buy_lock[symbol] = time.time()
-                                    self._buy_locks = _buy_lock
-                                    # ✅ ЗАПОМИНАЕМ SL/TP УРОВНИ ОТ DE в позиции
-                                    self.execute_trade(symbol, 'buy', quantity, de_price,
-                                        sl_price=decision.sl_price, tp_price=decision.tp_price,
-                                        trail_act=decision.trail_act, trail_dist=decision.trail_dist,
-                                        max_hold_h=decision.max_hold_h,
-                                        scores=decision.metadata)
-                                else:
-                                    logger.warning(f"⏭️ [DE] {symbol}: недостаточно капитала")
+
+                                # 🆕 НОВАЯ АРХИТЕКТУРА: пробуем через RM + OM + PM
+                                _integrated = False
+                                if hasattr(self, '_pm') and hasattr(self, '_om') and hasattr(self, '_rm'):
+                                    try:
+                                        from integration import process_entry_decision
+                                        _btc_state_info = {
+                                            'price': btc_price,
+                                            'trend': getattr(self, '_current_market_mode', 'neutral'),
+                                        }
+                                        _result = process_entry_decision(self, symbol, decision, de_price, _btc_state_info)
+                                        if _result is not None:
+                                            _integrated = True
+                                            logger.info(f"   ✅ [PM] {symbol}: вход через новую архитектуру")
+                                    except Exception as _ie:
+                                        logger.warning(f"[INTEGRATION] entry {symbol}: {_ie}")
+
+                                # ⬇️ Старый код (fallback, если интеграция не сработала)
+                                if not _integrated:
+                                    # Размер позиции = стандартный * size_mult от DE, с учётом Score
+                                    base_qty = self.calculate_position_size(symbol, de_price, score)
+                                    quantity = base_qty * size_mult
+                                    if quantity * de_price <= self.available_capital:
+                                        # ✅ ЗАПОМИНАЕМ buy_lock ТОЛЬКО при реальной покупке
+                                        _buy_lock[symbol] = time.time()
+                                        self._buy_locks = _buy_lock
+                                        # ✅ ЗАПОМИНАЕМ SL/TP УРОВНИ ОТ DE в позиции
+                                        trade_result = self.execute_trade(symbol, 'buy', quantity, de_price,
+                                            sl_price=decision.sl_price, tp_price=decision.tp_price,
+                                            trail_act=decision.trail_act, trail_dist=decision.trail_dist,
+                                            max_hold_h=decision.max_hold_h,
+                                            scores=decision.metadata)
+                                        # 🩹 FIX: если сделка НЕ выполнилась — убираем buy_lock (иначе stale-цикл)
+                                        if trade_result is None:
+                                            _buy_lock.pop(symbol, None)
+                                            self._buy_locks = _buy_lock
+                                            logger.info(f"🩹 {symbol}: сделка не выполнилась, buy_lock снят")
+                                    else:
+                                        logger.warning(f"⏭️ [DE] {symbol}: недостаточно капитала")
                             else:
                                 reason = decision.reason or ''
                                 # Всегда логируем отклонённые решения — надо видеть почему DE не входит
                                 logger.info(f"⏳ [DE→HOLD] {symbol}: {reason}")
                         except Exception as e_de:
                             logger.warning(f"[DE] {symbol}: ошибка: {e_de}")
-                    
+
+                    # ════════════════════════════════════════════════════════════
+                    # ⚡ ШОРТ: параллельное решение для short entry
+                    # ════════════════════════════════════════════════════════════
+                    if getattr(self, '_short_trading_enabled', False) and hasattr(de, 'decide_short'):
+                        try:
+                            # ⚡ Проверка уровня цены: не слишком близко к 24h хаю
+                            _high_24h = None
+                            try:
+                                _ticker = self.exchange.fetch_ticker(symbol)
+                                _high_24h = _ticker.get('high')
+                            except Exception:
+                                pass
+
+                            # ⚡ BTC state для фильтрации
+                            _btc_short_state = {
+                                'price': btc_price,
+                                'trend': getattr(self, '_current_market_mode', 'neutral'),
+                            }
+
+                            # ⚡ Считаем текущие шорт-позиции в PM
+                            _short_count = 0
+                            if hasattr(self, '_pm'):
+                                _short_count = self._pm.short_count
+                            _max_short = self.config.get('risk_management', {}).get('max_short_positions', 10)
+
+                            # 🩹 de_confidence может быть не определён (символ уже в LONG, анализ не запускался)
+                            _short_conf = locals().get('de_confidence', 50) or 50
+                            _short_trend = locals().get('de_trend', 'neutral') or 'neutral'
+                            _short_rsi = locals().get('de_rsi', 50) or 50
+
+                            # 🩹 de_price может быть не определён
+                            _short_price = locals().get('de_price', 0) or 0
+                            if _short_price <= 0:
+                                _short_price = current_price  # fallback к цене из тикера
+
+                            # 🩹 candles и last_exit могут быть не определены
+                            _short_c5m = locals().get('c5m', None)
+                            _short_c1h = locals().get('c1h', None)
+                            _short_c4h = locals().get('c4h', None)
+                            _short_last_exit_price = locals().get('last_exit_price', None)
+                            _short_last_exit_time = locals().get('last_exit_time', None)
+
+                            short_decision = de.decide_short(
+                                symbol, _short_conf, _short_trend, _short_rsi,
+                                _short_price, _short_count, _max_short,
+                                candles_5m=_short_c5m, candles_1h=_short_c1h, candles_4h=_short_c4h,
+                                last_exit_price=_short_last_exit_price,
+                                last_exit_time=_short_last_exit_time,
+                                cvd_data=_get_symbol_cvd(symbol),
+                                high_24h=_high_24h,
+                                btc_state=_btc_short_state,
+                            )
+
+                            if short_decision.action == 'enter':
+                                if self._portfolio_guard_triggered:
+                                    logger.warning(f"🔒 [GUARD] {symbol}: шорт заблокирован (Guard активен)")
+                                    continue
+
+                                score = short_decision.score or 50
+                                if score < 65:
+                                    logger.info(f"⏳ [SHORT→LOW] {symbol}: score={score:.0f} < 65")
+                                    continue
+
+                                logger.info(f"⚡ [DE→SHORT] {symbol}: score={score:.0f}/100 | ${_short_price:.4f} | {short_decision.reason}")
+
+                                # 🆕 НОВАЯ АРХИТЕКТУРА: через PM + OM + RM
+                                _short_integrated = False
+                                if hasattr(self, '_pm') and hasattr(self, '_om') and hasattr(self, '_rm'):
+                                    try:
+                                        from integration import process_entry_decision
+                                        _result = process_entry_decision(
+                                            self, symbol, short_decision, _short_price, _btc_short_state
+                                        )
+                                        if _result is not None:
+                                            _short_integrated = True
+                                            logger.info(f"   ✅ [PM→SHORT] {symbol}: вход через новую архитектуру")
+                                    except Exception as _sie:
+                                        logger.warning(f"[SHORT→INTEGRATION] {symbol}: {_sie}")
+
+                                # ⬇️ Fallback: старый код
+                                if not _short_integrated:
+                                    logger.warning(f"⏭️ [SHORT] {symbol}: нет новой архитектуры, пропускаю")
+
+                        except Exception as e_short:
+                            logger.warning(f"[SHORT→DE] {symbol}: ошибка: {e_short}")
+
+                    # ════════════════════════════════════════════════════════════
+                    # ⚡ ЕСТЬ ПОЗИЦИЯ: Управление открытой позицией
+                    # ════════════════════════════════════════════════════════════
                     else:
-                        # Управление открытой позицией
+                        position = self.positions.get(symbol, {})
+                        if not position:
+                            continue
                         position = self.positions[symbol]
                         
                         # 🩹 СТАРЫЕ ПОЗИЦИИ: используем _created_at (время в памяти),
@@ -1671,43 +1891,59 @@ class IndustrialTrader:
                         if should_sell:
                             logger.info(f"🎯 ВЫХОД ИЗ ПОЗИЦИИ {symbol}: {sell_reason}")
                             quantity = position['quantity']
+
+                            # 🆕 НОВАЯ АРХИТЕКТУРА: пробуем через PM + OM
+                            _integrated_sell = False
+                            if hasattr(self, '_pm') and hasattr(self, '_om'):
+                                try:
+                                    from integration import process_exit_decision
+                                    _outcome = process_exit_decision(self, symbol, sell_reason, current_price)
+                                    if _outcome is not None:
+                                        _integrated_sell = True
+                                        logger.info(f"   ✅ [PM] {symbol}: выход через новую архитектуру")
+                                        # Синхронизируем старые структуры (для дебага)
+                                        if symbol in self.positions:
+                                            self.positions.pop(symbol, None)
+                                            db.remove_position(symbol)
+                                except Exception as _ie:
+                                    logger.warning(f"[INTEGRATION] exit {symbol}: {_ie}")
                             
-                            # 🔄 ЕДИНЫЙ ИСТОЧНИК ИСТИНЫ: проверка реального баланса перед sell
-                            try:
-                                balance = self.exchange.fetch_balance()
-                                currency = symbol.split('/')[0]
-                                free_asset = balance['free'].get(currency, 0)
-                                total_asset = balance['total'].get(currency, 0)
-                                pos_value = total_asset * current_price
-                            except Exception as e:
-                                logger.error(f"❌ Ошибка проверки баланса для {symbol}: {e}")
-                                free_asset = 0
-                                total_asset = 0
-                                pos_value = 0
-                            
-                            # Если на бирже нет монет — чистим кеш и идём дальше
-                            if total_asset < 0.000001:
-                                logger.warning(f"⏭️ {symbol}: нет на бирже ({currency}=0). Удаляю из памяти.")
-                                if symbol in self.positions:
-                                    logger.info(f"💥 POP (пресейл_нет_на_бирже): {symbol} | строка=1690")  # 🩹 DEBUG
-                                    self.positions.pop(symbol, None)
-                                db.remove_position(symbol)
-                                continue
-                            
-                            # Мусорный остаток (< $1) — не продаём, просто чистим кеш
-                            MIN_POSITION_VALUE = 1.0
-                            if pos_value < MIN_POSITION_VALUE:
-                                logger.warning(f"⏭️ {symbol}: остаток ${pos_value:.2f} < ${MIN_POSITION_VALUE:.2f}. Чищу кеш без продажи.")
-                                if symbol in self.positions:
-                                    logger.info(f"💥 POP (пресейл_пыль): {symbol} | строка=1699")  # 🩹 DEBUG
-                                    self.positions.pop(symbol, None)
-                                db.remove_position(symbol)
-                                continue
-                            
-                            # Есть монеты — продаём через биржу
-                            safe_qty = free_asset * 0.999 if free_asset < quantity else quantity
-                            if safe_qty < quantity * 0.9:
-                                logger.warning(f"⚠️ {symbol}: free={free_asset:.6f} < qty={quantity:.6f}. Использую free.")
+                            # ⬇️ Старый код (fallback)
+                            if not _integrated_sell:
+                                # 🔄 ЕДИНЫЙ ИСТОЧНИК ИСТИНЫ: проверка реального баланса перед sell
+                                try:
+                                    balance = self.exchange.fetch_balance()
+                                    currency = symbol.split('/')[0]
+                                    free_asset = balance['free'].get(currency, 0)
+                                    total_asset = balance['total'].get(currency, 0)
+                                    pos_value = total_asset * current_price
+                                except Exception as e:
+                                    logger.error(f"❌ Ошибка проверки баланса для {symbol}: {e}")
+                                    free_asset = 0
+                                    total_asset = 0
+                                    pos_value = 0
+                                
+                                # Если на бирже нет монет — чистим кеш и идём дальше
+                                if total_asset < 0.000001:
+                                    logger.warning(f"⏭️ {symbol}: нет на бирже ({currency}=0). Удаляю из памяти.")
+                                    if symbol in self.positions:
+                                        self.positions.pop(symbol, None)
+                                    db.remove_position(symbol)
+                                    continue
+                                
+                                # Мусорный остаток (< $1) — не продаём, просто чистим кеш
+                                MIN_POSITION_VALUE = 1.0
+                                if pos_value < MIN_POSITION_VALUE:
+                                    logger.warning(f"⏭️ {symbol}: остаток ${pos_value:.2f} < ${MIN_POSITION_VALUE:.2f}. Чищу кеш без продажи.")
+                                    if symbol in self.positions:
+                                        self.positions.pop(symbol, None)
+                                    db.remove_position(symbol)
+                                    continue
+                                
+                                # Есть монеты — продаём через биржу
+                                safe_qty = free_asset * 0.999 if free_asset < quantity else quantity
+                                if safe_qty < quantity * 0.9:
+                                    logger.warning(f"⚠️ {symbol}: free={free_asset:.6f} < qty={quantity:.6f}. Использую free.")
                             
                             # 📝 Логируем решение о продаже в signal_log
                             try:
@@ -1722,14 +1958,15 @@ class IndustrialTrader:
                             except Exception:
                                 pass
                             
+                            # 🩹 FIX: сохраняем entry_price ДО execute_trade (который удаляет позицию из памяти)
+                            pos = self.positions.get(symbol, {})
+                            entry_price_pos = pos.get('entry_price', current_price)
+                            was_loss = current_price < entry_price_pos
+
                             result = self.execute_trade(symbol, 'sell', safe_qty, current_price, exit_reason=sell_reason)
 
                             # 🚫 Кулдаун re-entry: запомнить время выхода
                             if result is not None:
-                                # Определяем убыток: если цена продажи ниже цены входа (для long)
-                                pos = self.positions.get(symbol, {})
-                                entry_price_pos = pos.get('entry_price', current_price)
-                                was_loss = current_price < entry_price_pos
                                 de.record_exit(symbol, sell_reason, was_loss=was_loss)
                                 
                                 # 🚫 Anti-FOMO: запоминаем цену и время выхода
@@ -1793,6 +2030,56 @@ class IndustrialTrader:
                         logger.debug(f"periodic pos save: {e_save}")
                     self._last_pos_save_time = time.time()
 
+                # ════════════════════════════════════════════════════════════════
+                # ⚡ ШОРТ: мониторинг позиций через PM
+                # ════════════════════════════════════════════════════════════════
+                if getattr(self, '_short_trading_enabled', False) and hasattr(self, '_pm'):
+                    try:
+                        for sp in self._pm.short_positions:
+                            try:
+                                _sp_sym = sp.symbol
+                                _sp_price = sp.current_price
+                                _sp_pnl = sp.pnl_pct
+                                
+                                # ⚡ Обновляем SL→BE для short
+                                if sp.update_sl_to_breakeven():
+                                    _sl_pct = ((sp.sl_price / sp.entry_price if sp.sl_price else 0) - 1) * 100
+                                    logger.info(f"🛡️ [SHORT SL→BE] {_sp_sym}: PnL={_sp_pnl:+.2f}% — SL на {_sl_pct:+.2f}%")
+                                
+                                # ⚡ SL для short (цена выше entry → убыток)
+                                if sp.is_stop_loss:
+                                    logger.info(f"🛑 [SHORT SL] {_sp_sym}: {_sp_pnl:+.2f}% @ ${_sp_price:.4f}")
+                                    from integration import process_exit_decision
+                                    process_exit_decision(self, _sp_sym, f"short_sl:{_sp_pnl:+.2f}%", _sp_price)
+                                    continue
+                                
+                                # ⚡ TP для short (цена ниже entry → профит)
+                                if sp.is_take_profit:
+                                    logger.info(f"🎯 [SHORT TP] {_sp_sym}: {_sp_pnl:+.2f}% @ ${_sp_price:.4f}")
+                                    from integration import process_exit_decision
+                                    process_exit_decision(self, _sp_sym, f"short_tp:{_sp_pnl:+.2f}%", _sp_price)
+                                    continue
+                                
+                                # ⚡ Трейлинг для short
+                                if sp.is_trail_hit:
+                                    logger.info(f"🎯 [SHORT TRAIL] {_sp_sym}: {_sp_pnl:+.2f}% @ ${_sp_price:.4f}")
+                                    from integration import process_exit_decision
+                                    process_exit_decision(self, _sp_sym, f"short_trail:{_sp_pnl:+.2f}%", _sp_price)
+                                    continue
+                                
+                                # ⚡ Exit ensemble для short
+                                if hasattr(self, 'decision_engine'):
+                                    _sp_data = sp.to_dict()
+                                    _outcome = self.decision_engine.decide_exit(_sp_sym, _sp_data, _sp_price)
+                                    if _outcome and _outcome.exit_override in ('exit', 'exit_and_lock'):
+                                        logger.info(f"🎯 [SHORT EXIT] {_sp_sym}: {_outcome.exit_override} @ ${_sp_price:.4f}")
+                                        from integration import process_exit_decision
+                                        process_exit_decision(self, _sp_sym, f"short_ensemble:{_outcome.exit_override}", _sp_price)
+                            except Exception as _spe:
+                                logger.debug(f"[SHORT monitor] {sp.symbol}: {_spe}")
+                    except Exception as _spe_outer:
+                        logger.debug(f"[SHORT monitor] цикл: {_spe_outer}")
+                
                 # ─── Portfolio P&L Guard ────────────────────────────────────────
                 # Защита от слива дневного профита
                 if not self._portfolio_guard_triggered:
@@ -1878,9 +2165,19 @@ class IndustrialTrader:
             with self._lock:
                 db.save_all_positions(self.positions)
             open_count = len(self.positions)
-            logger.info(f"💾 Сохранено {open_count} позиций в PostgreSQL")
+            logger.info(f"💾 Сохранено {open_count} позиций в PostgreSQL (старый формат)")
         except Exception as e:
             logger.warning(f"⚠️ Ошибка сохранения позиций при остановке: {e}")
+        
+        # 🆕 Сохраняем состояние новых модулей
+        if hasattr(self, '_pm'):
+            try:
+                self._pm.save_state()
+                _short_count = self._pm.short_count
+                _long_count = self._pm.long_count
+                logger.info(f"💾 Сохранено {_long_count} длинных + {_short_count} коротких позиций в PositionManager")
+            except Exception as e:
+                logger.warning(f"⚠️ Ошибка сохранения PM: {e}")
         
         self.running = False
         
@@ -1985,8 +2282,82 @@ class IndustrialTrader:
             
             self.stats['max_drawdown'] = max_dd
     
+    # ── Short trading controls ───────────────────────────────────────
+
+    def enable_short_trading(self, mode: str = 'margin', leverage: float = 1.0) -> bool:
+        """Включить шорт-трейдинг.
+        
+        Args:
+            mode: 'margin' или 'futures'
+            leverage: плечо (по умолчанию 1.0)
+        
+        Returns:
+            True если активирован, False если ошибка
+        """
+        if not hasattr(self, '_pm') or not hasattr(self, '_om'):
+            logger.error("❌ [SHORT] Нет PM/OM — шорт недоступен")
+            return False
+        
+        try:
+            from models import Mode
+            
+            m = Mode.MARGIN if mode == 'margin' else Mode.FUTURES
+            self._om.set_mode(m)
+            logger.info(f"[SHORT] Режим изменён на {m.value}")
+            
+            # Устанавливаем плечо для всех пар, у которых есть вход
+            _short_pairs = list(self.positions.keys()) + ['BTC/USDT', 'ETH/USDT', 'SOL/USDT']
+            for pair in _short_pairs:
+                try:
+                    self._om.set_leverage(pair, leverage)
+                except Exception as e:
+                    logger.debug(f"[SHORT] leverage {pair}: {e}")
+            
+            self._short_trading_enabled = True
+            logger.info(f"⚡ Шорт-трейдинг активирован: mode={mode}, leverage={leverage}x")
+            return True
+        except Exception as e:
+            logger.error(f"❌ [SHORT] Ошибка активации: {e}")
+            return False
+    
+    def disable_short_trading(self) -> bool:
+        """Отключить шорт-трейдинг."""
+        self._short_trading_enabled = False
+        logger.info("⛔ Шорт-трейдинг отключён")
+        return True
+    
+    def get_short_status(self) -> Dict:
+        """Статус шорт-трейдинга."""
+        mode = 'spot'
+        leverage = 1.0
+        if hasattr(self, '_om'):
+            try:
+                from models import Mode
+                _m = self._om.get_mode()
+                mode = _m.value if hasattr(_m, 'value') else str(_m)
+                # Плечо первой рекомендуемой пары
+                levs = self._om.get_all_leverages()
+                if levs:
+                    leverage = list(levs.values())[0]
+            except Exception:
+                pass
+        
+        return {
+            'enabled': getattr(self, '_short_trading_enabled', False),
+            'open_positions': self._pm.short_count if hasattr(self, '_pm') else 0,
+            'mode': mode,
+            'leverage': leverage,
+        }
+    
     def get_system_status(self) -> Dict:
         """Получение текущего статуса системы"""
+        _modules = {}
+        try:
+            if hasattr(self, '_pm'):
+                from integration import get_module_status
+                _modules = get_module_status(self)
+        except Exception:
+            pass
         return {
             'running': self.running,
             'capital': {
@@ -2004,11 +2375,13 @@ class IndustrialTrader:
                 'details': self.positions
             },
             'statistics': self.stats,
+            'short_trading': self.get_short_status(),
             'config': {
                 'paper_trading': self.config['bybit']['paper_trading'],
                 'enabled_pairs': self.config['trading']['enabled_pairs'],
-                'risk_limits': self.config['risk_management']
-            }
+                'risk_limits': self.config['risk_management'],
+            },
+            'modules': _modules
         }
     
     def generate_report(self) -> str:
@@ -2029,6 +2402,12 @@ class IndustrialTrader:
   Общий: ${status['capital']['total']:.2f}
   Доступный: ${status['capital']['available']:.2f}
   Использовано: ${status['capital']['used']:.2f}
+
+ШОРТ-ТРЕЙДИНГ:
+  Активирован: {'ДА' if status['short_trading']['enabled'] else 'НЕТ'}
+  Открыто позиций: {status['short_trading']['open_positions']}
+  Режим: {status['short_trading']['mode']}
+  Плечо: {status['short_trading']['leverage']}x
 
 ДНЕВНАЯ СТАТИСТИКА:
   P&L: ${status['daily']['pnl']:.2f} ({status['daily']['pnl_percent']:.2f}%)

@@ -96,7 +96,7 @@ class BTCRegimeTracker:
             "avg_volume_30m":  round(avg_vol_30m, 2),
             "recommendation":  recommendation,
             "cooldown_until":  self._cooldown_until,
-            "message":         self._build_message(regime, change_30m, recommendation),
+            "message":         self._build_message(regime, change_30m, recommendation, change_4h=change_4h),
         }
 
         logger.info("Regime=%s, 30m=%.2f%%, rec=%s", regime, change_30m, recommendation)
@@ -115,6 +115,17 @@ class BTCRegimeTracker:
     def get_regime(self) -> str:
         """Возвращает текущую фазу."""
         return self._regime
+
+    def get_direction(self) -> str:
+        """Возвращает направление рынка на основе фазы: 'up', 'down' или 'neutral'."""
+        _dir_map = {
+            'pump': 'up',
+            'dump': 'down',
+            'distribution': 'down',
+            'bearish_side': 'down',
+            'recovery': 'up',
+        }
+        return _dir_map.get(self._regime, 'neutral')
 
     # ── внутренние методы ────────────────────
 
@@ -216,7 +227,16 @@ class BTCRegimeTracker:
 
         # ── Accumulation — боковик ──
         if abs(change_30m) < PUMP_THRESHOLD * 0.5:
+            # 🩹 Slow bleed: 4h падение > 1.5% — это не аккумуляция
+            if change_4h <= -1.5:
+                logger.debug(f"Slow bleed: 30m={change_30m:.2f}% but 4h={change_4h:.2f}% — bearish_side")
+                return "bearish_side"
             return "accumulation"
+
+        # 🩹 Slow bleed (fallback): 1h/4h sustained drop
+        if change_4h <= -1.5:
+            logger.debug(f"Slow bleed (fallback): 4h={change_4h:.2f}%")
+            return "bearish_side"
 
         # fallback
         return "accumulation"
@@ -251,13 +271,14 @@ class BTCRegimeTracker:
             "dump":          "no_trade",
             "accumulation":  "buy_allowed",
             "distribution":  "sell_only",
+            "bearish_side":   "sell_only",
             "recovery":      "buy_priority",
         }
         return mapping.get(regime, "buy_allowed")
 
     @staticmethod
     def _build_message(regime: str, change_30m: float,
-                       recommendation: str) -> str:
+                       recommendation: str, change_4h: float = 0.0) -> str:
         """Формирует человекочитаемое описание."""
         msgs = {
             "pump": (
@@ -276,6 +297,10 @@ class BTCRegimeTracker:
             "distribution": (
                 "📊 Дистрибьюция: консолидация после pump. "
                 "Только продажи, готовимся к dump."
+            ),
+            "bearish_side": (
+                f"📉 Медленный слив: за 4ч {change_4h:+.2f}%, 30м {change_30m:+.2f}%. "
+                "Только продажи, шорты разрешены."
             ),
             "recovery": (
                 f"🔄 Recovery: отскок {change_30m:+.2f}% за 30 мин. "

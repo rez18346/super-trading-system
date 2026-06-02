@@ -306,9 +306,9 @@ def close_trade(symbol: str, exit_price: float, exit_qty: float,
 # Несовместимость: db.py.add_trade принимает side='buy'|'sell',
 # а новая схема trades ожидает side='long'. Сохраняем API.
 def _convert_side(side: str) -> str:
-    if side in ('buy', 'long'):
-        return 'long'
-    return 'long'  # пока все long
+    if side in ('sell', 'close'):
+        return 'sell'
+    return 'long'
 
 
 # ========================
@@ -933,7 +933,7 @@ def load_open_positions() -> dict:
                 'quantity': quantity,
                 'entry_price': entry_price,
                 'entry_time': entry_time,
-                'side': 'long',
+                'side': meta.get('side', 'long').lower(),
                 'max_profit': meta.get('max_profit', 0),
                 '_highest_price': meta.get('_highest_price', entry_price),
                 '_created_at': meta.get('_created_at', time.time()),

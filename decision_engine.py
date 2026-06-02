@@ -197,8 +197,13 @@ class DecisionEngine:
 
         # Счётчик последовательных убытков на символ
         self._consecutive_losses: Dict[str, int] = {}
+        self._consecutive_short_losses: Dict[str, int] = {}  # отдельно для шортов
         # Максимум убытков подряд перед блокировкой
         self.max_consecutive_losses = 2  # после 2х убытков подряд - блокировка
+        self.max_consecutive_short_losses = 2  # для шортов жёстче
+        
+        # ⚡ BTC-фильтр для шортов
+        self._btc_short_blocked = False  # блокировка шортов если BTC в up-trend
         # Файл для сохранения счётчика (переживает перезагрузки)
         self._losses_file = os.path.join(os.path.dirname(__file__), 'data', 'consecutive_losses.json')
         self._maybe_restore_losses()
@@ -313,14 +318,24 @@ class DecisionEngine:
         2: {'sl': 1.5, 'tp': 14.0,  'trail_act': 3.0, 'trail_dist': 2.0},  # VOLATILE
     }
 
+    # ⚡ ШОРТ: отдельные SL/TP параметры (консервативнее)
+    _SHORT_SL_TP_BY_REGIME = {
+        0: {'sl': 1.5, 'tp': 6.0,   'trail_act': 1.8, 'trail_dist': 1.2},  # CALM (TP ниже)
+        1: {'sl': 1.5, 'tp': 6.0,   'trail_act': 2.0, 'trail_dist': 1.5},  # NORMAL (TP 6% vs 10%)
+        2: {'sl': 2.0, 'tp': 8.0,   'trail_act': 2.5, 'trail_dist': 2.0},  # VOLATILE
+    }
+
     def get_sl_tp_params(self, side: str = 'long') -> dict:
         """
         Вернуть параметры SL/TP/трейлинга под текущий HMM-режим.
 
-        ⚡ ЗАЛОЖЕНО ПОД ШОРТ: для short SL/TP симметричны (SL = рост цены,
-        TP = падение), но дистанции те же в %.
+        ⚡ ШОРТ: отдельные параметры (TP=6%, SL=1.5%, консервативнее).
+        ⚡ ПЛЕЧО: режимы MARGIN/FUTURES используют те же %, но apply к margin.
         """
-        p = self._SL_TP_BY_REGIME.get(self.hmm_regime, self._SL_TP_BY_REGIME[1])
+        if side == 'short':
+            p = self._SHORT_SL_TP_BY_REGIME.get(self.hmm_regime, self._SHORT_SL_TP_BY_REGIME[1])
+        else:
+            p = self._SL_TP_BY_REGIME.get(self.hmm_regime, self._SL_TP_BY_REGIME[1])
         return {
             'sl_pct': p['sl'],
             'tp_pct': p['tp'],
@@ -1241,12 +1256,20 @@ class DecisionEngine:
                                    candles_4h: Optional[list] = None,
                                    side: str = 'long',
                                    cvd_data: Optional[Dict] = None,
-                                   high_24h: Optional[float] = None) -> Dict:
+                                   high_24h: Optional[float] = None,
+                                   btc_state: Optional[Dict] = None) -> Dict:
         """
-        Профессиональный ансамбль из 4 голосов.
+        Профессиональный ансамбль из 7 голосов.
 
-        ⚡ ЗАЛОЖЕНО ПОД ШОРТ: side='short' инвертирует RSI, тренды, BTC-корреляцию.
-        ML-модели пока только для long (заглушка для short).
+        ⚡ ШОРТ: все сигналы инвертируются:
+           - VSA bearish → boost, VSA bullish → penalty
+           - CVD sell → boost, CVD buy → penalty
+           - VV reversion_buy → boost
+           - ML-Pro BUY prob < 0.45 → short boost
+           - Liq: зоны сопротивления (SWH) → boost
+           - BTC в up-trend → шорт заблокирован
+
+        ⚡ ПЛЕЧО: leverage не меняет логику голосов, только размер позиции.
 
         Веса:
           1. MLProfessionalV2 (LightGBM, 27/16 признаков, multi-TF) - 20%
@@ -1521,8 +1544,27 @@ class DecisionEngine:
                     symbol, current_price, candles_5m or [],
                     candles_1h or [], candles_4h
                 )
-                scores['volume_vwap']['score'] = vv['score']
-                scores['volume_vwap']['detail'] = vv['detail']
+                vv_score_orig = vv['score']
+                if is_short:
+                    # ⚡ ШОРТ: инверсия VWAP-сигнала
+                    # reversion_sell → цены растянуты → шорт
+                    # reversion_buy → цены сжаты → шорт это плохая идея
+                    detail = vv.get('detail', '')
+                    if 'reversion_sell' in detail or 'SPIKE' in detail:
+                        vv_score = min(100, vv_score_orig + 25)  # перегрет → шорт
+                        vv_detail = f"{detail} (short-boost)"
+                    elif 'reversion_buy' in detail:
+                        vv_score = max(10, vv_score_orig - 25)  # дешёво → не шорт
+                        vv_detail = f"{detail} (short-penalty)"
+                    else:
+                        # Инвертируем зеркально: 100→0, 50→50, 0→100
+                        vv_score = 100 - vv_score_orig
+                        vv_detail = f"{detail} (short-inverted)"
+                    scores['volume_vwap']['score'] = vv_score
+                    scores['volume_vwap']['detail'] = vv_detail
+                else:
+                    scores['volume_vwap']['score'] = vv_score_orig
+                    scores['volume_vwap']['detail'] = vv['detail']
             else:
                 scores['volume_vwap']['score'] = 50
                 scores['volume_vwap']['detail'] = 'not_loaded'
@@ -1535,14 +1577,30 @@ class DecisionEngine:
             from vsa_analyzer import analyze_volume_spread
             if candles_5m and len(candles_5m) > 20:
                 vsa = analyze_volume_spread(candles_5m)
-                if vsa.signal == 'bullish':
-                    vsa_score = 60 + int(vsa.strength * 40)  # 60-100
-                elif vsa.signal == 'bearish':
-                    vsa_score = 40 - int(vsa.strength * 30)  # 10-40
+                if is_short:
+                    # ⚡ ШОРТ: инверсия VSA
+                    # bearish → сила продавцов → шорт-сигнал
+                    # bullish → накопление → не шорт
+                    if vsa.signal == 'bearish':
+                        vsa_score = 60 + int(vsa.strength * 40)  # 60-100 (было 10-40)
+                        vsa_detail = f"{vsa.detail} (short-boost)"
+                    elif vsa.signal == 'bullish':
+                        vsa_score = 40 - int(vsa.strength * 30)  # 10-40 (было 60-100)
+                        vsa_detail = f"{vsa.detail} (short-penalty)"
+                    else:
+                        vsa_score = 50
+                        vsa_detail = vsa.detail
+                    scores['vsa']['score'] = vsa_score
+                    scores['vsa']['detail'] = vsa_detail
                 else:
-                    vsa_score = 50
-                scores['vsa']['score'] = vsa_score
-                scores['vsa']['detail'] = vsa.detail
+                    if vsa.signal == 'bullish':
+                        vsa_score = 60 + int(vsa.strength * 40)  # 60-100
+                    elif vsa.signal == 'bearish':
+                        vsa_score = 40 - int(vsa.strength * 30)  # 10-40
+                    else:
+                        vsa_score = 50
+                    scores['vsa']['score'] = vsa_score
+                    scores['vsa']['detail'] = vsa.detail
         except Exception as e:
             scores['vsa']['score'] = 50
             scores['vsa']['detail'] = f'error({e})'
@@ -1556,24 +1614,45 @@ class DecisionEngine:
                 buy_pct = cvd_data.get('buy_pct', 50)
                 cvd_ratio = cvd_data.get('cvd_ratio', 1.0)
                 
-                # Основа: buy_pct (50% = нейтрально, 60%+ = бычий, 40%- = медвежий)
-                cvd_score = 50 + (buy_pct - 50) * 1.5
-                cvd_score = max(10, min(100, cvd_score))
-                
-                # Коррекция по тренду
-                if trend == 'bullish':
-                    cvd_score += 10
-                elif trend == 'bearish':
-                    cvd_score -= 10
-                
-                # Если ratio сильно несбалансирован
-                if cvd_ratio > 1.5:
-                    cvd_score += 5  # много покупок
-                elif cvd_ratio < 0.67:
-                    cvd_score -= 5  # много продаж
-                
-                cvd_score = max(10, min(100, cvd_score))
-                cvd_detail = f'trend={trend} buy={buy_pct:.0f}% ratio={cvd_ratio:.2f}'
+                if is_short:
+                    # ⚡ ШОРТ: инверсия CVD
+                    # sell-поток (buy_pct < 45%) → шорт-сигнал
+                    # buy-поток (buy_pct > 55%) → не шорт
+                    # buy_pct 50% = нейтрально, 40% = бычий для шорта
+                    cvd_score = 50 + (50 - buy_pct) * 1.5  # 50→50, 40→65, 60→35
+                    cvd_score = max(10, min(100, cvd_score))
+                    
+                    if trend == 'bearish':
+                        cvd_score += 10  # bearish trend → подтверждение шорта
+                    elif trend == 'bullish':
+                        cvd_score -= 10  # bullish trend → против шорта
+                    
+                    if cvd_ratio < 0.67:
+                        cvd_score += 5  # много продаж → шорт
+                    elif cvd_ratio > 1.5:
+                        cvd_score -= 5  # много покупок → не шорт
+                    
+                    cvd_score = max(10, min(100, cvd_score))
+                    cvd_detail = f'trend={trend} buy={buy_pct:.0f}% ratio={cvd_ratio:.2f} (short-inverted)'
+                else:
+                    # Основа: buy_pct (50% = нейтрально, 60%+ = бычий, 40%- = медвежий)
+                    cvd_score = 50 + (buy_pct - 50) * 1.5
+                    cvd_score = max(10, min(100, cvd_score))
+                    
+                    # Коррекция по тренду
+                    if trend == 'bullish':
+                        cvd_score += 10
+                    elif trend == 'bearish':
+                        cvd_score -= 10
+                    
+                    # Если ratio сильно несбалансирован
+                    if cvd_ratio > 1.5:
+                        cvd_score += 5  # много покупок
+                    elif cvd_ratio < 0.67:
+                        cvd_score -= 5  # много продаж
+                    
+                    cvd_score = max(10, min(100, cvd_score))
+                    cvd_detail = f'trend={trend} buy={buy_pct:.0f}% ratio={cvd_ratio:.2f}'
                 
                 logger.debug(f"[CVD] {symbol}: score={cvd_score:.0f} — {cvd_detail}")
             
@@ -1996,8 +2075,108 @@ class DecisionEngine:
             'consecutive_losses': dict(self._consecutive_losses),
         }
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # ⚡ ШОРТ: решение о входе в короткую позицию
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def decide_short(self, symbol: str, confidence: float, trend: str,
+                      rsi: float, current_price: float,
+                      current_positions_count: int, max_short_positions: int = 10,
+                      candles_5m: Optional[list] = None,
+                      candles_1h: Optional[list] = None,
+                      candles_4h: Optional[list] = None,
+                      last_exit_price: Optional[float] = None,
+                      last_exit_time: Optional[float] = None,
+                      cvd_data: Optional[Dict] = None,
+                      high_24h: Optional[float] = None,
+                      btc_state: Optional[Dict] = None) -> Decision:
+        """
+        Принять решение о входе в короткую позицию.
+
+        ⚡ ШОРТ-ФИЛЬТР 1: BTC не в up-trend/accumulation
+           Если BTC в up-trend — шорт заблокирован.
+           BTC в down-trend/distribution — шорт разрешён.
+
+        ⚡ ШОРТ-ФИЛЬТР 2: VETO при strong_bullish на 1H/4H
+           (делегировано в decide_entry с side='short')
+
+        ⚡ ШОРТ-ФИЛЬТР 3: не шортим на хаях 24h (LVL penalty работает)
+           (делегировано в _evaluate_entry_ensemble)
+
+        Использует decide_entry(side='short') с сигнальной инверсией.
+        """
+        self._lazy_init_ml()
+
+        # ═══ BTC-FILTER: проверяем, можно ли шортить ───────────────────
+        btc_blocked = False
+        btc_reason = ''
+        if btc_state:
+            btc_trend = btc_state.get('trend', 'neutral')
+            btc_regime = btc_state.get('regime', 'unknown')
+            if btc_trend in ('up', 'rising') or btc_regime == 'accumulation':
+                btc_blocked = True
+                btc_reason = f"BTC {btc_trend}/{btc_regime} — шорт заблокирован"
+                logger.info(f"🚫 [SHORT BLOCKED] {symbol}: {btc_reason}")
+
+        # Проверяем также через _btc_price
+        if not btc_blocked and self._btc_price and self._btc_reference_price:
+            btc_change_4h = (self._btc_price - self._btc_reference_price) / self._btc_reference_price * 100
+            if btc_change_4h > 1.0:
+                btc_blocked = True
+                btc_reason = f"BTC +{btc_change_4h:.1f}% за 4ч — шорт заблокирован"
+                logger.info(f"🚫 [SHORT BLOCKED] {symbol}: {btc_reason}")
+
+        if btc_blocked:
+            self._save_veto_vote(symbol, current_price, btc_reason, side='short')
+            return Decision(symbol, 'hold', side='short', reason=btc_reason)
+
+        # ═══ ЛИМИТ ШОРТ-ПОЗИЦИЙ ───────────────────────────────────────
+        if current_positions_count >= max_short_positions:
+            reason = f"Максимум {max_short_positions} шорт-позиций"
+            self._save_veto_vote(symbol, current_price, reason, side='short')
+            return Decision(symbol, 'hold', side='short', reason=reason)
+
+        # ═══ КУЛДАУН для шортов ───────────────────────────────────────
+        now = time.time()
+        _short_cooldown_key = f"{symbol}_short"
+        if _short_cooldown_key in self._last_decisions:
+            last_exit = self._last_decisions[_short_cooldown_key]
+            time_since = now - last_exit.get('exit_time', 0)
+
+            losses = self._consecutive_short_losses.get(symbol, 0)
+            if losses >= self.max_consecutive_short_losses:
+                hard_block_hours = losses * 4
+                hard_block_sec = hard_block_hours * 3600
+                if time_since < hard_block_sec:
+                    remain = hard_block_sec - time_since
+                    reason = f"🚫 {losses} шорт-убытка подряд, блокировка {hard_block_hours}ч (осталось {remain/3600:.1f}ч)"
+                    self._save_veto_vote(symbol, current_price, reason, side='short')
+                    return Decision(symbol, 'hold', side='short', reason=reason)
+
+            if time_since < self.reentry_cooldown:
+                remain = self.reentry_cooldown - time_since
+                reason = f"Повторный шорт через {remain/60:.1f} мин"
+                self._save_veto_vote(symbol, current_price, reason, side='short')
+                return Decision(symbol, 'hold', side='short', reason=reason)
+
+        # ═══ ВЫЗОВ decide_entry с side='short' для ансамбля ─────────
+        return self.decide_entry(
+            symbol, confidence, trend, rsi, current_price,
+            current_positions_count=current_positions_count,
+            max_positions=max_short_positions,
+            candles_5m=candles_5m,
+            candles_1h=candles_1h,
+            candles_4h=candles_4h,
+            side='short',
+            last_exit_price=last_exit_price,
+            last_exit_time=last_exit_time,
+            cvd_data=cvd_data,
+            high_24h=high_24h
+        )
+
     def reset_cooldowns(self) -> None:
         """Сбросить все тайм-ауты."""
         self._last_decisions.clear()
         self._consecutive_losses.clear()
+        self._consecutive_short_losses.clear()
         logger.info("🔄 Кулдауны сброшены")
