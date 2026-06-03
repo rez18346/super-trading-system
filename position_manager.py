@@ -349,7 +349,22 @@ class PositionManager:
                 if time.time() - pos.created_at < 30:
                     continue
 
-                # На бирже нет актива — удаляем из памяти
+                # ⚡ SHORT: позиции имеют нулевой баланс на бирже (монеты заняты и проданы)
+                # Не удаляем — SL/TP/трейлинг управляются через PositionManager
+                if pos.direction == Direction.SHORT:
+                    if real_qty < 0.000001:
+                        # Обновляем только цену, не трогаем позицию
+                        logger.debug(f"🔄 [SYNC] {symbol}: SHORT, баланс={real_qty} — пропускаем синхронизацию")
+                        continue
+                    else:
+                        # SHORT с ненулевым балансом — частично закрыт?
+                        if real_qty < pos.quantity * 0.5:
+                            old_qty = pos.quantity
+                            pos.quantity = max(real_qty, 0.0001)
+                            logger.info(f"🔄 [SYNC] {symbol}: SHORT qty {old_qty:.4f} → {pos.quantity:.4f}")
+                        continue
+
+                # На бирже нет актива — удаляем из памяти (только для LONG)
                 if real_qty < 0.000001:
                     logger.warning(f"🔄 [SYNC] {symbol}: нет на бирже (qty={real_qty}). Удаляю.")
                     self._positions.pop(symbol, None)
@@ -387,11 +402,17 @@ class PositionManager:
 
             for symbol, pos_data in pg_positions.items():
                 if symbol not in self._positions and pos_data.get('quantity', 0) > 0:
+                    # ⚡ SHORT: распознаём direction из pos_meta
+                    direction_str = pos_data.get('side', 'long').lower()
+                    if direction_str not in ('long', 'short'):
+                        direction_str = 'long'
+                    direction = Direction.LONG if direction_str == 'long' else Direction.SHORT
+
                     # Восстанавливаем через Position.from_dict
                     try:
                         pos = Position.from_dict({
                             'symbol': symbol,
-                            'direction': pos_data.get('side', 'long'),
+                            'direction': direction,
                             'mode': 'spot',
                             'quantity': pos_data.get('quantity', 0),
                             'entry_price': pos_data.get('entry_price', 0),
@@ -408,7 +429,7 @@ class PositionManager:
                         self._positions[symbol] = pos
                         loaded += 1
                         logger.info(f"   🗄️ {symbol}: восстановлена из PG "
-                                    f"(entry=${pos.entry_price:.4f})")
+                                    f"(entry=${pos.entry_price:.4f}, direction={direction_str})")
                     except Exception as e:
                         logger.warning(f"   ⚠️ {symbol}: ошибка восстановления: {e}")
 

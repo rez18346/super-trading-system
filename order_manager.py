@@ -109,6 +109,51 @@ class OrderManager:
 
     # ── Управление режимом и плечом ───────────────────────────────────
 
+    def _enable_spot_margin(self) -> bool:
+        """Включить спот-маржинальную торговлю на Bybit UTA.
+
+        Вызывает POST /v5/spot-margin-trade/switch-mode с spotMarginMode=1.
+        Необходимо для isLeverage=1 в ордерах.
+        """
+        try:
+            resp = self.exchange.private_post_v5_spot_margin_trade_switch_mode(
+                {'spotMarginMode': '1'}
+            )
+            ret_code = resp.get('retCode', -1)
+            if ret_code == 0:
+                logger.info("✅ [SPOT MARGIN] Успешно включена")
+                return True
+            elif ret_code == 170036:
+                logger.warning(f"⚠️ [SPOT MARGIN] Уже включена или недоступна: {resp.get('retMsg', '')}")
+                return True
+            else:
+                logger.warning(f"⚠️ [SPOT MARGIN] switch-mode: {resp.get('retCode')}: {resp.get('retMsg', '')}")
+                return False
+        except Exception as e:
+            logger.warning(f"⚠️ [SPOT MARGIN] Ошибка включения: {e}")
+            return False
+
+    def _set_spot_margin_leverage(self, leverage: int = 2) -> bool:
+        """Установить плечо для спот-маржинальной торговли Bybit UTA.
+
+        Вызывает POST /v5/spot-margin-trade/set-leverage.
+        leverage: 2 или 5 (макс)
+        """
+        try:
+            resp = self.exchange.private_post_v5_spot_margin_trade_set_leverage(
+                {'leverage': str(leverage)}
+            )
+            ret_code = resp.get('retCode', -1)
+            if ret_code == 0:
+                logger.info(f"✅ [SPOT MARGIN LEVERAGE] Установлено {leverage}x")
+                return True
+            else:
+                logger.warning(f"⚠️ [SPOT MARGIN LEVERAGE] set-leverage: {resp.get('retCode')}: {resp.get('retMsg', '')}")
+                return False
+        except Exception as e:
+            logger.warning(f"⚠️ [SPOT MARGIN LEVERAGE] Ошибка: {e}")
+            return False
+
     def set_mode(self, mode: Mode) -> None:
         """Установить режим торговли: SPOT | MARGIN | FUTURES.
 
@@ -120,6 +165,11 @@ class OrderManager:
         old_mode = self.mode
         self.mode = mode
         logger.info(f"🔧 [MODE] {old_mode.value} → {mode.value}")
+
+        # Если переключаемся на MARGIN — включаем спот-маржу на Bybit
+        if mode == Mode.MARGIN:
+            self._enable_spot_margin()
+            self._set_spot_margin_leverage(int(self.default_leverage))
 
         # Если переключаемся на MARGIN/FUTURES — устанавливаем позиционный режим
         if mode != Mode.SPOT:
@@ -227,16 +277,16 @@ class OrderManager:
         if self.mode != Mode.SPOT:
             # leverage для логов и расчётов
             _mode_leverage = self._leverage.get(symbol, self.default_leverage)
-            # Bybit UTA spot margin: category='spot' + isMarginTrade
+            # Bybit UTA spot margin: category='spot' + isLeverage
             ccxt_params['category'] = 'spot'
-            # MARGIN = cross-маржинальная, FUTURES = фьючерсы
+            # MARGIN = спот-маржинальная (UTA): isLeverage=1 включает заимствование
+            # marginMode НЕ ПЕРЕДАЁТСЯ — Bybit V5 /order/create не принимает этот параметр
             if self.mode == Mode.MARGIN:
-                ccxt_params['marginMode'] = 'cross'
                 ccxt_params['isLeverage'] = 1  # UTA: 1 = borrow for margin trading
                 if direction == Direction.SHORT:
-                    logger.info(f"🔧 [SHORT] {symbol}: MARGIN mode, category=spot, isLeverage=True")
+                    logger.info(f"🔧 [SHORT] {symbol}: MARGIN mode, category=spot, isLeverage=1")
                 else:
-                    logger.info(f"🔧 [LONG] {symbol}: MARGIN mode, category=spot, isLeverage=True")
+                    logger.info(f"🔧 [LONG] {symbol}: MARGIN mode, category=spot, isLeverage=1")
             elif self.mode == Mode.FUTURES:
                 ccxt_params['marginMode'] = 'isolated'
                 self.set_leverage(symbol, _mode_leverage)

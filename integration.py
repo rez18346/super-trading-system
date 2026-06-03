@@ -51,6 +51,9 @@ def init_new_modules(trader_self) -> dict:
         on_position_closed=_make_on_closed(trader_self),
     )
 
+    # 🗄️ Восстанавливаем открытые позиции из PG (включая SHORT)
+    pm.load_from_db()
+
     # RiskManager — центр проверок
     rm = RiskManager(
         config=config,
@@ -136,6 +139,19 @@ def process_entry_decision(trader_self, symbol: str, decision: Any,
     quantity = max_usd / current_price if current_price > 0 else 0
     if quantity <= 0:
         logger.warning(f"⏭️ [PM] {symbol}: qty={quantity:.6f} (max_usd={max_usd:.2f} / price={current_price:.4f})")
+        return None
+
+    # ── 6. Количество ────────────────────────────────────────────────
+    quantity = max_usd / current_price if current_price > 0 else 0
+    if quantity <= 0:
+        logger.warning(f"⏭️ [PM] {symbol}: qty={quantity:.6f} (max_usd={max_usd:.2f} / price={current_price:.4f})")
+        return None
+
+    # 🛡️ SANITY CHECK: позиция не должна превышать 30% свободного капитала
+    _free_capital = getattr(trader_self, 'available_capital', 0) or getattr(trader_self, 'capital', 100)
+    _position_value = quantity * current_price
+    if _position_value > _free_capital * 0.30:
+        logger.warning(f"🛡️ [PM→BLOCK] {symbol}: позиция ${_position_value:.2f} > 30% капитала (${_free_capital:.2f}). Блокирую.")
         return None
 
     # ── 7. OrderManager: submit ──────────────────────────────────────

@@ -695,7 +695,23 @@ def sync_positions_from_exchange(exchange, enabled_pairs: List[str],
                 except Exception:
                     current_price = 0
 
+            # 🛡️ SHORT GLOBAL GUARD: если в БД есть открытый SHORT для этого символа — не трогать
+            _cur2 = conn.cursor()
+            _cur2.execute("SELECT id, pos_meta->>'side' FROM trades WHERE symbol=%s AND status='open' LIMIT 1", (pair,))
+            _existing = _cur2.fetchone()
+            _cur2.close()
+            if _existing and _existing[1] and _existing[1].lower() == 'short':
+                # Уже есть открытый SHORT — пропускаем, не перезаписываем
+                logger.debug(f"🛡️ {pair}: пропускаю sync, активный SHORT id={_existing[0]} в БД")
+                continue
+
             if total <= 0:
+                # 🛡️ SHORT: пропускаем (нулевой/отрицательный баланс — норма для шорта)
+                cur.execute("SELECT pos_meta->>'side' FROM trades WHERE symbol=%s AND status='open' LIMIT 1", (pair,))
+                _side_row = cur.fetchone()
+                if _side_row and _side_row[0] and _side_row[0].lower() == 'short':
+                    # Шорт — не закрываем, баланс заимствованных монет ~0
+                    continue
                 # 🩹 FIX: закрываем с текущей ценой и PnL
                 if current_price > 0:
                     cur.execute("""
@@ -717,9 +733,15 @@ def sync_positions_from_exchange(exchange, enabled_pairs: List[str],
                 continue
 
             # 🩹 FIX: Пропускаем активы стоимостью < $1 (пылевые остатки)
+            # 🛡️ SHORT: пропускаем (нулевой/отрицательный баланс — норма для шорта)
             import logging as _lg
-            _lg.getLogger('db_pg').debug(f"[sync] {pair}: total={total}, price={current_price}, value=${total * current_price:.2f}")
             if current_price > 0 and total * current_price < 1.0:
+                # Проверяем, не шорт ли это
+                cur.execute("SELECT pos_meta->>'side' FROM trades WHERE symbol=%s AND status='open' LIMIT 1", (pair,))
+                _side_row2 = cur.fetchone()
+                if _side_row2 and _side_row2[0] and _side_row2[0].lower() == 'short':
+                    # Шорт — не чистим, баланс ~0 это нормально
+                    continue
                 _lg.getLogger('db_pg').info(f"🧹 {pair}: пыль (${total * current_price:.2f} < $1), записываю выход")
                 cur.execute("""
                     UPDATE trades SET
@@ -904,6 +926,7 @@ def save_all_positions(positions: dict) -> None:
                 'entry_time': pos.get('entry_time', ''),
                 'entry_price': pos.get('entry_price', 0),
                 'quantity': pos.get('quantity', 0),
+                'side': pos.get('direction', pos.get('side', 'long')),
             }
             cur.execute(
                 "UPDATE trades SET pos_meta = %s::jsonb, updated_at = NOW() WHERE symbol=%s AND status='open'",
