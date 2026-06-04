@@ -108,7 +108,7 @@ class BTCRegimeTracker:
             return False
         if self._regime in ("pump", "distribution"):
             return False
-        if self._regime == "dump":
+        if self._regime in ("dump", "bearish_side"):
             return False
         return True
 

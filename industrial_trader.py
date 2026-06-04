@@ -124,6 +124,90 @@ class IndustrialTrader:
 
         logger.info(f"Industrial Trader инициализирован с капиталом: ${self.capital}")
 
+        # ── УПРАВЛЕНИЕ: аварийные команды через JSON-файл ─────────
+        self._trading_blocked = False         # stop → блокирует новые входы
+        self._control_cmd_sell_all = False    # sell-all → сброс всех позиций
+        self._control_file_ack = 0            # счётчик подтверждённых команд
+        self._control_file_path = '/tmp/trading_control.json'
+        self._capital_shares = self.config['risk_management'].get('max_open_positions', 3)  # количество долей капитала
+        self._last_entry_scores = {}          # {symbol: score} для выбора топ-3
+        # ────────────────────────────────────────────────────────────
+
+    def _read_control_commands(self):
+        """Проверяет управляющий файл на команды от Control API."""
+        if not os.path.exists(self._control_file_path):
+            return
+        try:
+            with open(self._control_file_path, 'r') as f:
+                cmd = json.load(f)
+            _ack = cmd.get('ack', 0)
+            if _ack <= self._control_file_ack:
+                return  # уже обработана
+            mode = cmd.get('mode', 'running')
+            sell_all = cmd.get('sell_all', False)
+
+            if mode == 'stopped':
+                if not self._trading_blocked:
+                    self._trading_blocked = True
+                    logger.warning("🛑 [CONTROL] Торговля остановлена (stop). Новые входы заблокированы.")
+            elif mode == 'running':
+                if self._trading_blocked:
+                    self._trading_blocked = False
+                    self._control_cmd_sell_all = False
+                    logger.info("✅ [CONTROL] Торговля возобновлена (start).")
+
+            if sell_all and not self._control_cmd_sell_all:
+                self._control_cmd_sell_all = True
+                logger.warning("⚠️ [CONTROL] Sell-All активирован. Все позиции будут закрыты.")
+
+            self._control_file_ack = _ack
+        except Exception as e:
+            logger.debug(f"[CONTROL] Ошибка чтения: {e}")
+
+    def _execute_sell_all(self):
+        """Закрывает все открытые позиции по рынку (Sell-All)."""
+        logger.warning("🔥 [SELL-ALL] Начинаю закрытие всех позиций...")
+        symbols = list(self.positions.keys())
+        if not symbols:
+            logger.info("[SELL-ALL] Нет открытых позиций.")
+            self._control_cmd_sell_all = False
+            self._control_file_ack = 0
+            # Сбрасываем файл
+            try:
+                with open(self._control_file_path, 'w') as f:
+                    json.dump({'mode': 'stopped', 'sell_all': False, 'ack': 0}, f)
+            except Exception:
+                pass
+            return
+
+        for symbol in symbols:
+            try:
+                pos = self.positions.get(symbol)
+                if not pos:
+                    continue
+                qty = pos.get('quantity', 0)
+                if qty <= 0:
+                    continue
+                self.execute_trade(symbol, 'sell', qty, 0,
+                                   exit_reason='sell_all')
+                logger.info(f"   ✅ {symbol}: продан {qty:.6f}")
+            except Exception as e:
+                logger.error(f"   ❌ {symbol}: ошибка продажи: {e}")
+
+        self._control_cmd_sell_all = False
+        self._trading_blocked = True
+        self._control_file_ack = 0
+        logger.warning("🏁 [SELL-ALL] Все позиции закрыты. Торговля остановлена.")
+
+        # Сбрасываем файл
+        try:
+            _tmp = self._control_file_path + '.tmp'
+            with open(_tmp, 'w') as f:
+                json.dump({'mode': 'stopped', 'sell_all': False, 'ack': 0}, f)
+            os.rename(_tmp, self._control_file_path)
+        except Exception:
+            pass
+
     def sync_with_exchange_positions(self):
         """Синхронизация с реальными позициями на бирже"""
         try:
@@ -852,6 +936,16 @@ class IndustrialTrader:
         while self.running:
             try:
                 cycle_start = time.time()
+
+                # ⏯️ УПРАВЛЕНИЕ: проверяем команды от Control API
+                self._read_control_commands()
+
+                # 🔥 SELL-ALL: если активирован — закрываем все позиции
+                if self._control_cmd_sell_all:
+                    self._execute_sell_all()
+                    time.sleep(5)
+                    continue
+
                 # 🧹 Очистка старых лимитных ордеров
                 self.clean_stale_orders()
 
@@ -1221,6 +1315,9 @@ class IndustrialTrader:
                 if self._portfolio_guard_triggered:
                     logger.warning("🔒 [GUARD] входы заблокированы, SL/TP работают")
 
+                # ⭐ Анализ + сбор кандидатов: первым проходом скор, потом вход в топ-3
+                _pending_entries = []  # (score, symbol, entry_data_dict) — кандидаты на вход
+
                 # Анализ каждого символа
                 for symbol in symbols:
                     if not self.running:
@@ -1248,6 +1345,11 @@ class IndustrialTrader:
                         if hasattr(self, '_btc_regime') and not self._btc_regime.is_buy_allowed():
                             regime_name = self._btc_regime.get_regime()
                             logger.info(f"⏳ [DE→HOLD] {symbol}: BTC Regime {regime_name} - BUY заблокирован")
+                            continue
+
+                        # ⏯️ CONTROL STOP: блокируем новые входы если trading_blocked
+                        if self._trading_blocked:
+                            logger.info(f"⏳ [CONTROL] {symbol}: торговля остановлена, BUY заблокирован")
                             continue
 
                     # ⚡ DecisionEngine: ЕДИНСТВЕННЫЙ источник решений о входе
@@ -1369,46 +1471,17 @@ class IndustrialTrader:
                                             logger.error(f"   ❌ {symbol}: ошибка при очистке БД: {cleanup_e}")
                                 except Exception as _e:
                                     logger.debug(f"[buy_lock] DB check: {_e}")
-                                logger.info(f"⚡ [DE→BUY] {symbol}: score={score:.0f}/100 size={size_mult:.2f} | ${de_price:.4f} | {decision.reason}")
 
-                                # 🆕 НОВАЯ АРХИТЕКТУРА: пробуем через RM + OM + PM
-                                _integrated = False
-                                if hasattr(self, '_pm') and hasattr(self, '_om') and hasattr(self, '_rm'):
-                                    try:
-                                        from integration import process_entry_decision
-                                        _btc_state_info = {
-                                            'price': btc_price,
-                                            'trend': getattr(self, '_current_market_mode', 'neutral'),
-                                        }
-                                        _result = process_entry_decision(self, symbol, decision, de_price, _btc_state_info)
-                                        if _result is not None:
-                                            _integrated = True
-                                            logger.info(f"   ✅ [PM] {symbol}: вход через новую архитектуру")
-                                    except Exception as _ie:
-                                        logger.warning(f"[INTEGRATION] entry {symbol}: {_ie}")
-
-                                # ⬇️ Старый код (fallback, если интеграция не сработала)
-                                if not _integrated:
-                                    # Размер позиции = стандартный * size_mult от DE, с учётом Score
-                                    base_qty = self.calculate_position_size(symbol, de_price, score)
-                                    quantity = base_qty * size_mult
-                                    if quantity * de_price <= self.available_capital:
-                                        # ✅ ЗАПОМИНАЕМ buy_lock ТОЛЬКО при реальной покупке
-                                        _buy_lock[symbol] = time.time()
-                                        self._buy_locks = _buy_lock
-                                        # ✅ ЗАПОМИНАЕМ SL/TP УРОВНИ ОТ DE в позиции
-                                        trade_result = self.execute_trade(symbol, 'buy', quantity, de_price,
-                                            sl_price=decision.sl_price, tp_price=decision.tp_price,
-                                            trail_act=decision.trail_act, trail_dist=decision.trail_dist,
-                                            max_hold_h=decision.max_hold_h,
-                                            scores=decision.metadata)
-                                        # 🩹 FIX: если сделка НЕ выполнилась - убираем buy_lock (иначе stale-цикл)
-                                        if trade_result is None:
-                                            _buy_lock.pop(symbol, None)
-                                            self._buy_locks = _buy_lock
-                                            logger.info(f"🩹 {symbol}: сделка не выполнилась, buy_lock снят")
-                                    else:
-                                        logger.warning(f"⏭️ [DE] {symbol}: недостаточно капитала")
+                                # ⭐ Кандидат на вход: сохраняем, выполним после сортировки
+                                _pending_entries.append({
+                                    'score': score,
+                                    'symbol': symbol,
+                                    'decision': decision,
+                                    'de_price': de_price,
+                                    'size_mult': size_mult,
+                                    'reason': decision.reason,
+                                })
+                                logger.info(f"⭐ [DE→CANDIDATE] {symbol}: score={score:.0f}/100 | ${de_price:.4f} | {decision.reason}")
                             else:
                                 reason = decision.reason or ''
                                 # Всегда логируем отклонённые решения - надо видеть почему DE не входит
@@ -2099,6 +2172,81 @@ class IndustrialTrader:
                                 logger.debug(f"[SHORT monitor] {sp.symbol}: {_spe}")
                     except Exception as _spe_outer:
                         logger.debug(f"[SHORT monitor] цикл: {_spe_outer}")
+
+                # ⭐ ТОП-3 ВЫПОЛНЕНИЕ: сортируем кандидатов по скору, входим в лучшие
+                if self._trading_blocked:
+                    if _pending_entries:
+                        logger.info(f"⏳ [TOP-3] {len(_pending_entries)} кандидатов пропущены — торговля остановлена")
+                elif _pending_entries:
+                    # Сортируем по score (убывание)
+                    _pending_entries.sort(key=lambda _e: -_e['score'])
+                    _max_new = max(0, self.config['risk_management'].get('max_open_positions', 3) - len(self.positions))
+                    if _max_new > 0:
+                        _top_n = _pending_entries[:_max_new]
+                        _score_str = ', '.join([f"{e['symbol']}={e['score']:.0f}" for e in _top_n])
+                        logger.info(f"🏆 [TOP-3] Вход в {len(_top_n)}/{len(_pending_entries)}: {_score_str}")
+                        for _entry in _top_n:
+                            _sym = _entry['symbol']
+                            _dec = _entry['decision']
+                            _price = _entry['de_price']
+                            _sizem = _entry['size_mult']
+                            _sc = _entry['score']
+
+                            # Проверяем: не появилась ли позиция за время сбора
+                            if _sym in self.positions:
+                                logger.info(f"⏭️ [TOP-3] {_sym}: уже в позиции, пропускаю")
+                                continue
+
+                            logger.info(f"⚡ [DE→BUY] {_sym}: score={_sc:.0f}/100 size={_sizem:.2f} | ${_price:.4f} | {_dec.reason}")
+
+                            # НОВАЯ АРХИТЕКТУРА: пробуем через RM + OM + PM
+                            _integrated = False
+                            if hasattr(self, '_pm') and hasattr(self, '_om') and hasattr(self, '_rm'):
+                                try:
+                                    from integration import process_entry_decision
+                                    _btc_state_info = {
+                                        'price': btc_price,
+                                        'trend': getattr(self, '_current_market_mode', 'neutral'),
+                                    }
+                                    _result = process_entry_decision(self, _sym, _dec, _price, _btc_state_info)
+                                    if _result is not None:
+                                        _integrated = True
+                                        logger.info(f"   ✅ [PM] {_sym}: вход через новую архитектуру")
+                                except Exception as _ie:
+                                    logger.warning(f"[INTEGRATION] entry {_sym}: {_ie}")
+
+                            # ⬇️ Старый код (fallback, если интеграция не сработала)
+                            if not _integrated:
+                                # Доля капитала: 1/3 от общего для каждой позиции
+                                _max_slots = self.config['risk_management'].get('max_open_positions', 3)
+                                _cap_share = self.available_capital / max(1, _max_slots - len(self.positions))
+                                _cap_share = min(_cap_share, self.available_capital)
+                                base_qty = self.calculate_position_size(_sym, _price, _sc)
+                                quantity = base_qty * _sizem
+                                # Лимит: не больше доли капитала
+                                _max_qty = _cap_share / _price
+                                quantity = min(quantity, _max_qty)
+                                if quantity * _price <= self.available_capital:
+                                    # buy_lock
+                                    _buy_lock = getattr(self, '_buy_locks', {})
+                                    _buy_lock[_sym] = time.time()
+                                    self._buy_locks = _buy_lock
+                                    trade_result = self.execute_trade(
+                                        _sym, 'buy', quantity, _price,
+                                        sl_price=_dec.sl_price, tp_price=_dec.tp_price,
+                                        trail_act=_dec.trail_act, trail_dist=_dec.trail_dist,
+                                        max_hold_h=_dec.max_hold_h,
+                                        scores=_dec.metadata
+                                    )
+                                    if trade_result is None:
+                                        _buy_lock.pop(_sym, None)
+                                        self._buy_locks = _buy_lock
+                                        logger.info(f"🩹 {_sym}: сделка не выполнилась, buy_lock снят")
+                                else:
+                                    logger.warning(f"⏭️ [DE] {_sym}: недостаточно капитала")
+                else:
+                    if len(self.positions) < self.config['risk_management'].get('max_open_positions', 3):
+                        logger.debug(f"[TOP-3] Нет кандидатов на вход (свободно {max(0, 3 - len(self.positions))} слотов)")
 
                 # ─── Portfolio P&L Guard ────────────────────────────────────────
                 # Защита от слива дневного профита

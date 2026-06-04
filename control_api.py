@@ -1192,6 +1192,102 @@ async def api_last_trade():
     return {"symbol": None, "side": None, "price": 0, "timestamp": 0}
 
 
+# ════════════════════════════════════════════════════════════════════
+# ⏯️ CONTROL API: управление трейдером (stop/start/sell-all/status)
+# ════════════════════════════════════════════════════════════════════
+
+_CONTROL_FILE = '/tmp/trading_control.json'
+_control_ack = 0
+
+
+def _write_control(mode: str = 'running', sell_all: bool = False) -> dict:
+    global _control_ack
+    _control_ack += 1
+    payload = {
+        'mode': mode,
+        'sell_all': sell_all,
+        'ack': _control_ack,
+        'ts': datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        os.makedirs(os.path.dirname(_CONTROL_FILE), exist_ok=True)
+        _tmp = _CONTROL_FILE + '.tmp'
+        with open(_tmp, 'w') as f:
+            json.dump(payload, f)
+        os.rename(_tmp, _CONTROL_FILE)
+    except Exception as e:
+        return {'status': 'error', 'message': str(e)}
+    return {'status': 'ok', 'mode': mode, 'ack': _control_ack}
+
+
+def _read_control_status() -> dict:
+    try:
+        if os.path.exists(_CONTROL_FILE):
+            with open(_CONTROL_FILE, 'r') as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {'mode': 'running', 'sell_all': False, 'ack': 0}
+
+
+@app.post("/api/control/stop")
+async def api_control_stop():
+    """Остановить новые входы. Текущие позиции не закрываются."""
+    result = _write_control(mode='stopped')
+    log.warning(f"[API] Торговля остановлена (stop)")
+    return result
+
+
+@app.post("/api/control/start")
+async def api_control_start():
+    """Возобновить входы в новые позиции."""
+    result = _write_control(mode='running')
+    log.info(f"[API] Торговля возобновлена (start)")
+    return result
+
+
+@app.post("/api/control/sell-all")
+async def api_control_sell_all():
+    """Продать все позиции и остановить торговлю."""
+    result = _write_control(mode='stopped', sell_all=True)
+    log.warning(f"[API] Sell-All активирован")
+    return {'status': 'ok', 'mode': 'stopped', 'sell_all': True, 'ack': _control_ack}
+
+
+@app.get("/api/control/status")
+async def api_control_status():
+    """Текущий статус управления трейдером."""
+    status = _read_control_status()
+    # Информация о PID, позициях и балансе
+    pid = get_pid()
+    running = pid is not None
+    try:
+        positions = db.get_all_positions()
+        pos_count = len(positions)
+    except Exception:
+        positions = {}
+        pos_count = 0
+    try:
+        balance_json = '/tmp/real_balance.json'
+        if os.path.exists(balance_json):
+            with open(balance_json) as f:
+                balance_data = json.load(f)
+        else:
+            balance_data = {'total': 0, 'free_usdt': 0}
+    except Exception:
+        balance_data = {'total': 0, 'free_usdt': 0}
+    return {
+        'mode': status.get('mode', 'unknown'),
+        'sell_all': status.get('sell_all', False),
+        'ack': status.get('ack', 0),
+        'trader_running': running,
+        'positions_open': pos_count,
+        'total_balance': balance_data.get('total', 0),
+        'free_usdt': balance_data.get('free_usdt', 0),
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+    }
+
+
 def run_server(host: str = "0.0.0.0", port: int = 8765):
     uvicorn.run(app, host=host, port=port, log_level="warning")
 

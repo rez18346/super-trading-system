@@ -307,7 +307,7 @@ def close_trade(symbol: str, exit_price: float, exit_qty: float,
 # а новая схема trades ожидает side='long'. Сохраняем API.
 def _convert_side(side: str) -> str:
     if side in ('sell', 'close'):
-        return 'sell'
+        return 'long'
     return 'long'
 
 
@@ -742,7 +742,6 @@ def sync_positions_from_exchange(exchange, enabled_pairs: List[str],
                 if _side_row2 and _side_row2[0] and _side_row2[0].lower() == 'short':
                     # Шорт — не чистим, баланс ~0 это нормально
                     continue
-                _lg.getLogger('db_pg').info(f"🧹 {pair}: пыль (${total * current_price:.2f} < $1), записываю выход")
                 cur.execute("""
                     UPDATE trades SET
                         status='closed',
@@ -755,6 +754,11 @@ def sync_positions_from_exchange(exchange, enabled_pairs: List[str],
                         updated_at=NOW()
                     WHERE symbol=%s AND status='open'
                 """, (current_price, current_price, current_price, pair))
+                if cur.rowcount > 0:
+                    _lg.getLogger('db_pg').info(f"🧹 {pair}: пыль (${total * current_price:.2f} < $1), закрыта")
+                else:
+                    _lg.getLogger('db_pg').debug(f"🧹 {pair}: пыль (${total * current_price:.2f}) — уже закрыта")
+
                 continue
 
             entry_price, _ = calculate_weighted_entry(pair)
