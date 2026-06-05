@@ -120,8 +120,9 @@ class BTCRegimeTracker:
             return False
         if self._regime in ("dump", "bearish_side", "recovery"):
             return False
-        if self._htf_trend == "down":
-            return False   # 🔴 Глобальный тренд вниз — ловить падающие ножи нельзя
+        # HTF down НЕ блокирует накопление/боковик — только усиливает локальные решения
+        if self._htf_trend == "down" and self._regime in ("recovery",):
+            return False   # recovery внутри даун-тренда = ловушка
         return True
 
     def get_regime(self) -> str:
@@ -144,7 +145,7 @@ class BTCRegimeTracker:
     def _detect_htf_trend(self, df_1h: pd.DataFrame) -> str:
         """
         Определяет глобальный тренд по 1H свечам (100 свечей ≈ 4 дня).
-        Использует EMA50 vs EMA100 + структуру максимумов/минимумов.
+        Использует EMA50 vs EMA100 с процентным отступом.
         
         Returns: 'up', 'down' или 'sideways'
         """
@@ -160,23 +161,16 @@ class BTCRegimeTracker:
         
         current_price = close[-1]
         
-        # Проверяем расположение цены относительно EMA
-        price_above_50 = current_price > ema50[-1]
-        price_above_100 = current_price > ema100[-1]
-        ema50_above_100 = ema50[-1] > ema100[-1]
+        # Процентный отступ — чтобы не срабатывать на касании
+        pct_from_ema100 = (current_price - ema100[-1]) / ema100[-1] * 100
+        ema_cross_gap = (ema50[-1] - ema100[-1]) / ema100[-1] * 100
         
-        # Считаем бары где цена ниже EMA100 (indicator of sustained downtrend)
-        bars_below_ema100 = sum(1 for i in range(-20, 0) if close[i] < ema100[i])
-        
-        # Определяем тренд
-        if not price_above_50 and not price_above_100 and not ema50_above_100:
-            # Цена ниже обеих EMA, EMA50 ниже EMA100 — уверенный downtrend
+        # Уверенный downtrend: цена минимум на 1.5% ниже EMA100
+        if pct_from_ema100 < -1.5 and ema_cross_gap < -0.5:
             return 'down'
-        elif price_above_50 and price_above_100 and ema50_above_100:
-            # Цена выше обеих EMA, EMA50 выше EMA100 — уверенный uptrend
+        # Уверенный uptrend: цена минимум на 1.5% выше EMA100
+        elif pct_from_ema100 > 1.5 and ema_cross_gap > 0.5:
             return 'up'
-        elif bars_below_ema100 >= 15:  # 15 из 20 последних баров ниже EMA100
-            return 'down'
         else:
             return 'sideways'
 
