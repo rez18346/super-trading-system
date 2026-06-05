@@ -314,12 +314,12 @@ class RiskManager:
         elif decision.score >= 80:
             pct *= 1.2
 
-        # Лимиты
+        # Лимиты: макс размер = 1/max_open_positions от капитала
         if not direction and hasattr(decision, 'side'):
             direction = Direction.SHORT if decision.side == 'short' else Direction.LONG
-        cfg = self.risk_config.for_direction(direction or Direction.LONG)
-        max_pct = cfg['position_pct']
-        pct = min(pct, max_pct)
+        _max_pos = max(self.risk_config.max_open_positions, 1)
+        _max_share_pct = 100.0 / _max_pos  # 33.3% при max_open=3
+        pct = min(pct, _max_share_pct)
 
         if self.pm:
             capital = self.pm.available_capital
@@ -328,12 +328,12 @@ class RiskManager:
 
         # Пенальти капитала (N позиций → меньше на каждую)
         existing_count = self.pm.positions_count if self.pm else 0
-        if existing_count >= 8:
-            pct *= 0.5
-        if existing_count >= 12:
-            pct *= 0.3
+        if existing_count >= _max_pos:
+            pct *= 0.0  # больше не входим, если слоты заняты
+        elif existing_count >= _max_pos - 1:
+            pct *= 0.5  # последний слот — половинный размер
 
-        max_usd = capital * (pct / 100)
+        max_usd = capital * (min(pct, _max_share_pct) / 100)
         max_usd = min(max_usd, self.risk_config.max_order_value)
         if approval.max_position_size > 0:
             max_usd = min(max_usd, approval.max_position_size)
@@ -380,13 +380,17 @@ class RiskManager:
 
     def _calc_max_position_size(self, direction: Direction,
                                 price: float) -> float:
-        """Рассчитать макс размер позиции в USD."""
-        cfg = self.risk_config.for_direction(direction)
+        """Рассчитать макс размер позиции в USD.
+
+        Делит доступный капитал на max_open_positions, чтобы каждая
+        позиция занимала свою долю (например, 1/3 при max_open=3).
+        """
         if self.pm:
             capital = self.pm.available_capital
         else:
             capital = 100.0
-        max_usd = capital * (cfg['position_pct'] / 100)
+        _max_pos = max(self.risk_config.max_open_positions, 1)
+        max_usd = capital / _max_pos
         max_usd = min(max_usd, self.risk_config.max_order_value)
         return round(max_usd, 2)
 

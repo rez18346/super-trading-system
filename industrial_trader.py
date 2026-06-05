@@ -74,6 +74,10 @@ class IndustrialTrader:
         self._portfolio_guard_triggered = False  # Флаг: Guard сработал
         self._current_market_mode = 'neutral'
 
+        # 🏦 Profit Lock — защищённый капитал, не участвует в торговле (идея Ксюши)
+        self._protected_capital = 0.0
+        self._protected_capital_alltime = 0.0
+
         # 🩹 BTC Regime Tracker: инициализируем сразу для корректной блокировки шортов
         try:
             from btc_regime_tracker import BTCRegimeTracker
@@ -131,6 +135,16 @@ class IndustrialTrader:
         self._control_file_path = '/tmp/trading_control.json'
         self._capital_shares = self.config['risk_management'].get('max_open_positions', 3)  # количество долей капитала
         self._last_entry_scores = {}          # {symbol: score} для выбора топ-3
+        self._session_entries = 0              # сколько входов сделано за сессию (для top-3)
+
+        # 🏔️ PYRAMID: настройки доливки
+        _pyramid_cfg = self.config.get('risk_management', {}).get('multi_level_entry', {})
+        self._pyramid_enabled = _pyramid_cfg.get('enabled', False)
+        self._pyramid_levels = _pyramid_cfg.get('distribution', [0.3, 0.3, 0.4])
+        self._pyramid_spacing = _pyramid_cfg.get('level_spacing_percent', 0.3) / 100.0
+        self._pyramid_state: Dict[str, dict] = {}  # {symbol: {levels_done, full_qty, ...}}
+        if self._pyramid_enabled:
+            logger.info(f"🏔️ [PYRAMID] Включена: уровни {self._pyramid_levels}, шаг {self._pyramid_spacing*100:.1f}%")
         # ────────────────────────────────────────────────────────────
 
     def _read_control_commands(self):
@@ -197,6 +211,7 @@ class IndustrialTrader:
         self._control_cmd_sell_all = False
         self._trading_blocked = True
         self._control_file_ack = 0
+        self._session_entries = 0
         logger.warning("🏁 [SELL-ALL] Все позиции закрыты. Торговля остановлена.")
 
         # Сбрасываем файл
@@ -357,8 +372,11 @@ class IndustrialTrader:
                     except Exception:
                         logger.debug(f"Не удалось обработать {currency}")
 
+            # 🛡️ Обновляем счётчик сессионных входов под реальные позиции
+            self._session_entries = len(self.positions)
+
             if open_positions_count > 0:
-                logger.info(f"✅ Синхронизировано {open_positions_count} позиций с биржей")
+                logger.info(f"✅ Синхронизировано {open_positions_count} позиций с биржей. Сессионных входов: {self._session_entries}")
             else:
                 logger.info("i️ Открытых позиций на бирже не найдено")
 
@@ -679,6 +697,7 @@ class IndustrialTrader:
                 elif side == 'sell' and symbol in self.positions:
                     with self._lock:
                         position = self.positions.pop(symbol)
+                    self._session_entries = max(0, self._session_entries - 1)
                     pnl = (price - position['entry_price']) * quantity
                     self.available_capital += quantity * price
                     self.daily_pnl += pnl
@@ -879,8 +898,14 @@ class IndustrialTrader:
                         filled_price = order.get('average', order.get('price', price)) or price
                         profit = (filled_price - entry) * filled
                         self.available_capital += cost + profit
+                        # 🏦 Profit Lock: прибыль уходит в защищённый капитал (не участвует в торговле)
+                        if profit > 0.001:
+                            self._protected_capital += profit
+                            self._protected_capital_alltime += profit
+                            self.available_capital = max(0, self.available_capital - profit)
+                            logger.info(f"🏦 [PROFIT LOCK] {symbol}: +${profit:.2f} защищено (всего: ${self._protected_capital:.2f})")
                         pnl_str = f", PnL=${pnl:.2f} ({pnl_pct:+.2f}%)" if pnl != 0 else ""
-                        logger.info(f"📤 Позиция {symbol} продана{pnl_str}, капитал: ${self.available_capital:.2f}")
+                        logger.info(f"📤 Позиция {symbol} продана{pnl_str}, рабочий: ${self.available_capital:.2f} 🏦защищено: ${self._protected_capital:.2f}")
 
                 return order
             else:
@@ -1418,8 +1443,8 @@ class IndustrialTrader:
 
                                 # Лимиты безопасности
                                 max_positions = self.config['risk_management'].get('max_open_positions', 3)
-                                if len(self.positions) >= max_positions:
-                                    logger.info(f"⚠️ [DE] {symbol}: лимит {len(self.positions)}/{max_positions}")
+                                if self._session_entries >= max_positions:
+                                    logger.info(f"⚠️ [DE] {symbol}: лимит {self._session_entries}/{max_positions}")
                                     continue
 
                                 # 🛡️ ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: кулдаун после SL (если DE пропустил)
@@ -2180,7 +2205,7 @@ class IndustrialTrader:
                 elif _pending_entries:
                     # Сортируем по score (убывание)
                     _pending_entries.sort(key=lambda _e: -_e['score'])
-                    _max_new = max(0, self.config['risk_management'].get('max_open_positions', 3) - len(self.positions))
+                    _max_new = max(0, self.config['risk_management'].get('max_open_positions', 3) - self._session_entries)
                     if _max_new > 0:
                         _top_n = _pending_entries[:_max_new]
                         _score_str = ', '.join([f"{e['symbol']}={e['score']:.0f}" for e in _top_n])
@@ -2211,18 +2236,25 @@ class IndustrialTrader:
                                     _result = process_entry_decision(self, _sym, _dec, _price, _btc_state_info)
                                     if _result is not None:
                                         _integrated = True
-                                        logger.info(f"   ✅ [PM] {_sym}: вход через новую архитектуру")
+                                        self._session_entries += 1
+                                        logger.info(f"   ✅ [PM] {_sym}: вход через новую архитектуру (сессия: {self._session_entries})")
                                 except Exception as _ie:
                                     logger.warning(f"[INTEGRATION] entry {_sym}: {_ie}")
 
                             # ⬇️ Старый код (fallback, если интеграция не сработала)
                             if not _integrated:
+                                # 🏔️ PYRAMID: на первом уровне входим на часть размера
+                                _pyr_pct = self._pyramid_levels[0] if self._pyramid_enabled else 1.0
                                 # Доля капитала: 1/3 от общего для каждой позиции
                                 _max_slots = self.config['risk_management'].get('max_open_positions', 3)
                                 _cap_share = self.available_capital / max(1, _max_slots - len(self.positions))
                                 _cap_share = min(_cap_share, self.available_capital)
                                 base_qty = self.calculate_position_size(_sym, _price, _sc)
                                 quantity = base_qty * _sizem
+                                # 🏔️ PYRAMID: применяем долю первого уровня
+                                if _pyr_pct < 1.0:
+                                    _full_qty_old = quantity / _pyr_pct
+                                    quantity = quantity * _pyr_pct
                                 # Лимит: не больше доли капитала
                                 _max_qty = _cap_share / _price
                                 quantity = min(quantity, _max_qty)
@@ -2238,27 +2270,54 @@ class IndustrialTrader:
                                         max_hold_h=_dec.max_hold_h,
                                         scores=_dec.metadata
                                     )
-                                    if trade_result is None:
+                                    if trade_result is not None:
+                                        self._session_entries += 1
+                                        # 🏔️ PYRAMID: сохраняем состояние для доливок (старый код)
+                                        if self._pyramid_enabled and _pyr_pct < 1.0:
+                                            self._pyramid_state[_sym] = {
+                                                'levels_done': 1,
+                                                'total_levels': len(self._pyramid_levels),
+                                                'distributions': self._pyramid_levels,
+                                                'full_qty': _full_qty_old,
+                                                'entry_price': _price,
+                                                'spacing': self._pyramid_spacing,
+                                                'sl_price': getattr(_dec, 'sl_price', None),
+                                            }
+                                            logger.info(f"🏔️ [PYRAMID] {_sym}: L1/{(self._pyramid_state[_sym]['total_levels'])} full_units={_full_qty_old:.4f}")
+                                    else:
                                         _buy_lock.pop(_sym, None)
                                         self._buy_locks = _buy_lock
                                         logger.info(f"🩹 {_sym}: сделка не выполнилась, buy_lock снят")
                                 else:
                                     logger.warning(f"⏭️ [DE] {_sym}: недостаточно капитала")
                 else:
-                    if len(self.positions) < self.config['risk_management'].get('max_open_positions', 3):
-                        logger.debug(f"[TOP-3] Нет кандидатов на вход (свободно {max(0, 3 - len(self.positions))} слотов)")
+                    if self._session_entries < self.config['risk_management'].get('max_open_positions', 3):
+                        logger.debug(f"[TOP-3] Нет кандидатов на вход (свободно {max(0, 3 - self._session_entries)} слотов)")
+
+                # 🏔️ PYRAMID: проверка доливок для открытых позиций
+                if self._pyramid_enabled and self._pyramid_state:
+                    self._check_pyramid_entries()
 
                 # ─── Portfolio P&L Guard ────────────────────────────────────────
-                # Защита от слива дневного профита
+                # Двойная защита: просадка от пика + абсолютный убыток 2%
                 if not self._portfolio_guard_triggered:
                     self._daily_peak_pnl = max(self._daily_peak_pnl, self.daily_pnl)
                     guard_threshold = min(5.0, 0.015 * self.capital)  # $5 или 1.5% капитала
                     drawdown = self._daily_peak_pnl - self.daily_pnl
+                    # Guard 1: просадка от пика дневного PnL
                     if self._daily_peak_pnl > 2.0 and drawdown >= guard_threshold:
                         logger.critical(f"🛑 PORTFOLIO GUARD: просадка ${drawdown:.2f} от пика "
                                        f"${self._daily_peak_pnl:.2f}! Текущий PnL: ${self.daily_pnl:.2f}")
                         self._portfolio_guard_triggered = True
-                        # Force-close всех позиций
+                    # Guard 2: абсолютный убыток 2% от всего баланса (команда Ксюши)
+                    _abs_loss_threshold = -0.02 * self.capital  # -2% от капитала
+                    if self.daily_pnl <= _abs_loss_threshold:
+                        logger.critical(f"🛑 ABSOLUTE LOSS GUARD ({self.capital:.0f}*2%=${_abs_loss_threshold:.2f}): "
+                                       f"дневной PnL ${self.daily_pnl:.2f} превысил лимит! "
+                                       f"Закрываю все позиции и останавливаюсь.")
+                        self._portfolio_guard_triggered = True
+                    # Force-close всех позиций если любой guard сработал
+                    if self._portfolio_guard_triggered:
                         for sym, pos in list(self.positions.items()):
                             try:
                                 df_g = self.get_market_data(sym, '1m', 1)
@@ -2268,6 +2327,8 @@ class IndustrialTrader:
                                     logger.info(f"🔒 [GUARD] принудительное закрытие {sym}")
                             except Exception as e_g:
                                 logger.error(f"[GUARD] ошибка закрытия {sym}: {e_g}")
+                        # Останавливаем торговлю
+                        self._trading_blocked = True
                 elif self._portfolio_guard_triggered:
                     # Проверка сброса Guard - новый торговый день (08:00+)
                     _guard_hour = (datetime.now(timezone.utc).hour + 7) % 24
@@ -2531,7 +2592,10 @@ class IndustrialTrader:
             'capital': {
                 'total': self.capital,
                 'available': self.available_capital,
-                'used': self.capital - self.available_capital
+                'used': self.capital - self.available_capital,
+                'protected': getattr(self, '_protected_capital', 0),
+                'protected_alltime': getattr(self, '_protected_capital_alltime', 0),
+                'real_balance': self.available_capital + getattr(self, '_protected_capital', 0)
             },
             'daily': {
                 'pnl': self.daily_pnl,
@@ -2567,8 +2631,9 @@ class IndustrialTrader:
   Режим: {'Бумажная торговля' if status['config']['paper_trading'] else 'Реальная торговля'}
 
 КАПИТАЛ:
-  Общий: ${status['capital']['total']:.2f}
-  Доступный: ${status['capital']['available']:.2f}
+  Рабочий: ${status['capital']['available']:.2f}
+  🏦 Защищено: ${status['capital']['protected']:.2f}
+  Реальный баланс: ${status['capital']['real_balance']:.2f}
   Использовано: ${status['capital']['used']:.2f}
 
 ШОРТ-ТРЕЙДИНГ:
@@ -2607,6 +2672,84 @@ class IndustrialTrader:
 {'='*60}
 """
         return report
+
+    # ────────────────────────────────────────────────────────────────
+    # 🏔️ PYRAMID: проверка и выполнение доливок
+    # ────────────────────────────────────────────────────────────────
+
+    def _check_pyramid_entries(self):
+        """Проверить открытые позиции с пирамидой и долить если цена достигла следующего уровня."""
+        if not self._pyramid_state:
+            return
+
+        for _sym, _pstate in list(self._pyramid_state.items()):
+            # Позиция ещё открыта?
+            if _sym not in self.positions:
+                logger.info(f"🏔️ [PYRAMID] {_sym}: позиция закрыта, очищаю состояние")
+                self._pyramid_state.pop(_sym, None)
+                continue
+
+            _done = _pstate.get('levels_done', 0)
+            _total = _pstate.get('total_levels', 0)
+            if _done >= _total:
+                continue  # все уровни вошли
+
+            _entry_price = _pstate.get('entry_price', 0)
+            _spacing = _pstate.get('spacing', 0.003)
+            _dists = _pstate.get('distributions', [])
+            _full_qty = _pstate.get('full_qty', 0)
+
+            if _entry_price <= 0 or _full_qty <= 0:
+                continue
+
+            # Текущая цена
+            try:
+                _df = self.get_market_data(_sym, '1m', 1)
+                if _df.empty:
+                    continue
+                _current_price = _df['close'].iloc[-1]
+            except Exception:
+                continue
+
+            # Порог для следующего уровня: entry_price * (1 + spacing * (done))
+            _threshold = _entry_price * (1 + _spacing * _done)
+
+            if _current_price >= _threshold:
+                _level_idx = _done
+                if _level_idx >= len(_dists):
+                    self._pyramid_state[_sym]['levels_done'] = _total
+                    continue
+
+                _level_pct = _dists[_level_idx]
+                _add_qty = _full_qty * _level_pct
+                _add_value = _add_qty * _current_price
+
+                logger.info(f"🏔️ [PYRAMID→ADD] {_sym}: L{_level_idx+1}/{_total} "
+                           f"(+{_add_qty:.4f} @ \${_current_price:.4f} = \${_add_value:.2f}) "
+                           f"порог \${_threshold:.4f} "
+                           f"(от входа +{_spacing*_done*100:.1f}%)")
+
+                # Выполняем доливку через OM
+                try:
+                    if hasattr(self, '_om'):
+                        _order = self._om.submit_order(
+                            symbol=_sym,
+                            side='buy',
+                            quantity=_add_qty,
+                            price=_current_price,
+                            order_type='market',
+                            reason=f'PYRAMID_L{_level_idx+1}',
+                        )
+                        if _order:
+                            self._pyramid_state[_sym]['levels_done'] = _level_idx + 1
+                            logger.info(f"   ✅ [PYRAMID] {_sym}: L{_level_idx+1} выполнен")
+                        else:
+                            logger.warning(f"   ❌ [PYRAMID] {_sym}: L{_level_idx+1} не выполнен (OM)")
+                    else:
+                        logger.warning(f"   ⏭️ [PYRAMID] {_sym}: нет OM, пропускаю")
+                except Exception as _pe:
+                    logger.error(f"   ❌ [PYRAMID] {_sym}: ошибка: {_pe}")
+
 
 # Дополнительные утилиты
 class TradingUtils:

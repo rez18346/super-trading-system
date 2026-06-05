@@ -16,6 +16,7 @@ integration.py — Интеграционный слой между IndustrialTr
 
 import logging
 import time
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Callable
 
 from models import (
@@ -95,11 +96,15 @@ def init_new_modules(trader_self) -> dict:
 
 
 def process_entry_decision(trader_self, symbol: str, decision: Any,
-                           current_price: float, btc_state: Optional[dict] = None) -> Optional[Dict]:
+                           current_price: float, btc_state: Optional[dict] = None,
+                           pyramid_pct: float = 1.0) -> Optional[Dict]:
     """Обработать решение DE о входе через новые модули.
 
     ⚡ ШОРТ: direction=SHORT, side='sell' (sell to open).
     ⚡ ПЛЕЧО: leverage передаётся в submit_order через OrderManager.mode.
+
+    Args:
+        pyramid_pct: доля полного размера для входа (1.0 = 100%, 0.3 = 30%)
 
     Вызывается из trading_cycle когда decision.action == 'enter'.
 
@@ -130,6 +135,13 @@ def process_entry_decision(trader_self, symbol: str, decision: Any,
     # ── 4. Размер позиции ────────────────────────────────────────────
     max_usd = rm.adjust_position_size(decision, btc_state_obj, approval, direction)
 
+    # 🏔️ PYRAMID: берём только указанный процент от полного размера
+    if pyramid_pct < 1.0:
+        full_max_usd = max_usd
+        max_usd = max_usd * pyramid_pct
+        max_usd = max(0.01, max_usd)
+        logger.info(f"🏔️ [PYRAMID] {symbol}: {pyramid_pct*100:.0f}% от ${full_max_usd:.2f} = ${max_usd:.2f}")
+
     # ── 5. SL/TP уровни ──────────────────────────────────────────────
     sl_price = getattr(decision, 'sl_price', None) or rm.calc_sl_price(current_price, direction, btc_state_obj)
     tp_price = getattr(decision, 'tp_price', None) or rm.calc_tp_price(current_price, direction)
@@ -158,6 +170,8 @@ def process_entry_decision(trader_self, symbol: str, decision: Any,
     # ⚡ ШОРТ: side='sell' = открытие позиции
     # ⚡ ЛОНГ: side='buy' = открытие позиции
     side = 'buy' if direction == Direction.LONG else 'sell'
+    # 🔒 Buy_lock: после одобрения RM, до отправки ордера — защита от дублей
+    rm.set_buy_lock(symbol)
     metadata = {
         'sl_price': sl_price,
         'tp_price': tp_price,
@@ -189,9 +203,25 @@ def process_entry_decision(trader_self, symbol: str, decision: Any,
             # PositionManager.on_order_filled уже создал позицию
             position = pm.get_position(symbol)
             if position:
+                # Регистрируем в self.positions для совместимости со старым SL/TP циклом
+                _tp = tp_price or (position.tp_price if hasattr(position, 'tp_price') else None)
+                _sp = sl_price or (position.sl_price if hasattr(position, 'sl_price') else None)
+                _ta = trail_act or (position.trail_activation if hasattr(position, 'trail_activation') else None)
+                _td = trail_dist or (position.trail_distance if hasattr(position, 'trail_distance') else None)
+                trader_self.positions[symbol] = {
+                    'quantity': position.quantity,
+                    'entry_price': position.entry_price,
+                    'entry_time': datetime.now(timezone.utc).isoformat(),
+                    'side': direction.value if hasattr(direction, 'value') else str(direction),
+                    '_sl_price': _sp,
+                    '_tp_price': _tp,
+                    '_trail_act': _ta,
+                    '_trail_dist': _td,
+                    '_created_at': time.time(),
+                }
                 logger.info(f"✅ [INTEGRATION] {direction.value.upper()} {symbol}: "
                            f"{position.quantity:.4f} @ ${position.entry_price:.4f} "
-                           f"SL=${sl_price or 'auto'}, TP=${tp_price or 'auto'}, "
+                           f"SL=${_sp or 'auto'}, TP=${_tp or 'auto'}, "
                            f"Score={score:.0f}")
                 return {'order': order, 'position': position}
 
@@ -375,11 +405,19 @@ def get_module_status(trader_self) -> dict:
 def _make_on_closed(trader_self) -> Callable:
     """Создать callback для PositionManager.on_position_closed."""
     def on_closed(symbol: str, direction: Direction, pnl_pct: float):
-        # Обновляем daily_pnl
-        trader_self.daily_pnl += pnl_pct / 100 * (
+        # Считаем USD PnL
+        _usd_pnl = pnl_pct / 100 * (
             trader_self.positions.get(symbol, {}).get('quantity', 0) *
             trader_self.positions.get(symbol, {}).get('entry_price', 0)
         ) if symbol in trader_self.positions else 0
+        # Обновляем daily_pnl
+        trader_self.daily_pnl += _usd_pnl
+        # 🏦 Profit Lock: прибыль уходит в защищённый капитал
+        if _usd_pnl > 0.001:
+            trader_self._protected_capital += _usd_pnl
+            trader_self._protected_capital_alltime += _usd_pnl
+            trader_self.available_capital = max(0, trader_self.available_capital - _usd_pnl)
+            logger.info(f"🏦 [PROFIT LOCK] {symbol}: +${_usd_pnl:.2f} защищено (всего: ${trader_self._protected_capital:.2f})")
         # Обновляем daily_trades
         trader_self.daily_trades += 1
         # Portfolio Guard check

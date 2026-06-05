@@ -368,6 +368,36 @@ class OrderManager:
             if order.is_filled:
                 self._on_filled(order)
                 self._pending_orders.pop(client_id, None)
+                return OrderResult(success=True, order=order)
+
+            # 🕐 Market order: ждём заполнения до 5 секунд
+            if order_type == 'market':
+                for _attempt in range(5):
+                    time.sleep(1)
+                    try:
+                        ccxt_o = self.exchange.fetch_order(order.order_id, order.symbol)
+                        self._update_from_ccxt(order, ccxt_o)
+                        if order.is_filled:
+                            self._on_filled(order)
+                            self._pending_orders.pop(client_id, None)
+                            logger.info(f"✅ [ORDER] {symbol}: заполнен через {_attempt+1}с")
+                            return OrderResult(success=True, order=order)
+                    except Exception as fetch_err:
+                        # fetch_order не нашёл ордер — возможно исполнился и удалён
+                        logger.debug(f"[ORDER] {symbol} fetch попытка {_attempt+1}/5: {fetch_err}")
+                        continue
+                
+                # Все 5 попыток fetch провалились — проверяем через баланс
+                self._update_filled_from_balance(order, symbol, side, quantity)
+                if order.is_filled:
+                    self._on_filled(order)
+                    self._pending_orders.pop(client_id, None)
+                    logger.info(f"✅ [ORDER] {symbol}: filled (по балансу, fetch не найден)")
+                    return OrderResult(success=True, order=order)
+                else:
+                    self._pending_orders.pop(client_id, None)
+                    logger.warning(f"❌ [ORDER] {symbol}: не найден на бирже, баланс не подтвердил исполнение")
+                    return OrderResult(success=False, error="Order not found on exchange, balance unchanged")
 
             return OrderResult(success=True, order=order)
 
@@ -458,13 +488,18 @@ class OrderManager:
                             if order.is_filled:
                                 self._on_filled(order)
                     except Exception:
-                        # Ордер не найден — считаем исполненным
+                        # Ордер не найден — проверяем баланс
                         if order.status in (OrderStatus.PENDING, OrderStatus.OPEN):
-                            order.status = OrderStatus.CLOSED
-                            order.updated_at = time.time()
-                            updated += 1
-                            logger.info(f"🔄 [SYNC] {order.symbol}: не найден на бирже, считаем CLOSED")
-                            self._on_filled(order)
+                            _prev_status = order.status
+                            self._update_filled_from_balance(order, order.symbol, order.side, order.quantity)
+                            if order.is_filled:
+                                updated += 1
+                                logger.info(f"🔄 [SYNC] {order.symbol}: не найден на бирже, filled (подтверждён балансом)")
+                                self._on_filled(order)
+                            elif order.status == OrderStatus.FAILED:
+                                updated += 1
+                                order.updated_at = time.time()
+                                logger.info(f"🔄 [SYNC] {order.symbol}: не найден на бирже и не подтверждён балансом → FAILED")
 
             # Чистим завершённые из pending
             for client_id in list(self._pending_orders.keys()):
@@ -622,6 +657,43 @@ class OrderManager:
             order.fee = float(fee_data.get('cost', 0))
 
         order.updated_at = time.time()
+
+    def _update_filled_from_balance(self, order, symbol: str, side: str, quantity: float) -> None:
+        """Проверить, исполнился ли ордер, по изменению баланса (запасной метод).
+        
+        Используется когда fetch_order не может найти ордер на бирже
+        (market ордер исполнился и исчез из active orders).
+        """
+        try:
+            base_currency = symbol.replace('/USDT', '').replace('/USDC', '')
+            bal = self.exchange.fetch_balance()
+            
+            # Если buy: проверяем что base currency появился
+            if side == 'buy':
+                base_free = float(bal.get(base_currency, {}).get('free', 0))
+                usdt_free = float(bal.get('USDT', {}).get('free', 0))
+                
+                # Если токен появился (>50% от запрошенного) — считаем filled
+                if base_free > quantity * 0.5:
+                    order.status = OrderStatus.CLOSED
+                    order.filled_qty = min(base_free, quantity)
+                    order.avg_price = order.price  # используем цену из ордера
+                    order.updated_at = time.time()
+                    logger.info(f"✅ [BALANCE] {symbol} {side}: обнаружен {base_currency}={base_free:.4f} "
+                               f"(ордер был на {quantity:.4f}), USDT={usdt_free:.2f}")
+                    return
+            
+            # Если sell: проверяем что USDT увеличился
+            if side == 'sell':
+                usdt_free = float(bal.get('USDT', {}).get('free', 0))
+                # TODO: нужен баланс до ордера для сравнения
+                pass
+                
+        except Exception as e:
+            logger.warning(f"[BALANCE] ошибка проверки {symbol}: {e}")
+        
+        # Если ничего не нашли — ордер не исполнился
+        order.status = OrderStatus.FAILED
 
     def _on_filled(self, order: Order) -> None:
         """Ордер исполнился — зовём callback для PositionManager."""

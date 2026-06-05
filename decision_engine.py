@@ -193,7 +193,7 @@ class DecisionEngine:
         self._last_decisions: Dict[str, Dict] = {}
 
         # Тайм-аут на повторный вход после продажи (сек)
-        self.reentry_cooldown = 600  # 10 мин (базовый - доверяем entry ensemble)
+        self.reentry_cooldown = 14400  # 4 часа (базовый кулдаун после выхода)
 
         # Счётчик последовательных убытков на символ
         self._consecutive_losses: Dict[str, int] = {}
