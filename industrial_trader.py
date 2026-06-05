@@ -1152,9 +1152,10 @@ class IndustrialTrader:
                 if btc_5m_candles is not None and btc_1h_candles is not None:
                     try:
                         regime_result = self._btc_regime.update(btc_5m_candles, btc_1h_candles)
-                        logger.info(f"🧠 BTC Regime: {regime_result['regime']} → rec={regime_result['recommendation']} ({regime_result['message']})")
+                        _htf = regime_result.get('htf_trend', '?')
+                        logger.info(f"🧠 BTC Regime: {regime_result['regime']} HTF={_htf} → rec={regime_result['recommendation']} ({regime_result['message']})")
                         if not self._btc_regime.is_buy_allowed():
-                            logger.info(f"⏳ BTC Regime: BUY заблокирован - {regime_result['regime']}. Пропускаем входы.")
+                            logger.info(f"⏳ BTC Regime: BUY заблокирован - {regime_result['regime']} (HTF={_htf}). Пропускаем входы.")
 
                         # 🎯 ДИНАМИЧЕСКОЕ ПЕРЕКЛЮЧЕНИЕ РЕЖИМОВ ПО ТРЕНДУ BTC
                         # Определяем режим: up_trend или down_trend

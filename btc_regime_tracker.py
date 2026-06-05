@@ -40,6 +40,7 @@ class BTCRegimeTracker:
         self._cooldown_seconds = reentry_cooldown_seconds
         self._cooldown_until: float = 0.0
         self._regime: str = "unknown"
+        self._htf_trend: str = "unknown"   # глобальный тренд: 'up', 'down', 'sideways'
         self._last_result: dict = {}
 
     # ── публичный API ────────────────────────
@@ -88,8 +89,17 @@ class BTCRegimeTracker:
                 self._cooldown_until = new_cd
                 logger.info("Установлен кулдаун на BUY до %.1f", self._cooldown_until)
 
+        # 6. Глобальный тренд — определяем по старшим таймфреймам
+        self._htf_trend = self._detect_htf_trend(btc_1h_candles)
+        
+        # 7. Если глобальный тренд down — принудительно блокируем LONG
+        #    (даже если локально recovery или слабый pump)
+        if self._htf_trend == 'down' and regime in ('recovery', 'pump'):
+            logger.debug(f"HTF override: глобальный тренд {self._htf_trend}, regime={regime} → BLOCK BUY")
+
         self._last_result = {
             "regime":          regime,
+            "htf_trend":       self._htf_trend,
             "btc_change_30m":  round(change_30m, 2),
             "btc_change_1h":   round(change_1h, 2),
             "btc_change_4h":   round(change_4h, 2),
@@ -99,17 +109,19 @@ class BTCRegimeTracker:
             "message":         self._build_message(regime, change_30m, recommendation, change_4h=change_4h),
         }
 
-        logger.info("Regime=%s, 30m=%.2f%%, rec=%s", regime, change_30m, recommendation)
+        logger.info("Regime=%s, HTF=%s, 30m=%.2f%%, rec=%s", regime, self._htf_trend, change_30m, recommendation)
         return self._last_result
 
     def is_buy_allowed(self) -> bool:
-        """Можно ли сейчас покупать? Проверяет кулдаун и фазу."""
+        """Можно ли сейчас покупать? Проверяет кулдаун, фазу и глобальный тренд."""
         if time.time() < self._cooldown_until:
             return False
         if self._regime in ("pump", "distribution"):
             return False
-        if self._regime in ("dump", "bearish_side"):
+        if self._regime in ("dump", "bearish_side", "recovery"):
             return False
+        if self._htf_trend == "down":
+            return False   # 🔴 Глобальный тренд вниз — ловить падающие ножи нельзя
         return True
 
     def get_regime(self) -> str:
@@ -128,6 +140,55 @@ class BTCRegimeTracker:
         return _dir_map.get(self._regime, 'neutral')
 
     # ── внутренние методы ────────────────────
+
+    def _detect_htf_trend(self, df_1h: pd.DataFrame) -> str:
+        """
+        Определяет глобальный тренд по 1H свечам (100 свечей ≈ 4 дня).
+        Использует EMA50 vs EMA100 + структуру максимумов/минимумов.
+        
+        Returns: 'up', 'down' или 'sideways'
+        """
+        if df_1h is None or len(df_1h) < 50:
+            return 'unknown'
+
+        close = df_1h['close'].values.astype(float)
+        
+        # EMA50 (≈ 50 часов = 2 дня)
+        ema50 = self._ema(close, 50)
+        # EMA100 (≈ 100 часов = 4 дня)
+        ema100 = self._ema(close, 100)
+        
+        current_price = close[-1]
+        
+        # Проверяем расположение цены относительно EMA
+        price_above_50 = current_price > ema50[-1]
+        price_above_100 = current_price > ema100[-1]
+        ema50_above_100 = ema50[-1] > ema100[-1]
+        
+        # Считаем бары где цена ниже EMA100 (indicator of sustained downtrend)
+        bars_below_ema100 = sum(1 for i in range(-20, 0) if close[i] < ema100[i])
+        
+        # Определяем тренд
+        if not price_above_50 and not price_above_100 and not ema50_above_100:
+            # Цена ниже обеих EMA, EMA50 ниже EMA100 — уверенный downtrend
+            return 'down'
+        elif price_above_50 and price_above_100 and ema50_above_100:
+            # Цена выше обеих EMA, EMA50 выше EMA100 — уверенный uptrend
+            return 'up'
+        elif bars_below_ema100 >= 15:  # 15 из 20 последних баров ниже EMA100
+            return 'down'
+        else:
+            return 'sideways'
+
+    @staticmethod
+    def _ema(values: np.ndarray, period: int) -> np.ndarray:
+        """Простое экспоненциальное скользящее среднее."""
+        result = np.zeros_like(values)
+        result[:period] = np.mean(values[:period])
+        multiplier = 2 / (period + 1)
+        for i in range(period, len(values)):
+            result[i] = (values[i] - result[i-1]) * multiplier + result[i-1]
+        return result
 
     @staticmethod
     def _validate_input(df_5m: pd.DataFrame, df_1h: pd.DataFrame) -> None:
