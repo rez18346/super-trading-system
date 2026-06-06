@@ -1366,20 +1366,14 @@ class IndustrialTrader:
 
                     # ─── ТОРГОВАЯ ЛОГИКА ──────────────────────────────────────
 
-                    # 🛡️ BTC Regime Check: блокируем вход если BTC в pump/dump/distribution
-                    if symbol not in self.positions:
-                        if hasattr(self, '_btc_regime') and not self._btc_regime.is_buy_allowed():
-                            regime_name = self._btc_regime.get_regime()
-                            logger.info(f"⏳ [DE→HOLD] {symbol}: BTC Regime {regime_name} - BUY заблокирован")
-                            continue
-
-                        # ⏯️ CONTROL STOP: блокируем новые входы если trading_blocked
-                        if self._trading_blocked:
-                            logger.info(f"⏳ [CONTROL] {symbol}: торговля остановлена, BUY заблокирован")
-                            continue
+                    # ⏯️ CONTROL STOP: блокируем новые входы если trading_blocked (быстрая проверка)
+                    if symbol not in self.positions and self._trading_blocked:
+                        logger.info(f"⏳ [CONTROL] {symbol}: торговля остановлена, BUY заблокирован")
+                        continue
 
                     # ⚡ DecisionEngine: ЕДИНСТВЕННЫЙ источник решений о входе
                     # DE оценивает рынок ML-ансамблем. Если одобрил - входим.
+                    # ВСЕГДА запускаем DE для дашборда (даже если BTC regime блокирует вход).
                     if symbol not in self.positions:
                         try:
                             de_price = current_price
@@ -1397,11 +1391,13 @@ class IndustrialTrader:
                             last_exit_price = last_exit_info.get('price')
                             last_exit_time = last_exit_info.get('time')
 
-                            # 📏 24h high для контроля входа у вершины
+                            # 📏 24h high/low для контроля входа у вершины и RP модуля
                             _high_24h = None
+                            _low_24h = None
                             try:
                                 _ticker = self.exchange.fetch_ticker(symbol)
                                 _high_24h = _ticker.get('high')
+                                _low_24h = _ticker.get('low')
                             except Exception:
                                 pass
 
@@ -1411,7 +1407,15 @@ class IndustrialTrader:
                                                        last_exit_price=last_exit_price,
                                                        last_exit_time=last_exit_time,
                                                        cvd_data=_get_symbol_cvd(symbol),
-                                                       high_24h=_high_24h)
+                                                       high_24h=_high_24h,
+                                                       low_24h=_low_24h)
+
+                            # 🛡️ BTC Regime Check: блокируем вход, НО логируем голосование для дашборда
+                            if hasattr(self, '_btc_regime') and not self._btc_regime.is_buy_allowed():
+                                regime_name = self._btc_regime.get_regime()
+                                reason = decision.reason or ''
+                                logger.info(f"⏳ [DE→HOLD] {symbol}: BTC Regime {regime_name} - BUY заблокирован | {reason}")
+                                continue
 
                             if decision.action == 'enter':
                                 # ⚡ ШОРТ-ПРИОРИТЕТ: если включён шорт - не покупаем (только шортим)

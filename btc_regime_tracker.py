@@ -41,6 +41,7 @@ class BTCRegimeTracker:
         self._cooldown_until: float = 0.0
         self._regime: str = "unknown"
         self._htf_trend: str = "unknown"   # глобальный тренд: 'up', 'down', 'sideways'
+        self._structure_trend: str = "unknown"  # 'bullish', 'bearish', 'neutral'
         self._last_result: dict = {}
 
     # ── публичный API ────────────────────────
@@ -92,14 +93,24 @@ class BTCRegimeTracker:
         # 6. Глобальный тренд — определяем по старшим таймфреймам
         self._htf_trend = self._detect_htf_trend(btc_1h_candles)
         
-        # 7. Если глобальный тренд down — принудительно блокируем LONG
-        #    (даже если локально recovery или слабый pump)
-        if self._htf_trend == 'down' and regime in ('recovery', 'pump'):
-            logger.debug(f"HTF override: глобальный тренд {self._htf_trend}, regime={regime} → BLOCK BUY")
+        # 7. Анализ структуры (Lower High + Lower Low на 1H)
+        self._structure_trend = self._detect_structure(btc_1h_candles)
+        
+        # 8. Если глобальный тренд down — принудительно блокируем LONG
+        if self._htf_trend == 'down':
+            logger.debug(f"HTF=down: глобальный тренд медвежий → BLOCK BUY, regime={regime}")
+        
+        # 9. Если структура медвежья — переопределяем regime
+        if self._structure_trend == 'bearish' and regime in ('accumulation', 'recovery', 'pump'):
+            logger.debug(f"Структура={self._structure_trend}: Lower High + Lower Low → bearish_side")
+            regime = 'bearish_side'
+            self._regime = regime
+            recommendation = 'sell_only'
 
         self._last_result = {
             "regime":          regime,
             "htf_trend":       self._htf_trend,
+            "structure_trend": self._structure_trend,
             "btc_change_30m":  round(change_30m, 2),
             "btc_change_1h":   round(change_1h, 2),
             "btc_change_4h":   round(change_4h, 2),
@@ -109,7 +120,7 @@ class BTCRegimeTracker:
             "message":         self._build_message(regime, change_30m, recommendation, change_4h=change_4h),
         }
 
-        logger.info("Regime=%s, HTF=%s, 30m=%.2f%%, rec=%s", regime, self._htf_trend, change_30m, recommendation)
+        logger.info("Regime=%s, HTF=%s, Структура=%s, 30m=%.2f%%, rec=%s", regime, self._htf_trend, self._structure_trend, change_30m, recommendation)
         return self._last_result
 
     def is_buy_allowed(self) -> bool:
@@ -120,9 +131,12 @@ class BTCRegimeTracker:
             return False
         if self._regime in ("dump", "bearish_side", "recovery"):
             return False
-        # HTF down НЕ блокирует накопление/боковик — только усиливает локальные решения
-        if self._htf_trend == "down" and self._regime in ("recovery",):
-            return False   # recovery внутри даун-тренда = ловушка
+        # 🛑 HTF down → блокируем ВСЕ лонги (любая локальная фаза в даун-тренде = ловушка)
+        if self._htf_trend == "down":
+            return False
+        # 🛑 Медвежья структура → блокируем лонги
+        if self._structure_trend == "bearish":
+            return False
         return True
 
     def get_regime(self) -> str:
@@ -139,6 +153,10 @@ class BTCRegimeTracker:
             'recovery': 'up',
         }
         return _dir_map.get(self._regime, 'neutral')
+
+    def get_structure(self) -> str:
+        """Возвращает тренд по структуре: 'bullish', 'bearish', 'neutral'."""
+        return self._structure_trend
 
     # ── внутренние методы ────────────────────
 
@@ -173,6 +191,75 @@ class BTCRegimeTracker:
             return 'up'
         else:
             return 'sideways'
+
+    def _detect_structure(self, df_1h: pd.DataFrame) -> str:
+        """
+        Анализирует структуру тренда на 1H свечах.
+        
+        Ищет последовательность Lower High + Lower Low (медвежья структура)
+        или Higher High + Higher Low (бычья структура).
+        
+        Returns: 'bullish', 'bearish', или 'neutral'
+        """
+        if df_1h is None or len(df_1h) < 40:
+            return 'unknown'
+
+        high = df_1h['high'].values.astype(float)
+        low = df_1h['low'].values.astype(float)
+        n = len(high)
+
+        # Ищем swing highs (локальные максимумы) и swing lows (локальные минимумы)
+        # на последних 40 свечах (~40 часов)
+        lookback = min(40, n)
+        
+        swing_highs = []
+        swing_lows = []
+        
+        for i in range(n - lookback, n):
+            # Swing high: выше 2 соседей слева и 2 соседей справа
+            if i >= 2 and i <= n - 3:
+                if (high[i] > high[i-1] and high[i] > high[i-2] and
+                    high[i] >= high[i+1] and high[i] >= high[i+2]):
+                    swing_highs.append({'idx': i, 'val': high[i]})
+            
+            # Swing low: ниже 2 соседей слева и 2 соседей справа
+            if i >= 2 and i <= n - 3:
+                if (low[i] < low[i-1] and low[i] < low[i-2] and
+                    low[i] <= low[i+1] and low[i] <= low[i+2]):
+                    swing_lows.append({'idx': i, 'val': low[i]})
+
+        # Без достаточного количества свингов — нейтрально
+        if len(swing_highs) < 2 or len(swing_lows) < 2:
+            return 'neutral'
+
+        # Берём последние 2 свинга каждого типа
+        last_2_highs = swing_highs[-2:]
+        last_2_lows = swing_lows[-2:]
+
+        # Lower High: последний максимум ниже предыдущего
+        lower_high = last_2_highs[1]['val'] < last_2_highs[0]['val']
+        # Lower Low: последний минимум ниже предыдущего
+        lower_low = last_2_lows[1]['val'] < last_2_lows[0]['val']
+        
+        # Higher High: последний максимум выше предыдущего
+        higher_high = last_2_highs[1]['val'] > last_2_highs[0]['val']
+        # Higher Low: последний минимум выше предыдущего
+        higher_low = last_2_lows[1]['val'] > last_2_lows[0]['val']
+        
+        # Медвежья структура: Lower High + Lower Low
+        if lower_high and lower_low:
+            logger.debug(f"\U0001f989 Медвежья структура: LH={last_2_highs[1]['val']:.1f} < {last_2_highs[0]['val']:.1f}, "
+                         f"LL={last_2_lows[1]['val']:.1f} < {last_2_lows[0]['val']:.1f}")
+            return 'bearish'
+        
+        # Бычья структура: Higher High + Higher Low
+        if higher_high and higher_low:
+            logger.debug(f"\U0001f402 Бычья структура: HH={last_2_highs[1]['val']:.1f} > {last_2_highs[0]['val']:.1f}, "
+                         f"HL={last_2_lows[1]['val']:.1f} > {last_2_lows[0]['val']:.1f}")
+            return 'bullish'
+        
+        # Неопределённая структура
+        return 'neutral'
 
     @staticmethod
     def _ema(values: np.ndarray, period: int) -> np.ndarray:

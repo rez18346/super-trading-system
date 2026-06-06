@@ -920,7 +920,8 @@ class DecisionEngine:
                      last_exit_price: Optional[float] = None,
                      last_exit_time: Optional[float] = None,
                      cvd_data: Optional[Dict] = None,
-                     high_24h: Optional[float] = None) -> Decision:
+                     high_24h: Optional[float] = None,
+                     low_24h: Optional[float] = None) -> Decision:
         """
         Принять решение о входе в позицию.
 
@@ -1068,7 +1069,7 @@ class DecisionEngine:
         entry_checks = self._evaluate_entry_ensemble(
             symbol, confidence, trend, rsi, current_price,
             candles_5m=candles_5m, candles_1h=c1h, candles_4h=c4h,
-            side=side, cvd_data=cvd_data, high_24h=high_24h
+            side=side, cvd_data=cvd_data, high_24h=high_24h, low_24h=low_24h
         )
 
         # ═══ ПРИМЕНЕНИЕ VETO-ШТРАФА ═══════════════════════════════════════
@@ -1257,9 +1258,10 @@ class DecisionEngine:
                                    side: str = 'long',
                                    cvd_data: Optional[Dict] = None,
                                    high_24h: Optional[float] = None,
+                                   low_24h: Optional[float] = None,
                                    btc_state: Optional[Dict] = None) -> Dict:
         """
-        Профессиональный ансамбль из 7 голосов.
+        Профессиональный ансамбль из 7 голосов + RP (Recovery & Potential).
 
         ⚡ ШОРТ: все сигналы инвертируются:
            - VSA bearish → boost, VSA bullish → penalty
@@ -1279,6 +1281,7 @@ class DecisionEngine:
           5. LiquidityCluster v2 (Order Flow/Block/Sweep) - 25%
           6. Volume/VWAP (VWAP реверсия + Volume Spike) - 20%
           7. CVD Order Flow (реальный поток агрессивных сделок) - 10% 🆕
+          8. RP (Recovery & Potential) — мета-дельта −20..+20 🆕
 
         Возвращает словарь с approval, score, раскладкой.
         """
@@ -1604,7 +1607,19 @@ class DecisionEngine:
         except Exception as e:
             scores['vsa']['score'] = 50
             scores['vsa']['detail'] = f'error({e})'
-        
+
+        # Сохраняем VSA состояние для RP модуля
+        _rp_vsa_signal = 'neutral'
+        _rp_vsa_strength = 0.0
+        _rp_vsa_divergence = 0.0
+        try:
+            if vsa is not None:
+                _rp_vsa_signal = vsa.signal if hasattr(vsa, 'signal') else 'neutral'
+                _rp_vsa_strength = vsa.strength if hasattr(vsa, 'strength') else 0.0
+                _rp_vsa_divergence = vsa.volume_divergence if hasattr(vsa, 'volume_divergence') else 0.0
+        except Exception:
+            pass
+
         # ═══ ГОЛОС 8: CVD Order Flow (10%) — реальный поток агрессивных сделок 🆕 ════
         try:
             cvd_score = 50
@@ -1661,6 +1676,31 @@ class DecisionEngine:
         except Exception as e:
             scores['cvd']['score'] = 50
             scores['cvd']['detail'] = f'error({e})'
+
+        # ═══ RP (Recovery & Potential) — мета-дельта −20..+20 🆕 ════════
+        try:
+            from rp_analyzer import analyze_recovery_potential
+            rp_result = analyze_recovery_potential(
+                symbol=symbol,
+                current_price=current_price,
+                high_24h=high_24h,
+                low_24h=low_24h,
+                cvd_data=cvd_data,
+                vsa_signal=_rp_vsa_signal,
+                vsa_strength=_rp_vsa_strength,
+                vsa_divergence=_rp_vsa_divergence,
+            )
+            rp_delta = rp_result['rp_delta']
+            scores['rp'] = {
+                'score': rp_result['rp_score'],
+                'weight': 0,  # RP — дельта, не взвешенный голос
+                'delta': rp_delta,
+                'detail': rp_result['detail'],
+            }
+            logger.debug(f"[RP] {symbol}: score={rp_result['rp_score']:.0f} delta={rp_delta:+d} — {rp_result['detail']}")
+        except Exception as e:
+            logger.debug(f"[RP] {symbol}: error: {e}")
+            scores['rp'] = {'score': 50, 'weight': 0, 'delta': 0, 'detail': f'error({e})'}
 
         # ═══ АДАПТИВНЫЕ ВЕСА ══════════════════════════════════════════════
         # Если Liq сильный (>70) а MTF слабый (<50) — снижаем вес MTF
@@ -1772,6 +1812,13 @@ class DecisionEngine:
         # ═══ ИТОГОВЫЙ СКОР ═════════════════════════════════════════════════
         # Теперь в scores есть все компоненты, включая btc_bonus
         final_score = sum(v['score'] * v['weight'] for v in scores.values())
+        # RP дельта добавляется к финальному скору (weight=0, не влияет на сумму)
+        _rp_delta = scores.get('rp', {}).get('delta', 0)
+        if _rp_delta != 0:
+            og_score = final_score
+            final_score += _rp_delta
+            final_score = max(0, min(150, final_score))
+            logger.debug(f"[RP] {symbol}: дельта={_rp_delta:+d}pts ({og_score:.1f}→{final_score:.1f})")
 
         # ═══ БЛОКИРОВКА ОТ BTC ═══════════════════════════════════════════
         # Если btc_bonus == -999 - жёсткое veto на лонги (BTC падает >2% за 6ч)
@@ -1807,7 +1854,8 @@ class DecisionEngine:
             f"Liq:{scores['liquidity']['score']:.0f}({scores['liquidity']['detail']}) "
             f"VV:{scores['volume_vwap']['score']:.0f}({scores['volume_vwap']['detail']}) "
             f"VSA:{scores['vsa']['score']:.0f}({scores['vsa']['detail']}) "
-            f"CVD:{scores['cvd']['score']:.0f}({scores['cvd']['detail']})"
+            f"CVD:{scores['cvd']['score']:.0f}({scores['cvd']['detail']}) "
+            f"RP:{scores.get('rp', {}).get('delta', 0):+d}({scores.get('rp', {}).get('detail', 'N/A')})"
         )
 
         votes = {
@@ -1819,6 +1867,9 @@ class DecisionEngine:
             'volume_vwap': {'score': scores['volume_vwap']['score'], 'detail': scores['volume_vwap']['detail']},
             'vsa': {'score': scores['vsa']['score'], 'detail': scores['vsa']['detail']},
             'cvd': {'score': scores['cvd']['score'], 'detail': scores['cvd']['detail']},
+            'rp': {'score': scores.get('rp', {}).get('score', 50),
+                   'delta': scores.get('rp', {}).get('delta', 0),
+                   'detail': scores.get('rp', {}).get('detail', 'N/A')},
             'level': {'score': scores.get('_level_penalty', {}).get('score', 0),
                       'detail': f'{current_price/high_24h*100:.1f}% от 24h хая' if high_24h else 'N/A'},
         }
@@ -2171,7 +2222,8 @@ class DecisionEngine:
             last_exit_price=last_exit_price,
             last_exit_time=last_exit_time,
             cvd_data=cvd_data,
-            high_24h=high_24h
+            high_24h=high_24h,
+            low_24h=low_24h
         )
 
     def reset_cooldowns(self) -> None:
