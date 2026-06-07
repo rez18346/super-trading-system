@@ -45,22 +45,23 @@ _log = logging.getLogger('pid')
 
 
 def _check_pid_file():
-    import signal as sig
+    """Проверка: если порт 8765 занят — трейдер уже работает, выходим.
+    Никого не убиваем. Если старый PID в файле не отвечает — просто перезаписываем."""
     current_pid = os.getpid()
-    if os.path.exists(PID_FILE):
-        try:
-            with open(PID_FILE) as f:
-                old_pid = int(f.read().strip())
-            if old_pid != current_pid:
-                try:
-                    os.kill(old_pid, 0)
-                    _log.warning(f"⚠️ Найден старый процесс PID={old_pid}, убиваю...")
-                    os.kill(old_pid, sig.SIGTERM)
-                    time.sleep(1)
-                except OSError:
-                    pass
-        except (ValueError, IOError):
-            pass
+    
+    # Проверяем порт 8765 — если занят, значит трейдер уже работает
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.bind(('0.0.0.0', 8765))
+        sock.close()
+    except OSError:
+        # Порт занят — другой трейдер живёт и работает, выходим
+        _log.error(f"❌ Порт 8765 уже занят — трейдер уже работает. Выход.")
+        import sys
+        sys.exit(0)
+    
+    # Порт свободен — записываем свой PID (просто информация, не для убийства)
     os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
     with open(PID_FILE, 'w') as f:
         f.write(str(current_pid))
@@ -362,13 +363,6 @@ def main():
     def _handle_signal(signum, frame):
         logger.info(f"🛑 Получен сигнал {signum}, завершение...")
         system.running = False
-        # Удаляем PID-файл
-        try:
-            if os.path.exists(PID_FILE):
-                os.remove(PID_FILE)
-        except Exception as _e:
-            logger.debug("bare except in main: %s", _e)
-            pass
         sys.exit(0)
     
     sig.signal(sig.SIGTERM, _handle_signal)

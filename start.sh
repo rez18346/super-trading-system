@@ -1,72 +1,106 @@
-#!/usr/bin/env bash
-# ============================================================
-# start.sh — Запуск Super Trading System
-# ============================================================
-# Использование:
-#   chmod +x start.sh
-#   ./start.sh
-#
-# Работает на: Linux, macOS, WSL2 (Windows)
-# ============================================================
+#!/bin/bash
+# start.sh — Единый запуск торговой системы
+# Использование: ./start.sh [start|stop|restart|status]
 
-set -e
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PIDFILE="$SCRIPT_DIR/data/trader.pid"
+LOGFILE="/tmp/system_v5.log"
+VENV_PYTHON="$SCRIPT_DIR/venv/bin/python3"
+MAIN="$SCRIPT_DIR/main.py"
+PORT=8765
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+start() {
+    echo "▶️ Запуск торговой системы..."
 
-echo "🏭 Super Trading System — запуск..."
-echo ""
-
-# 1. Проверка Python
-if ! command -v python3 &>/dev/null; then
-    echo "❌ Python3 не найден. Установите Python 3.10+"
-    exit 1
-fi
-
-PY_VER=$(python3 --version 2>&1)
-echo "✅ Python: $PY_VER"
-
-# 2. Проверка config.py
-if [ ! -f "config.py" ]; then
-    echo "⚠️  config.py не найден!"
-    echo "   Создайте из шаблона: cp config.example.py config.py"
-    echo "   И укажите API-ключи Bybit"
-    exit 1
-fi
-
-# 3. Проверка зависимостей
-echo "📦 Проверка зависимостей..."
-pip install -q -r requirements.txt 2>/dev/null || {
-    echo "⚠️  Устанавливаю зависимости..."
-    pip install -r requirements.txt
-}
-echo "✅ Зависимости установлены"
-
-# 4. Проверка, не запущен ли уже
-if [ -f "data/trader.pid" ]; then
-    OLD_PID=$(cat data/trader.pid 2>/dev/null)
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-        echo "⚠️  Трейдер уже запущен (PID: $OLD_PID)"
-        echo "   Перезапуск: ./start.sh --restart"
-        exit 0
-    else
-        echo "🧹 Очистка старого PID-файла..."
-        rm -f data/trader.pid
+    # 1. Убедиться что PostgreSQL работает
+    if ! pg_isready -h /tmp -q 2>/dev/null; then
+        echo "   ⚠️ PostgreSQL не запущен, запускаю..."
+        /home/ksysha/.local/pgsql/bin/pg_ctl -D /home/ksysha/pgdata -l /home/ksysha/pgdata/logfile -o "-k /tmp" start
+        sleep 3
+        if ! pg_isready -h /tmp -q 2>/dev/null; then
+            echo "   ❌ PostgreSQL не запустился! Лог:"
+            tail -5 /home/ksysha/pgdata/logfile
+            exit 1
+        fi
     fi
-fi
+    echo "   ✅ PostgreSQL: $(pg_isready -h /tmp -q && echo 'OK')"
 
-# 5. Запуск
-echo "🚀 Запуск трейдера..."
-nohup python3 main.py > /tmp/trader_output.log 2>&1 &
-PID=$!
-echo $PID > data/trader.pid
+    # 2. Убить старые процессы на порту трейдера
+    local old_pids
+    old_pids=$(lsof -ti :$PORT 2>/dev/null)
+    if [ -n "$old_pids" ]; then
+        echo "   ⚠️ Освобождаю порт $PORT (PID: $old_pids)"
+        kill -9 $old_pids 2>/dev/null
+        sleep 1
+    fi
 
-echo "✅ Трейдер запущен, PID: $PID"
-echo "📝 Логи: tail -f /tmp/system_v4.log"
-echo "📊 Дашборд: http://localhost:8765"
+    # 3. Удалить старый PID-файл
+    [ -f "$PIDFILE" ] && rm -f "$PIDFILE" && echo "   🧹 Удалён старый PID-файл"
 
-# Для WSL: показать IP если нужно
-if grep -qi microsoft /proc/version 2>/dev/null; then
-    WSL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-    echo "🌐 WSL2: дашборд доступен на http://${WSL_IP}:8765 (из Windows)"
-fi
+    # 4. Удалить старый real_balance
+    [ -f /tmp/real_balance.json ] && rm -f /tmp/real_balance.json
+
+    # 5. Запустить трейдер
+    nohup "$VENV_PYTHON" "$MAIN" >> "$LOGFILE" 2>&1 &
+    local pid=$!
+    echo "   🚀 PID: $pid"
+
+    # 6. Подождать и проверить
+    sleep 5
+    if kill -0 $pid 2>/dev/null; then
+        echo "   ✅ Трейдер запущен (PID $pid)"
+        echo "   📊 Дашборд: http://localhost:$PORT"
+        echo "   📝 Лог: $LOGFILE"
+    else
+        echo "   ❌ Трейдер упал! Лог:"
+        tail -5 "$LOGFILE"
+        exit 1
+    fi
+}
+
+stop() {
+    echo "⏹️ Остановка..."
+
+    local pids
+    pids=$(pgrep -f "$MAIN" 2>/dev/null)
+    if [ -n "$pids" ]; then
+        echo "   Убиваю PID: $pids"
+        kill $pids 2>/dev/null
+        sleep 3
+        # force kill если не умерли
+        pids=$(pgrep -f "$MAIN" 2>/dev/null)
+        [ -n "$pids" ] && kill -9 $pids 2>/dev/null && echo "   force kill"
+    fi
+
+    # освободить порт
+    local port_pids
+    port_pids=$(lsof -ti :$PORT 2>/dev/null)
+    [ -n "$port_pids" ] && kill -9 $port_pids 2>/dev/null
+
+    [ -f "$PIDFILE" ] && rm -f "$PIDFILE"
+    echo "   ✅ Остановлено"
+}
+
+status() {
+    local pids
+    pids=$(pgrep -f "$MAIN" 2>/dev/null)
+    if [ -n "$pids" ]; then
+        echo "✅ Трейдер работает: PID=$pids"
+        if command -v curl &>/dev/null; then
+            curl -s --connect-timeout 3 http://localhost:$PORT/ 2>/dev/null | grep -oP '(stCapital|stPositions|stBtcRegime)[^>]*>\K[^<]+' | paste -sd ',' || echo "⚠️ Дашборд не отвечает"
+        fi
+    else
+        echo "❌ Трейдер не работает"
+    fi
+}
+
+case "${1:-status}" in
+    start)   start ;;
+    stop)    stop ;;
+    restart) stop; sleep 2; start ;;
+    status)  status ;;
+    *)
+        echo "Использование: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
