@@ -353,6 +353,34 @@ class IndustrialTrader:
                                     pos[k] = v
                             self.positions[symbol] = pos
 
+                            # 💾 Сохраняем в БД для терминала
+                            try:
+                                # Проверяем — есть ли уже открытая запись в trades
+                                from db_pg import _with_conn
+                                def _check_open(conn):
+                                    cur = conn.cursor()
+                                    cur.execute("SELECT id FROM trades WHERE symbol=%s AND status='open' LIMIT 1", (symbol,))
+                                    return cur.fetchone() is not None
+                                already_open = _with_conn(_check_open)
+                                if not already_open:
+                                    def _insert_trade(conn):
+                                        cur = conn.cursor()
+                                        from datetime import timezone
+                                        now = datetime.now(timezone.utc).isoformat()
+                                        cur.execute("""
+                                            INSERT INTO trades
+                                                (symbol, side, status, account_id,
+                                                 entry_price, entry_qty, entry_time,
+                                                 created_at, updated_at)
+                                            VALUES (%s, 'long', 'open', 1,
+                                                    %s, %s, %s,
+                                                    %s, %s)
+                                        """, (symbol, entry_price, amount, now, now, now))
+                                        logger.info(f"   💾 {symbol}: записана в trades для терминала")
+                                    _with_conn(_insert_trade)
+                            except Exception as ese:
+                                logger.warning(f"   ⚠️ Не удалось сохранить {symbol} в trades: {ese}")
+
                             open_positions_count += 1
                             logger.info(f"   ✅ Позиция добавлена: {symbol} - {amount:.6f} @ ${entry_price:.4f} (текущая: ${current_price:.4f})")
 
@@ -496,6 +524,18 @@ class IndustrialTrader:
             if bybit_config.get('paper_trading', True):
                 self.exchange.set_sandbox_mode(True)
                 logger.info("Режим бумажной торговли активирован")
+
+            # 🆕 Инициализация CachedDataFetcher — кеш для свечей и цен
+            try:
+                from data_cache import CachedDataFetcher, PriceCache, OHLCVCache
+                import data_cache as dc_module
+                self.price_cache = PriceCache()
+                self.ohlcv_cache = OHLCVCache()
+                self.data_fetcher = CachedDataFetcher(self.exchange, self.price_cache, self.ohlcv_cache)
+                dc_module._global_fetcher = self.data_fetcher
+                logger.info(f"✅ CachedDataFetcher инициализирован")
+            except Exception as ef:
+                logger.warning(f"⚠️ Ошибка инициализации CachedDataFetcher: {ef}")
 
             logger.info(f"Подключение к Bybit установлено")
 
@@ -1154,6 +1194,26 @@ class IndustrialTrader:
                         regime_result = self._btc_regime.update(btc_5m_candles, btc_1h_candles)
                         _htf = regime_result.get('htf_trend', '?')
                         logger.info(f"🧠 BTC Regime: {regime_result['regime']} HTF={_htf} → rec={regime_result['recommendation']} ({regime_result['message']})")
+                        # 💾 Сохраняем BTC анализ в PostgreSQL для терминала
+                        try:
+                            import json
+                            btc_analysis = {
+                                'price': btc_price,
+                                'regime': regime_result.get('regime', 'unknown'),
+                                'htf_trend': _htf,
+                                'recommendation': regime_result.get('recommendation', 'wait'),
+                                'message': regime_result.get('message', ''),
+                                'rsi': regime_result.get('rsi', 0),
+                                'btc_change_1h': regime_result.get('btc_change_1h', 0),
+                                'btc_change_4h': regime_result.get('btc_change_4h', 0),
+                                'structure': regime_result.get('structure', 'neutral'),
+                                'score': regime_result.get('score', 0),
+                                'ema_trend': regime_result.get('ema_trend', 'neutral'),
+                                'timestamp': str(datetime.now()),
+                            }
+                            db.set_meta('btc_analysis', json.dumps(btc_analysis))
+                        except Exception as emeta:
+                            logger.error(f"Failed to save btc_analysis to meta: {emeta}")
                         if not self._btc_regime.is_buy_allowed():
                             logger.info(f"⏳ BTC Regime: BUY заблокирован - {regime_result['regime']} (HTF={_htf}). Пропускаем входы.")
 
@@ -1268,6 +1328,32 @@ class IndustrialTrader:
                             logger.warning(f"⚠️ Ошибка записи impulse_config: {e_ic}")
                     except Exception as e:
                         logger.warning(f"⚠️ BTC Regime Tracker: {e}")
+
+                # 💾 Безусловное сохранение BTC анализа (даже если свечей не было)
+                try:
+                    import json
+                    _btc_analysis = {
+                        'price': btc_price or 0,
+                        'timestamp': str(datetime.now()),
+                    }
+                    # Если есть regime tracker — берём данные из него
+                    if hasattr(self, '_btc_regime'):
+                        _last = getattr(self._btc_regime, '_last_result', {})
+                        _btc_analysis['regime'] = _last.get('regime', 'unknown')
+                        _btc_analysis['htf_trend'] = _last.get('htf_trend', 'unknown')
+                        _btc_analysis['structure'] = _last.get('structure_trend', 'neutral')
+                        _btc_analysis['recommendation'] = _last.get('recommendation', 'wait')
+                        _btc_analysis['btc_change_1h'] = _last.get('btc_change_1h', 0)
+                        _btc_analysis['btc_change_4h'] = _last.get('btc_change_4h', 0)
+                    else:
+                        # Fallback — по цене
+                        _btc_analysis['regime'] = 'unknown'
+                        _btc_analysis['htf_trend'] = 'unknown'
+                        _btc_analysis['structure'] = 'neutral'
+                        _btc_analysis['recommendation'] = 'wait'
+                    db.set_meta('btc_analysis', json.dumps(_btc_analysis))
+                except Exception as emeta:
+                    logger.error(f"Failed to save btc_analysis to meta: {emeta}")
 
                 # BTC Direction Predictor: загружаем/обновляем прогноз каждую итерацию
                 if hasattr(de, '_btc_predictor'):

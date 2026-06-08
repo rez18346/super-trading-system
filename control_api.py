@@ -43,7 +43,7 @@ log = logging.getLogger('control_api')
 
 # ─── КОНФИГ ──────────────────────────────────────────────────────────────────
 
-SYSTEM_PID_FILE = os.path.join(BASE_DIR, "data", "trader.pid")
+SYSTEM_PID_FILE = os.path.join(BASE_DIR, "data", "orchestrator.pid")
 SYSTEM_LOG_FILE = "/tmp/system_v4.log"
 PG_DSN = db.get_db_path()  # PostgreSQL DSN
 
@@ -1149,4 +1149,25 @@ def run_server(host: str = "0.0.0.0", port: int = 8765):
 
 
 if __name__ == "__main__":
-    run_server()
+    # Если запущен с --standalone — пропускаем проверку оркестратора
+    # (оркестратор сам решает когда запускать дашборд)
+    import argparse
+    _parser = argparse.ArgumentParser()
+    _parser.add_argument('--port', type=int, default=8765)
+    _parser.add_argument('--standalone', action='store_true')
+    _args, _ = _parser.parse_known_args()
+    
+    if not _args.standalone:
+        # Проверка: если оркестратор жив — выходим
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        _clog = logging.getLogger('control_api.startup')
+        try:
+            with open(SYSTEM_PID_FILE) as f:
+                pid = int(f.read().strip())
+            os.kill(pid, 0)
+            _clog.warning(f"⚠️ Оркестратор PID={pid} жив — дашборд запускается из оркестратора. Выход.")
+            sys.exit(0)
+        except (FileNotFoundError, ValueError, ProcessLookupError):
+            _clog.info("🚀 Control API (standalone)")
+    
+    run_server(port=_args.port)

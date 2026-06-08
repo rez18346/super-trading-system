@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🧠 Торговый терминал</title>
+<style>
+    :root {
+        --bg: #0d1117;
+        --card: #161b22;
+        --card-alt: #1c2128;
+        --border: #30363d;
+        --text: #c9d1d9;
+        --text-dim: #8b949e;
+        --green: #3fb950;
+        --red: #f85149;
+        --blue: #58a6ff;
+        --yellow: #d29922;
+        --orange: #f0883e;
+        --accent: #1f6feb;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Mono', Consolas, monospace;
+        background: var(--bg);
+        color: var(--text);
+        padding: 12px;
+        font-size: 13px;
+    }
+    .header {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 12px; padding: 10px 16px;
+        background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+    }
+    .header h1 { font-size: 18px; display: flex; align-items: center; gap: 8px; }
+    .header-controls { display: flex; gap: 6px; }
+    .btn {
+        padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border);
+        cursor: pointer; font-size: 12px; font-weight: 600;
+        background: var(--card); color: var(--text); transition: .15s;
+    }
+    .btn:hover { background: #21262d; }
+    .btn-danger  { border-color: var(--red); color: var(--red); }
+    .btn-danger:hover  { background: rgba(248,81,73,.12); }
+    .btn-success { border-color: var(--green); color: var(--green); }
+    .btn-success:hover { background: rgba(63,185,80,.12); }
+    .btn-primary { border-color: var(--blue); color: var(--blue); }
+    .btn-primary:hover { background: rgba(88,166,255,.12); }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+    .grid { display: grid; gap: 8px; }
+    .grid-4 { grid-template-columns: repeat(4, 1fr); }
+    .grid-3 { grid-template-columns: repeat(3, 1fr); }
+    .grid-2 { grid-template-columns: 1fr 1fr; }
+
+    .card {
+        background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+        padding: 12px;
+    }
+    .card-title {
+        font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+        color: var(--text-dim); margin-bottom: 8px;
+    }
+    .card-value { font-size: 22px; font-weight: 700; }
+    .card-value.green { color: var(--green); }
+    .card-value.red   { color: var(--red); }
+    .card-value.yellow { color: var(--yellow); }
+    .card-value.sub   { font-size: 13px; font-weight: 400; margin-top: 3px; }
+
+    table { width: 100%; border-collapse: collapse; }
+    th {
+        text-align: left; font-size: 10px; text-transform: uppercase;
+        letter-spacing: .5px; color: var(--text-dim);
+        padding: 6px 8px; border-bottom: 1px solid var(--border);
+        position: sticky; top: 0; background: var(--card); z-index: 1;
+    }
+    td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:hover { background: var(--card-alt); }
+
+    .badge {
+        display: inline-block; padding: 1px 7px; border-radius: 10px;
+        font-size: 10px; font-weight: 600;
+    }
+    .badge-long  { background: rgba(63,185,80,.12); color: var(--green); }
+    .badge-short { background: rgba(248,81,73,.12); color: var(--red); }
+    .badge-buy   { background: rgba(63,185,80,.12); color: var(--green); }
+    .badge-sell  { background: rgba(248,81,73,.12); color: var(--red); }
+    .badge-hold  { background: rgba(139,148,158,.12); color: var(--text-dim); }
+    .badge-cool  { background: rgba(88,166,255,.12); color: var(--blue); }
+
+    .scores { display: flex; gap: 3px; flex-wrap: wrap; }
+    .score {
+        display: inline-block; padding: 1px 5px; border-radius: 3px;
+        font-size: 10px; font-weight: 500; font-family: 'SF Mono', monospace;
+    }
+    .score-high { background: rgba(63,185,80,.15); color: var(--green); }
+    .score-mid  { background: rgba(210,153,34,.15); color: var(--yellow); }
+    .score-low  { background: rgba(248,81,73,.15); color: var(--red); }
+    .score-null { background: rgba(139,148,158,.08); color: var(--text-dim); }
+
+    .meta-row  { display: flex; gap: 8px; flex-wrap: wrap; font-size: 11px; }
+    .meta-item { color: var(--text-dim); white-space: nowrap; }
+    .meta-item strong { color: var(--text); }
+
+    .pnl-pos { color: var(--green); }
+    .pnl-neg { color: var(--red); }
+    .pnl-zro { color: var(--text-dim); }
+
+    /* BTC панель */
+    .btc-grid {
+        display: grid; grid-template-columns: auto 1fr;
+        gap: 4px 12px; font-size: 12px; align-items: center;
+    }
+    .btc-label { color: var(--text-dim); }
+    .btc-value { font-weight: 600; }
+    .btc-section { margin-bottom: 8px; }
+    .btc-section:last-child { margin-bottom: 0; }
+    .btc-section-title {
+        font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+        color: var(--text-dim); margin-bottom: 4px;
+    }
+
+    /* Таблица сигналов */
+    .signal-table-wrap {
+        max-height: 350px; overflow-y: auto;
+        scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+    }
+    .signal-table-wrap::-webkit-scrollbar { width: 5px; }
+    .signal-table-wrap::-webkit-scrollbar-track { background: transparent; }
+    .signal-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* Активная сделка — выделение */
+    .position-active { border-left: 3px solid var(--green); }
+
+    /* Compact closed trades */
+    .closed-pnl { font-size: 12px; }
+
+    @media (max-width: 1000px) {
+        .grid-4, .grid-3, .grid-2 { grid-template-columns: 1fr; }
+        .header { flex-direction: column; gap: 6px; }
+    }
+</style>
+</head>
+<body>
+
+<div class="header">
+    <h1>🧠 Торговый терминал</h1>
+    <div class="header-controls">
+        <button class="btn btn-success" onclick="controlAction('resume')">▶ Запуск</button>
+        <button class="btn btn-danger" onclick="controlAction('pause')">⏸ Пауза</button>
+        <button class="btn btn-danger" onclick="exitAll()">⛔ Закрыть всё</button>
+        <button class="btn" onclick="refreshAll()">🔄</button>
+    </div>
+</div>
+
+<div class="grid grid-4" id="stats-bar">
+    <div class="card" style="text-align:center">
+        <div class="card-title">Баланс</div>
+        <div class="card-value" id="stat-balance">—</div>
+        <div class="card-value sub" id="stat-free">—</div>
+    </div>
+    <div class="card" style="text-align:center">
+        <div class="card-title">В позициях</div>
+        <div class="card-value" id="stat-in-pos">—</div>
+        <div class="card-value sub" id="stat-pos-count">—</div>
+    </div>
+    <div class="card" style="text-align:center">
+        <div class="card-title">Общий PnL (сессия)</div>
+        <div class="card-value" id="stat-total-pnl">—</div>
+        <div class="card-value sub" id="stat-winrate">—</div>
+    </div>
+    <div class="card" style="text-align:center">
+        <div class="card-title">Статус</div>
+        <div class="card-value" id="stat-uptime" style="font-size:16px">—</div>
+        <div class="card-value sub" id="stat-last-upd">—</div>
+    </div>
+</div>
+
+<div class="grid grid-3" style="margin-top:8px">
+    <!-- BTC панель -->
+    <div class="card" id="btc-panel">
+        <div class="card-title">₿ BTC/USD — Анализ</div>
+        <div id="btc-content">
+            <div style="padding:20px;text-align:center;color:var(--text-dim)">Загрузка...</div>
+        </div>
+    </div>
+
+    <!-- Открытые позиции -->
+    <div class="card" style="grid-column:span 2">
+        <div class="card-title">📈 Открытые позиции</div>
+        <div id="positions-wrap">
+            <table>
+                <thead><tr>
+                    <th>Монета</th>
+                    <th>Сторона</th>
+                    <th>Entry</th>
+                    <th>Кол-во</th>
+                    <th>Сумма</th>
+                    <th>PnL</th>
+                    <th>SL / TP / Liq</th>
+                    <th>Скоры модулей</th>
+                </tr></thead>
+                <tbody id="positions-body"></tbody>
+            </table>
+            <div id="positions-empty" style="text-align:center;padding:24px;color:var(--text-dim)">
+                Нет открытых позиций
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-2" style="margin-top:8px">
+    <!-- Голосование -->
+    <div class="card">
+        <div class="card-title">🔬 Голосование модулей (сигналы)</div>
+        <div class="signal-table-wrap">
+            <table style="font-size:11px">
+                <thead><tr>
+                    <th>Время</th>
+                    <th>Монета</th>
+                    <th>Решение</th>
+                    <th>Score</th>
+                    <th style="min-width:180px">Компоненты</th>
+                </tr></thead>
+                <tbody id="signals-body"></tbody>
+            </table>
+            <div id="signals-empty" style="text-align:center;padding:20px;color:var(--text-dim)">
+                Нет сигналов
+            </div>
+        </div>
+    </div>
+
+    <!-- Закрытые сделки -->
+    <div class="card">
+        <div class="card-title">📊 Последние закрытые сделки</div>
+        <div class="signal-table-wrap" style="max-height:350px">
+            <table>
+                <thead><tr>
+                    <th>Время</th>
+                    <th>Монета</th>
+                    <th>Вход</th>
+                    <th>Выход</th>
+                    <th>PnL</th>
+                    <th>%</th>
+                    <th>Причина</th>
+                </tr></thead>
+                <tbody id="closed-body"></tbody>
+            </table>
+            <div id="closed-empty" style="text-align:center;padding:20px;color:var(--text-dim)">
+                Нет закрытых сделок
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const API = '';
+let refreshTimer = null;
+let lastData = null;
+
+function fmtTime(t) {
+    if (!t) return '—';
+    const d = new Date(t);
+    return d.toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+function fmtTimeShort(t) {
+    if (!t) return '—';
+    const d = new Date(t);
+    return d.toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
+}
+
+function scoreClass(v) {
+    if (v == null || v === undefined) return 'score-null';
+    if (v >= 70) return 'score-high';
+    if (v >= 50) return 'score-mid';
+    return 'score-low';
+}
+
+function pnlClass(v) {
+    if (v > 0) return 'pnl-pos';
+    if (v < 0) return 'pnl-neg';
+    return 'pnl-zro';
+}
+
+function fmtNum(n, d=2) {
+    if (n == null) return '—';
+    return Number(n).toFixed(d);
+}
+
+function fmtNumAuto(n) {
+    if (n == null) return '—';
+    if (n > 1000) return Number(n).toFixed(0);
+    if (n > 1) return Number(n).toFixed(2);
+    if (n > 0.01) return Number(n).toFixed(4);
+    if (n > 0.0001) return Number(n).toFixed(6);
+    return Number(n).toFixed(8);
+}
+
+async function getJSON(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(r.statusText);
+    return r.json();
+}
+
+async function controlAction(action) {
+    try { await getJSON(API + '/api/control/' + action); } catch(e) {}
+}
+
+async function exitAll() {
+    if (!confirm('Закрыть все открытые позиции?')) return;
+    try { await getJSON(API + '/api/control/exit_all'); } catch(e) {}
+}
+
+// ── BTC ──────────────────────────────────────────────────────────────
+
+async function renderBTC() {
+    try {
+        const data = await getJSON(API + '/api/btc');
+        const el = document.getElementById('btc-content');
+        if (!data || !data.regime) {
+            el.innerHTML = '<div style="padding:16px;color:var(--text-dim);text-align:center">Ожидание BTC сигнала</div>';
+            return;
+        }
+        function rc(r) {
+            if (r.indexOf('distribution')>=0||r.indexOf('dump')>=0) return 'var(--red)';
+            if (r.indexOf('accumulation')>=0) return 'var(--green)';
+            if (r.indexOf('bearish')>=0) return 'var(--yellow)';
+            return 'var(--text-dim)';
+        }
+        function rb(r) {
+            if (r.indexOf('buy')>=0) return 'badge-buy';
+            if (r.indexOf('caution')>=0) return 'badge-sell';
+            return 'badge-sell';
+        }
+        let h = '<div class="btc-section"><div class="btc-grid">';
+        h += '<span class="btc-label">Режим</span><span class="btc-value" style="color:'+rc(data.regime)+'"><strong>'+data.regime.toUpperCase()+'</strong></span>';
+        h += '<span class="btc-label">Рекомендация</span><span class="btc-value"><span class="badge '+rb(data.recommendation)+'">'+data.recommendation+'</span></span>';
+        if (data.rsi) h += '<span class="btc-label">RSI</span><span class="btc-value">'+data.rsi+'</span>';
+        if (data.ema_trend) h += '<span class="btc-label">EMA тренд</span><span class="btc-value">'+data.ema_trend+'</span>';
+        if (data.score !== undefined) h += '<span class="btc-label">Score</span><span class="btc-value">'+fmtNum(data.score,1)+'/'+fmtNum(data.threshold,1)+'</span>';
+        h += '<span class="btc-label">Структура</span><span class="btc-value">'+data.structure+'</span>';
+        if (data.signal_age_min !== undefined) {
+            let ageCl = data.signal_age_min > 60 ? 'color:var(--red)' : 'color:var(--text-dim)';
+            h += '<span class="btc-label">Сигнал</span><span class="btc-value" style="'+ageCl+'">'+data.signal_age_min+' мин</span>';
+        }
+        h += '</div></div>';
+        const comp = data.components || {};
+        const ck = Object.keys(comp);
+        if (ck.length > 0) {
+            h += '<div class="btc-section" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)"><div class="btc-section-title">Компоненты</div><div class="btc-grid">';
+            for (const k of ck) {
+                const v = comp[k]; if (v==null) continue;
+                let cl = ''; if (typeof v==='number') { if (v>=70) cl='pnl-pos'; else if (v<=30) cl='pnl-neg'; }
+                const lb = k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+                h += '<span class="btc-label">'+lb+'</span><span class="btc-value '+cl+'">'+(isNaN(v)?v:fmtNum(v,1))+'</span>';
+            }
+            h += '</div></div>';
+        }
+        el.innerHTML = h;
+    } catch(e) {
+        document.getElementById('btc-content').innerHTML = '<div style="padding:12px;color:var(--red);text-align:center">Ошибка BTC</div>';
+    }
+}
+
+
+// ── Позиции ──────────────────────────────────────────────────────────
+
+function renderPositions(positions) {
+    const tbody = document.getElementById('positions-body');
+    const empty = document.getElementById('positions-empty');
+    tbody.innerHTML = '';
+    if (!positions || positions.length === 0) {
+        empty.style.display = 'block';
+        return;
+    }
+    empty.style.display = 'none';
+
+    positions.forEach(p => {
+        const s = p.scores || {};
+        const meta = p.pos_meta || {};
+        const sl = meta.stopLoss;
+        const tp = meta.takeProfit;
+        const liq = meta.liquidation;
+        const sum = p.entry_price * p.qty;
+        const currentPrice = meta.last_price || p.entry_price;
+        const pnl = (currentPrice - p.entry_price) * p.qty * (p.side === 'long' ? 1 : -1);
+        const pnlPct = ((currentPrice / p.entry_price) - 1) * 100 * (p.side === 'long' ? 1 : -1);
+
+        const tr = document.createElement('tr');
+        tr.className = 'position-active';
+        tr.innerHTML = `
+            <td><strong>${p.symbol}</strong></td>
+            <td><span class="badge ${p.side==='long'?'badge-long':'badge-short'}">${p.side.toUpperCase()}</span></td>
+            <td style="font-family:monospace">$${fmtNumAuto(p.entry_price)}</td>
+            <td style="font-family:monospace">${fmtNumAuto(p.qty)}</td>
+            <td style="font-family:monospace">$${fmtNum(sum,2)}</td>
+            <td class="${pnlClass(pnl)}" style="font-family:monospace;font-weight:600">
+                ${pnl>0?'+':''}${fmtNum(pnl,2)}$ (${pnlPct>0?'+':''}${fmtNum(pnlPct,2)}%)
+            </td>
+            <td>
+                <div class="meta-row">
+                    <span class="meta-item">SL: ${sl ? '<strong style="color:var(--orange)">$'+fmtNumAuto(sl)+'</strong>' : '<span style="color:var(--text-dim)">—</span>'}</span>
+                    <span class="meta-item">TP: ${tp ? '<strong style="color:var(--green)">$'+fmtNumAuto(tp)+'</strong>' : '<span style="color:var(--text-dim)">—</span>'}</span>
+                    ${liq ? `<span class="meta-item" style="color:var(--red)">Liq: <strong>$${fmtNumAuto(liq)}</strong></span>` : ''}
+                </div>
+            </td>
+            <td>
+                <div class="scores">
+                    ${s.ml_pro != null ? `<span class="score ${scoreClass(s.ml_pro)}">ML:${fmtNum(s.ml_pro,0)}</span>` : ''}
+                    ${s.adv != null ? `<span class="score ${scoreClass(s.adv)}">ADV:${fmtNum(s.adv,0)}</span>` : ''}
+                    ${s.mtf != null ? `<span class="score ${scoreClass(s.mtf)}">MTF:${fmtNum(s.mtf,0)}</span>` : ''}
+                    ${s.rvb != null ? `<span class="score ${scoreClass(s.rvb)}">RVB:${fmtNum(s.rvb,0)}</span>` : ''}
+                    ${s.vsa != null ? `<span class="score ${scoreClass(s.vsa)}">VSA:${fmtNum(s.vsa,0)}</span>` : ''}
+                    ${s.vv != null ? `<span class="score ${scoreClass(s.vv)}">VV:${fmtNum(s.vv,0)}</span>` : ''}
+                    ${s.liq != null ? `<span class="score ${scoreClass(s.liq)}">LIQ:${fmtNum(s.liq,0)}</span>` : ''}
+                </div>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+// ── Закрытые ─────────────────────────────────────────────────────────
+
+function renderClosed(closed) {
+    const tbody = document.getElementById('closed-body');
+    const empty = document.getElementById('closed-empty');
+    tbody.innerHTML = '';
+    if (!closed || closed.length === 0) {
+        empty.style.display = 'block';
+        return;
+    }
+    empty.style.display = 'none';
+
+    closed.forEach(c => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td style="font-size:11px;color:var(--text-dim)">${fmtTimeShort(c.exit_time)}</td>
+            <td><strong>${c.symbol}</strong> <span class="badge ${c.side==='long'?'badge-long':'badge-short'}">${c.side.toUpperCase()}</span></td>
+            <td style="font-family:monospace;font-size:11px">$${fmtNumAuto(c.entry_price)}</td>
+            <td style="font-family:monospace;font-size:11px">$${fmtNumAuto(c.exit_price)}</td>
+            <td class="closed-pnl ${pnlClass(c.pnl)}"><strong>${c.pnl>0?'+':''}${fmtNum(c.pnl,2)}$</strong></td>
+            <td class="${pnlClass(c.pnl_percent)}">${c.pnl_percent>0?'+':''}${fmtNum(c.pnl_percent,2)}%</td>
+            <td style="font-size:11px;color:var(--text-dim)">${c.exit_reason}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+// ── Сигналы ──────────────────────────────────────────────────────────
+
+function renderSignals(signals) {
+    const tbody = document.getElementById('signals-body');
+    const empty = document.getElementById('signals-empty');
+    tbody.innerHTML = '';
+    if (!signals || signals.length === 0) {
+        empty.style.display = 'block';
+        return;
+    }
+    empty.style.display = 'none';
+
+    signals.forEach(s => {
+        const comp = s.components || {};
+        // Форматируем компоненты в строку
+        const compStrs = [];
+        if (typeof comp === 'object') {
+            for (const [k,v] of Object.entries(comp)) {
+                if (v == null) continue;
+                compStrs.push(`<span class="score ${scoreClass(isNaN(v) ? null : Number(v))}">${k.toUpperCase()}:${isNaN(v) ? v : fmtNum(v, 0)}</span>`);
+            }
+        }
+        const compHtml = compStrs.join(' ');
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td style="font-size:10px;color:var(--text-dim);white-space:nowrap">${fmtTime(s.time)}</td>
+            <td><strong>${s.symbol}</strong></td>
+            <td><span class="badge ${s.decision==='buy'?'badge-buy':s.decision==='sell'?'badge-sell':'badge-hold'}">${s.decision.toUpperCase()}</span></td>
+            <td style="font-weight:600;font-family:monospace">${fmtNum(s.score,1)} <span style="color:var(--text-dim);font-weight:400">/ ${fmtNum(s.threshold,1)}</span></td>
+            <td><div class="scores">${compHtml}</div></td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+// ── Stats ────────────────────────────────────────────────────────────
+
+function updateStats(data) {
+    const b = data.balance || {};
+    const st = data.stats || {};
+    const pos = data.positions || [];
+
+    document.getElementById('stat-balance').textContent = '$' + fmtNum(b.total, 2);
+    document.getElementById('stat-free').textContent = 'Free: $' + fmtNum(b.free, 2);
+
+    const inPos = pos.reduce((s,p) => s + p.entry_price * p.qty, 0);
+    document.getElementById('stat-in-pos').textContent = '$' + fmtNum(inPos, 2);
+    document.getElementById('stat-pos-count').textContent = st.open_positions + ' поз.';
+
+    const tp = st.total_pnl;
+    const el = document.getElementById('stat-total-pnl');
+    el.textContent = (tp > 0 ? '+' : '') + fmtNum(tp, 2) + '$';
+    el.className = 'card-value ' + pnlClass(tp);
+    document.getElementById('stat-winrate').textContent = 'WR: ' + st.win_rate + '% (' + st.win_count + '/' + (st.win_count + st.loss_count) + ')';
+
+    document.getElementById('stat-uptime').textContent = '✅ Работает';
+    document.getElementById('stat-last-upd').textContent = new Date().toLocaleTimeString('ru-RU');
+}
+
+// ── Main refresh ─────────────────────────────────────────────────────
+
+async function refreshAll() {
+    try {
+        const data = await getJSON(API + '/api/status');
+        lastData = data;
+        updateStats(data);
+        renderPositions(data.positions);
+        renderClosed(data.closed);
+        renderSignals(data.signals);
+    } catch(e) {
+        console.error('Refresh error:', e);
+        document.getElementById('stat-uptime').textContent = '❌ Ошибка';
+    }
+    try {
+        await renderBTC();
+    } catch(e) {}
+}
+
+function startAutoRefresh() {
+    refreshAll();
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = setInterval(refreshAll, 5000);
+}
+
+startAutoRefresh();
+</script>
+</body>
+</html>
