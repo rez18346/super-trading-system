@@ -2569,6 +2569,15 @@ class IndustrialTrader:
             }
             with open('/tmp/real_balance.json', 'w') as f:
                 json.dump(data, f)
+            # 📊 Сохраняем в PG для терминала
+            try:
+                ts = datetime.now(timezone.utc)
+                db._with_conn(lambda conn: conn.cursor().execute(
+                    "INSERT INTO balance_history (balance, free, equity, recorded_at) VALUES (%s, %s, %s, %s)",
+                    (data['total'], data['free_usdt'], data['in_positions'], ts)
+                ))
+            except Exception as dbe:
+                logger.debug(f"Balance save to PG: {dbe}")
         except Exception as e:
             logger.info(f"Balance save error: {e}")
 
