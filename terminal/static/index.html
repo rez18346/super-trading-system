@@ -4,535 +4,392 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>🧠 Торговый терминал</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-    :root {
-        --bg: #0d1117;
-        --card: #161b22;
-        --card-alt: #1c2128;
-        --border: #30363d;
-        --text: #c9d1d9;
-        --text-dim: #8b949e;
-        --green: #3fb950;
-        --red: #f85149;
-        --blue: #58a6ff;
-        --yellow: #d29922;
-        --orange: #f0883e;
-        --accent: #1f6feb;
-    }
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'SF Mono', Consolas, monospace;
-        background: var(--bg);
-        color: var(--text);
-        padding: 12px;
-        font-size: 13px;
-    }
-    .header {
-        display: flex; justify-content: space-between; align-items: center;
-        margin-bottom: 12px; padding: 10px 16px;
-        background: var(--card); border: 1px solid var(--border); border-radius: 8px;
-    }
-    .header h1 { font-size: 18px; display: flex; align-items: center; gap: 8px; }
-    .header-controls { display: flex; gap: 6px; }
-    .btn {
-        padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border);
-        cursor: pointer; font-size: 12px; font-weight: 600;
-        background: var(--card); color: var(--text); transition: .15s;
-    }
-    .btn:hover { background: #21262d; }
-    .btn-danger  { border-color: var(--red); color: var(--red); }
-    .btn-danger:hover  { background: rgba(248,81,73,.12); }
-    .btn-success { border-color: var(--green); color: var(--green); }
-    .btn-success:hover { background: rgba(63,185,80,.12); }
-    .btn-primary { border-color: var(--blue); color: var(--blue); }
-    .btn-primary:hover { background: rgba(88,166,255,.12); }
-    .btn:disabled { opacity: .4; cursor: not-allowed; }
+:root{--bg:#0a0a0f;--bg-card:#12121a;--bg-alt:#1a1a25;--border:#2a2a3a;--text:#e0e0f0;--text-dim:#8b8b9a;--green:#00ff88;--red:#ff4757;--blue:#4a8eff;--yellow:#ffd700;--orange:#f0883e;--purple:#8b5cf6;--cyan:#00d4aa}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);padding:12px;font-size:13px;line-height:1.5;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.mono{font-family:'JetBrains Mono','SF Mono',monospace}
+.header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;padding:10px 16px;background:var(--bg-card);border:1px solid var(--border);border-radius:10px}
+.header h1{font-size:18px;display:flex;align-items:center;gap:8px}.header-controls{display:flex;gap:6px}
+.btn{padding:5px 12px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:12px;font-weight:500;background:var(--bg-card);color:var(--text);transition:.15s}
+.btn:hover{background:var(--bg-alt)}.btn-danger{border-color:var(--red);color:var(--red)}
+.btn-danger:hover{background:rgba(255,71,87,.12)}.btn-success{border-color:var(--green);color:var(--green)}
+.btn-success:hover{background:rgba(0,255,136,.12)}.btn-primary{border-color:var(--blue);color:var(--blue)}
+.btn-primary:hover{background:rgba(74,142,255,.12)}.btn:disabled{opacity:.4;cursor:not-allowed}
+.grid{display:grid;gap:8px}.grid-4{grid-template-columns:repeat(4,1fr)}.grid-3{grid-template-columns:2fr 1fr 1fr}.grid-2{grid-template-columns:1fr 1fr}
+.card{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:14px}
+.card-title{font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-dim);margin-bottom:10px;font-weight:500}
+.card-value{font-size:24px;font-weight:600}.card-value.green{color:var(--green)}.card-value.red{color:var(--red)}.card-value.yellow{color:var(--yellow)}
+.card-value.sub{font-size:13px;font-weight:400;margin-top:4px;color:var(--text-dim)}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim);font-weight:500;padding:6px 8px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-card);z-index:1}
+td{padding:6px 8px;border-bottom:1px solid rgba(42,42,58,0.5);vertical-align:middle}
+tr:hover{background:var(--bg-alt)}
+.badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600;letter-spacing:.3px}
+.badge-long{background:rgba(0,255,136,.15);color:var(--green)}.badge-short{background:rgba(255,71,87,.15);color:var(--red)}
+.badge-buy{background:rgba(0,255,136,.15);color:var(--green)}.badge-sell{background:rgba(255,71,87,.15);color:var(--red)}
+.badge-hold{background:rgba(139,139,154,.15);color:var(--text-dim)}.badge-enter{background:rgba(0,212,170,.15);color:var(--cyan)}.badge-veto{background:rgba(255,71,87,.12);color:var(--red)}
+.module-dots{display:flex;gap:4px;align-items:center;flex-wrap:wrap}
+.module-pill{display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:500;transition:all .15s;cursor:default}
+.module-pill:hover{opacity:0.8}
+.module-pill-high{background:rgba(0,255,136,.15);color:var(--green);border:1px solid rgba(0,255,136,.25)}
+.module-pill-mid{background:rgba(255,215,0,.12);color:var(--yellow);border:1px solid rgba(255,215,0,.2)}
+.module-pill-low{background:rgba(255,71,87,.12);color:var(--red);border:1px solid rgba(255,71,87,.2)}
+.module-pill-null{background:rgba(139,139,154,.08);color:var(--text-dim);border:1px solid rgba(139,139,154,.15)}
+.module-pill-label{text-transform:uppercase;letter-spacing:.3px;font-weight:600;font-size:8px}
+.module-pill-value{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600}
 
-    .grid { display: grid; gap: 8px; }
-    .grid-4 { grid-template-columns: repeat(4, 1fr); }
-    .grid-3 { grid-template-columns: repeat(3, 1fr); }
-    .grid-2 { grid-template-columns: 1fr 1fr; }
-
-    .card {
-        background: var(--card); border: 1px solid var(--border); border-radius: 8px;
-        padding: 12px;
-    }
-    .card-title {
-        font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
-        color: var(--text-dim); margin-bottom: 8px;
-    }
-    .card-value { font-size: 22px; font-weight: 700; }
-    .card-value.green { color: var(--green); }
-    .card-value.red   { color: var(--red); }
-    .card-value.yellow { color: var(--yellow); }
-    .card-value.sub   { font-size: 13px; font-weight: 400; margin-top: 3px; }
-
-    table { width: 100%; border-collapse: collapse; }
-    th {
-        text-align: left; font-size: 10px; text-transform: uppercase;
-        letter-spacing: .5px; color: var(--text-dim);
-        padding: 6px 8px; border-bottom: 1px solid var(--border);
-        position: sticky; top: 0; background: var(--card); z-index: 1;
-    }
-    td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-    tr:hover { background: var(--card-alt); }
-
-    .badge {
-        display: inline-block; padding: 1px 7px; border-radius: 10px;
-        font-size: 10px; font-weight: 600;
-    }
-    .badge-long  { background: rgba(63,185,80,.12); color: var(--green); }
-    .badge-short { background: rgba(248,81,73,.12); color: var(--red); }
-    .badge-buy   { background: rgba(63,185,80,.12); color: var(--green); }
-    .badge-sell  { background: rgba(248,81,73,.12); color: var(--red); }
-    .badge-hold  { background: rgba(139,148,158,.12); color: var(--text-dim); }
-    .badge-cool  { background: rgba(88,166,255,.12); color: var(--blue); }
-
-    .scores { display: flex; gap: 3px; flex-wrap: wrap; }
-    .score {
-        display: inline-block; padding: 1px 5px; border-radius: 3px;
-        font-size: 10px; font-weight: 500; font-family: 'SF Mono', monospace;
-    }
-    .score-high { background: rgba(63,185,80,.15); color: var(--green); }
-    .score-mid  { background: rgba(210,153,34,.15); color: var(--yellow); }
-    .score-low  { background: rgba(248,81,73,.15); color: var(--red); }
-    .score-null { background: rgba(139,148,158,.08); color: var(--text-dim); }
-
-    .meta-row  { display: flex; gap: 8px; flex-wrap: wrap; font-size: 11px; }
-    .meta-item { color: var(--text-dim); white-space: nowrap; }
-    .meta-item strong { color: var(--text); }
-
-    .pnl-pos { color: var(--green); }
-    .pnl-neg { color: var(--red); }
-    .pnl-zro { color: var(--text-dim); }
-
-    /* BTC панель */
-    .btc-grid {
-        display: grid; grid-template-columns: auto 1fr;
-        gap: 4px 12px; font-size: 12px; align-items: center;
-    }
-    .btc-label { color: var(--text-dim); }
-    .btc-value { font-weight: 600; }
-    .btc-section { margin-bottom: 8px; }
-    .btc-section:last-child { margin-bottom: 0; }
-    .btc-section-title {
-        font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
-        color: var(--text-dim); margin-bottom: 4px;
-    }
-
-    /* Таблица сигналов */
-    .signal-table-wrap {
-        max-height: 350px; overflow-y: auto;
-        scrollbar-width: thin; scrollbar-color: var(--border) transparent;
-    }
-    .signal-table-wrap::-webkit-scrollbar { width: 5px; }
-    .signal-table-wrap::-webkit-scrollbar-track { background: transparent; }
-    .signal-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
-
-    /* Активная сделка — выделение */
-    .position-active { border-left: 3px solid var(--green); }
-
-    /* Compact closed trades */
-    .closed-pnl { font-size: 12px; }
-
-    @media (max-width: 1000px) {
-        .grid-4, .grid-3, .grid-2 { grid-template-columns: 1fr; }
-        .header { flex-direction: column; gap: 6px; }
-    }
-</style>
-</head>
-<body>
-
-<div class="header">
-    <h1>🧠 Торговый терминал</h1>
-    <div class="header-controls">
-        <button class="btn btn-success" onclick="controlAction('resume')">▶ Запуск</button>
-        <button class="btn btn-danger" onclick="controlAction('pause')">⏸ Пауза</button>
-        <button class="btn btn-danger" onclick="exitAll()">⛔ Закрыть всё</button>
-        <button class="btn" onclick="refreshAll()">🔄</button>
-    </div>
-</div>
-
+.signal-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle}
+.signal-dot.green{background:var(--green);box-shadow:0 0 6px var(--green)}
+.signal-dot.red{background:var(--red);box-shadow:0 0 6px var(--red)}
+.signal-dot.gray{background:var(--text-dim);box-shadow:0 0 4px var(--text-dim)}
+.btc-regime-badge{display:inline-block;padding:2px 10px;border-radius:6px;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px}
+.btc-regime-danger{background:rgba(255,71,87,.15);color:var(--red);box-shadow:0 0 10px rgba(255,71,87,.2)}
+.btc-regime-safe{background:rgba(0,255,136,.15);color:var(--green);box-shadow:0 0 10px rgba(0,255,136,.2)}
+.btc-regime-caution{background:rgba(255,215,0,.15);color:var(--yellow);box-shadow:0 0 10px rgba(255,215,0,.15)}
+.btc-regime-neutral{background:rgba(139,139,154,.12);color:var(--text-dim)}
+.btc-comp-row{display:flex;gap:6px;flex-wrap:wrap}
+.btc-comp-item{padding:4px 8px;border-radius:6px;font-size:11px;background:var(--bg-alt);border:1px solid var(--border)}
+.btc-comp-item label{color:var(--text-dim);margin-right:4px}.btc-comp-item strong{font-weight:600}
+.btc-comp-item.green strong{color:var(--green)}.btc-comp-item.red strong{color:var(--red)}.btc-comp-item.yellow strong{color:var(--yellow)}
+.pnl-pos{color:var(--green)}.pnl-neg{color:var(--red)}.pnl-zro{color:var(--text-dim)}
+.meta-row{display:flex;gap:8px;flex-wrap:wrap;font-size:11px;align-items:center}.meta-item{color:var(--text-dim);white-space:nowrap}.meta-item strong{color:var(--text)}
+.signal-table-wrap{max-height:350px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+.signal-table-wrap::-webkit-scrollbar{width:5px}
+.signal-table-wrap::-webkit-scrollbar-track{background:transparent}
+.signal-table-wrap::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.position-active{border-left:3px solid var(--green)}
+#equity-canvas{width:100%;height:160px;border-radius:8px;background:var(--bg)}
+.tab-bar{display:flex;gap:2px;margin-bottom:10px;background:var(--bg);border-radius:8px;padding:2px}
+.tab{padding:5px 12px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:500;color:var(--text-dim);border:none;background:transparent;transition:.15s}
+.tab.active{background:var(--bg-alt);color:var(--text)}.tab:hover{color:var(--text)}
+.progress-bar{width:80px;height:6px;border-radius:3px;background:var(--bg-alt);overflow:hidden;display:inline-block;vertical-align:middle;margin-right:6px}
+.progress-fill{height:100%;border-radius:3px;transition:width .5s}
+.progress-fill.hot{background:var(--green);box-shadow:0 0 6px var(--green)}
+.progress-fill.warm{background:var(--yellow)}.progress-fill.cold{background:var(--red)}
+@media(max-width:1000px){.grid-4,.grid-3,.grid-2{grid-template-columns:1fr}.header{flex-direction:column;gap:6px}}
+</style></head><body>
+<div class="header"><h1>🧠 Торговый терминал</h1><div class="header-controls">
+<button class="btn btn-success" onclick="controlAction('resume')">▶ Запуск</button>
+<button class="btn btn-danger" onclick="controlAction('pause')">⏸ Пауза</button>
+<button class="btn btn-danger" onclick="exitAll()">⛔ Закрыть всё</button>
+<button class="btn" onclick="refreshAll()">🔄</button>
+</div></div>
 <div class="grid grid-4" id="stats-bar">
-    <div class="card" style="text-align:center">
-        <div class="card-title">Баланс</div>
-        <div class="card-value" id="stat-balance">—</div>
-        <div class="card-value sub" id="stat-free">—</div>
-    </div>
-    <div class="card" style="text-align:center">
-        <div class="card-title">В позициях</div>
-        <div class="card-value" id="stat-in-pos">—</div>
-        <div class="card-value sub" id="stat-pos-count">—</div>
-    </div>
-    <div class="card" style="text-align:center">
-        <div class="card-title">Общий PnL (сессия)</div>
-        <div class="card-value" id="stat-total-pnl">—</div>
-        <div class="card-value sub" id="stat-winrate">—</div>
-    </div>
-    <div class="card" style="text-align:center">
-        <div class="card-title">Статус</div>
-        <div class="card-value" id="stat-uptime" style="font-size:16px">—</div>
-        <div class="card-value sub" id="stat-last-upd">—</div>
-    </div>
+<div class="card" style="text-align:center"><div class="card-title">Баланс</div><div class="card-value" id="stat-balance">—</div><div class="card-value sub" id="stat-free">—</div></div>
+<div class="card" style="text-align:center"><div class="card-title">В позициях</div><div class="card-value" id="stat-in-pos">—</div><div class="card-value sub" id="stat-pos-count">—</div></div>
+<div class="card" style="text-align:center"><div class="card-title">Общий PnL</div><div class="card-value" id="stat-total-pnl">—</div><div class="card-value sub" id="stat-winrate">—</div></div>
+<div class="card" style="text-align:center"><div class="card-title">Статус</div><div class="card-value" id="stat-uptime" style="font-size:16px">—</div><div class="card-value sub" id="stat-last-upd">—</div></div>
 </div>
-
 <div class="grid grid-3" style="margin-top:8px">
-    <!-- BTC панель -->
-    <div class="card" id="btc-panel">
-        <div class="card-title">₿ BTC/USD — Анализ</div>
-        <div id="btc-content">
-            <div style="padding:20px;text-align:center;color:var(--text-dim)">Загрузка...</div>
-        </div>
-    </div>
-
-    <!-- Открытые позиции -->
-    <div class="card" style="grid-column:span 2">
-        <div class="card-title">📈 Открытые позиции</div>
-        <div id="positions-wrap">
-            <table>
-                <thead><tr>
-                    <th>Монета</th>
-                    <th>Сторона</th>
-                    <th>Entry</th>
-                    <th>Кол-во</th>
-                    <th>Сумма</th>
-                    <th>PnL</th>
-                    <th>SL / TP / Liq</th>
-                    <th>Скоры модулей</th>
-                </tr></thead>
-                <tbody id="positions-body"></tbody>
-            </table>
-            <div id="positions-empty" style="text-align:center;padding:24px;color:var(--text-dim)">
-                Нет открытых позиций
-            </div>
-        </div>
-    </div>
-</div>
-
+<div class="card" id="btc-panel"><div class="card-title">₿ BTC Анализ</div><div id="btc-content"><div style="padding:20px;text-align:center;color:var(--text-dim)">Загрузка...</div></div></div>
+<div class="card" style="grid-column:span 2"><div class="card-title">📈 Открытые позиции</div>
+<div id="positions-wrap"><table><thead><tr><th>Монета</th><th>Сторона</th><th>Entry</th><th>Объём</th><th>PnL</th><th>SL / TP / Liq</th><th>Liq</th><th>Модули</th></tr></thead><tbody id="positions-body"></tbody></table>
+<div id="positions-empty" style="text-align:center;padding:24px;color:var(--text-dim)">Нет открытых позиций</div></div></div></div>
 <div class="grid grid-2" style="margin-top:8px">
-    <!-- Голосование -->
-    <div class="card">
-        <div class="card-title">🔬 Голосование модулей (сигналы)</div>
-        <div class="signal-table-wrap">
-            <table style="font-size:11px">
-                <thead><tr>
-                    <th>Время</th>
-                    <th>Монета</th>
-                    <th>Решение</th>
-                    <th>Score</th>
-                    <th style="min-width:180px">Компоненты</th>
-                </tr></thead>
-                <tbody id="signals-body"></tbody>
-            </table>
-            <div id="signals-empty" style="text-align:center;padding:20px;color:var(--text-dim)">
-                Нет сигналов
-            </div>
-        </div>
-    </div>
-
-    <!-- Закрытые сделки -->
-    <div class="card">
-        <div class="card-title">📊 Последние закрытые сделки</div>
-        <div class="signal-table-wrap" style="max-height:350px">
-            <table>
-                <thead><tr>
-                    <th>Время</th>
-                    <th>Монета</th>
-                    <th>Вход</th>
-                    <th>Выход</th>
-                    <th>PnL</th>
-                    <th>%</th>
-                    <th>Причина</th>
-                </tr></thead>
-                <tbody id="closed-body"></tbody>
-            </table>
-            <div id="closed-empty" style="text-align:center;padding:20px;color:var(--text-dim)">
-                Нет закрытых сделок
-            </div>
-        </div>
-    </div>
+<div class="card"><div class="card-title">🔬 Голосование модулей</div>
+<div class="tab-bar">
+<button class="tab active" data-tab="signals-trend" onclick="switchTab('trend')">По тренду</button>
+<button class="tab" data-tab="signals-all" onclick="switchTab('all')">Все</button>
+<button class="tab" data-tab="signals-veto" onclick="switchTab('veto')">VETO 🚫</button>
 </div>
+<div id="signals-trend-view"><div class="signal-table-wrap"><table style="font-size:11px"><thead><tr><th>Монета</th><th>Решение</th><th>Score</th><th style="min-width:200px">Голоса модулей</th><th>Время</th></tr></thead><tbody id="signals-body"></tbody></table>
+<div id="signals-empty" style="text-align:center;padding:20px;color:var(--text-dim)">Нет сигналов</div></div></div>
+<div id="signals-veto-view" style="display:none"><div class="signal-table-wrap"><table style="font-size:11px"><thead><tr><th>Монета</th><th>Score</th><th>Порог</th><th>Отставание</th><th>Прогресс</th></tr></thead><tbody id="veto-body"></tbody></table>
+<div id="veto-empty" style="text-align:center;padding:20px;color:var(--text-dim)">Нет монет в VETO</div></div></div></div>
+<div class="card"><div class="card-title">📊 Equity / История</div>
+<div class="tab-bar">
+<button class="tab active" data-tab="equity-tab" onclick="switchTab('equity')">Equity</button>
+<button class="tab" data-tab="closed-tab" onclick="switchTab('closed')">Сделки</button>
+<button class="tab" data-tab="analytics-tab" onclick="switchTab('analytics')">Аналитика</button>
+</div>
+<div id="equity-wrap"><canvas id="equity-canvas"></canvas></div>
+<div id="closed-wrap" style="display:none"><div class="signal-table-wrap" style="max-height:320px"><table><thead><tr><th>Время</th><th>Монета</th><th>Сторона</th><th>Размер</th><th>Вход</th><th>Выход</th><th>PnL</th><th>%</th><th>Причина</th><th>Голоса</th></tr></thead><tbody id="closed-body"></tbody></table>
+<div id="closed-empty" style="text-align:center;padding:20px;color:var(--text-dim)">Нет закрытых сделок</div></div></div>
+<div id="analytics-wrap" style="display:none">
+  <div id="analytics-content"><div style="text-align:center;padding:20px;color:var(--text-dim)">Загрузка...</div></div>
+</div></div></div>
 
 <script>
-const API = '';
-let refreshTimer = null;
-let lastData = null;
+const API='';let refreshTimer=null,lastData=null,currentTab='trend',equityData=[],allSignals=[],vetoData=[];
+function fmtTime(t){if(!t)return'—';return new Date(t).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+function fmtTimeShort(t){if(!t)return'—';return new Date(t).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}
+function modulePill(v,l,full){if(v==null)return'<span class="module-pill module-pill-null" title="'+full+': —"><span class="module-pill-label">'+l+'</span></span>';let c='module-pill-null';if(v>=70)c='module-pill-high';else if(v>=50)c='module-pill-mid';else if(v>0)c='module-pill-low';return'<span class="module-pill '+c+'" title="'+full+': '+v+'"><span class="module-pill-label">'+l+'</span><span class="module-pill-value">'+v+'</span></span>'}
+function pnlClass(v){return v>0?'pnl-pos':v<0?'pnl-neg':'pnl-zro'}
+function fmtNum(n,d){if(d===undefined)d=2;if(n==null)return'—';return Number(n).toFixed(d)}
+async function getJSON(u){const r=await fetch(u);if(!r.ok)throw Error(r.statusText);return r.json()}
+async function controlAction(a){try{await getJSON(API+'/api/control/'+a)}catch(e){}}
+async function exitAll(){if(!confirm('Закрыть все?'))return;try{await getJSON(API+'/api/control/exit_all')}catch(e){}}
 
-function fmtTime(t) {
-    if (!t) return '—';
-    const d = new Date(t);
-    return d.toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
-}
-function fmtTimeShort(t) {
-    if (!t) return '—';
-    const d = new Date(t);
-    return d.toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'});
-}
-
-function scoreClass(v) {
-    if (v == null || v === undefined) return 'score-null';
-    if (v >= 70) return 'score-high';
-    if (v >= 50) return 'score-mid';
-    return 'score-low';
-}
-
-function pnlClass(v) {
-    if (v > 0) return 'pnl-pos';
-    if (v < 0) return 'pnl-neg';
-    return 'pnl-zro';
+function switchTab(tab){
+ currentTab=tab;
+ document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+ const btn=document.querySelector('[data-tab="signals-'+tab+'"], [data-tab="'+tab+'-tab"]');if(btn)btn.classList.add('active');
+ document.getElementById('signals-trend-view').style.display=(tab==='trend'||tab==='all')?'block':'none';
+ document.getElementById('signals-veto-view').style.display=tab==='veto'?'block':'none';
+ if(tab==='equity'){document.getElementById('equity-wrap').style.display='block';document.getElementById('closed-wrap').style.display='none';document.getElementById('analytics-wrap').style.display='none';setTimeout(drawEquity,50)}
+ else if(tab==='closed'){document.getElementById('equity-wrap').style.display='none';document.getElementById('closed-wrap').style.display='block';document.getElementById('analytics-wrap').style.display='none'}
+ else if(tab==='analytics'){document.getElementById('equity-wrap').style.display='none';document.getElementById('closed-wrap').style.display='none';document.getElementById('analytics-wrap').style.display='block';loadAnalytics();}
+ else if(tab==='veto'){renderVeto()}
+ else if(tab==='trend'){loadSignalsLatest();document.getElementById('equity-wrap').style.display='block';document.getElementById('closed-wrap').style.display='none'}
+ else if(tab==='all'){loadSignalsAll();document.getElementById('equity-wrap').style.display='block';document.getElementById('closed-wrap').style.display='none'}
 }
 
-function fmtNum(n, d=2) {
-    if (n == null) return '—';
-    return Number(n).toFixed(d);
+async function renderBTC(){
+ try{
+  const d=await getJSON(API+'/api/btc');const el=document.getElementById('btc-content');
+  if(!d||!d.regime){el.innerHTML='<div style="padding:16px;color:var(--text-dim);text-align:center">Ожидание BTC сигнала</div>';return}
+  let rc='btc-regime-neutral';
+  if(d.regime.indexOf('distribution')>=0||d.regime.indexOf('dump')>=0)rc='btc-regime-danger';
+  else if(d.regime.indexOf('accumulation')>=0)rc='btc-regime-safe';
+  else if(d.regime.indexOf('bearish')>=0)rc='btc-regime-caution';
+  let rb='badge-hold';
+  if(d.recommendation.indexOf('buy')>=0)rb='badge-buy';
+  else if(d.recommendation.indexOf('sell')>=0||d.recommendation.indexOf('caution')>=0)rb='badge-sell';
+  let h='<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><span class="btc-regime-badge '+rc+'">'+d.regime.toUpperCase()+'</span><span class="badge '+rb+'">'+d.recommendation+'</span></div>';
+  h+='<div class="btc-comp-row">';
+  if(d.score!==undefined)h+='<div class="btc-comp-item"><label>Score</label><strong>'+fmtNum(d.score,1)+'</strong> <span style="color:var(--text-dim)">/'+fmtNum(d.threshold,1)+'</span></div>';
+  if(d.rsi)h+='<div class="btc-comp-item'+(d.rsi>70?' red':d.rsi<30?' green':' yellow')+'"><label>RSI</label><strong>'+d.rsi+'</strong></div>';
+  if(d.structure)h+='<div class="btc-comp-item'+(d.structure==='bullish'?' green':d.structure==='bearish'?' red':' yellow')+'"><label>Структура</label><strong>'+d.structure+'</strong></div>';
+  h+='</div>';
+  const comp=d.components||{};const ck=Object.keys(comp);
+  if(ck.length>0){
+   h+='<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><div style="font-size:9px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim);margin-bottom:6px">Компоненты</div><div class="btc-comp-row">';
+   for(const k of ck){const v=comp[k];if(v==null)continue;let cl='';if(typeof v==='number'){if(v>=70)cl='green';else if(v<=30)cl='red';else cl='yellow'}
+    h+='<div class="btc-comp-item '+cl+'"><label>'+k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase())+'</label><strong>'+(isNaN(v)?v:fmtNum(v,1))+'</strong></div>'}
+   h+='</div></div>'}
+  if(d.signal_age_min!==undefined)h+='<div style="margin-top:6px;font-size:10px;color:'+(d.signal_age_min>60?'var(--red)':'var(--text-dim)')+'">📡 '+d.signal_age_min+' мин назад</div>';
+  el.innerHTML=h
+ }catch(e){document.getElementById('btc-content').innerHTML='<div style="padding:12px;color:var(--red);text-align:center">Ошибка BTC</div>'}
 }
 
-function fmtNumAuto(n) {
-    if (n == null) return '—';
-    if (n > 1000) return Number(n).toFixed(0);
-    if (n > 1) return Number(n).toFixed(2);
-    if (n > 0.01) return Number(n).toFixed(4);
-    if (n > 0.0001) return Number(n).toFixed(6);
-    return Number(n).toFixed(8);
+async function renderPositions(positions){
+ const tbody=document.getElementById('positions-body');const empty=document.getElementById('positions-empty');tbody.innerHTML='';
+ if(!positions||positions.length===0){empty.style.display='block';return}
+ empty.style.display='none';
+ let liqLv=[];try{const dd=await getJSON(API+'/api/liquidation_levels');liqLv=dd.levels||[]}catch(e){}
+ const liqMap={};liqLv.forEach(l=>{liqMap[l.id]=l});
+ positions.forEach(p=>{
+  const s=p.scores||{},meta=p.pos_meta||{},liqInfo=liqMap[p.id]||{};
+  const sl=meta.stopLoss,tp=meta.takeProfit,cp=meta.last_price||p.entry_price,sum=p.entry_price*p.qty;
+  const pnl=(cp-p.entry_price)*p.qty*(p.side==='long'?1:-1),pnlPct=((cp/p.entry_price)-1)*100*(p.side==='long'?1:-1);
+  let liqHTML='';
+  if(liqInfo.liq_distance_pct!==null&&liqInfo.liq_distance_pct!==undefined){
+   const dist=Math.abs(liqInfo.liq_distance_pct);
+   const danger=dist<5?'color:var(--red)':dist<15?'color:var(--yellow)':'color:var(--text-dim)';
+   const barPct=Math.min(dist/30*100,100);const barCl=dist<5?'hot':dist<15?'warm':'cold';
+   liqHTML='<div style="'+danger+';font-size:11px">Liq: '+fmtNum(liqInfo.liq_distance_pct,1)+'% <div class="progress-bar"><div class="progress-fill '+barCl+'" style="width:'+barPct+'%"></div></div></div>'}
+  else liqHTML='<span style="color:var(--text-dim);font-size:11px">—</span>';
+  const tr=document.createElement('tr');tr.className='position-active';
+  tr.innerHTML='<td><strong>'+(p.symbol||'').replace('/USDT','')+'</strong></td>'+
+    '<td><span class="badge '+(p.side==='long'?'badge-long':'badge-short')+'">'+(p.side||'').toUpperCase()+'</span></td>'+
+    '<td class="mono" style="font-size:12px">$'+fmtNum(p.entry_price,4)+'</td>'+
+    '<td class="mono" style="font-size:11px;color:var(--text-dim)">$'+fmtNum(sum,2)+'</td>'+
+    '<td class="'+pnlClass(pnl)+' mono" style="font-weight:600;font-size:12px">'+(pnl>0?'+':'')+fmtNum(pnl,2)+' ('+(pnlPct>0?'+':'')+fmtNum(pnlPct,2)+'%)</td>'+
+    '<td style="font-size:11px"><div class="meta-row"><span class="meta-item">SL: '+(sl?'<strong style="color:var(--orange)">$'+fmtNum(sl,4)+'</strong>':'<span style="color:var(--text-dim)">—</span>')+'</span><span class="meta-item">TP: '+(tp?'<strong style="color:var(--green)">$'+fmtNum(tp,4)+'</strong>':'<span style="color:var(--text-dim)">—</span>')+'</span></div></td>'+
+    '<td>'+liqHTML+'</td>'+
+    '<td><div class="module-dots">'+modulePill(s.ml_pro,'ML','ML-Pro')+modulePill(s.adv,'AD','Advisor')+modulePill(s.mtf,'TF','MTF')+modulePill(s.rvb,'RV','RVB')+modulePill(s.vsa,'VS','VSA')+modulePill(s.vv,'VV','VV')+modulePill(s.liq,'LQ','Liq')+'</div></td>';
+  tbody.appendChild(tr)
+ })
 }
 
-async function getJSON(url) {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(r.statusText);
-    return r.json();
+function renderClosed(closed){
+ const tbody=document.getElementById('closed-body'),empty=document.getElementById('closed-empty');tbody.innerHTML='';
+ if(!closed||closed.length===0){empty.style.display='block';return}
+ empty.style.display='none';
+ closed.forEach(c=>{
+  const pnlVal=Number(c.pnl||0);
+  const pnlPct=Number(c.pnl_percent||0);
+  const s=c.scores||{};
+  const votePills=[
+   modulePill(s.ml_pro||0,'ML','ML-Pro'),
+   modulePill(s.adv_score||0,'AD','Adv'),
+   modulePill(s.mtf_score||0,'TF','MTF'),
+   modulePill(s.liquidity||s.liq_score||0,'LQ','Liq'),
+   modulePill(s.vv_score||0,'VV','VV'),
+   modulePill(s.vsa_score||0,'VS','VSA'),
+  ];
+  const tr=document.createElement('tr');
+  tr.innerHTML='<td style="font-size:11px;color:var(--text-dim);white-space:nowrap">'+fmtTimeShort(c.exit_time||c.entry_time)+'</td>'+
+    '<td><strong>'+(c.symbol||'').replace('/USDT','')+'</strong></td>'+
+    '<td><span class="badge '+(c.side==='long'?'badge-long':'badge-short')+'">'+(c.side||'').toUpperCase()+'</span></td>'+
+    '<td class="mono" style="font-size:11px">'+fmtNum(c.entry_qty,2)+'</td>'+
+    '<td class="mono" style="font-size:11px">$'+fmtNum(c.entry_price,4)+'</td>'+
+    '<td class="mono" style="font-size:11px">$'+fmtNum(c.exit_price,4)+'</td>'+
+    '<td class="'+pnlClass(pnlVal)+' mono" style="font-weight:600">'+(pnlVal>0?'+':'')+pnlVal.toFixed(2)+'$</td>'+
+    '<td class="'+pnlClass(pnlPct)+' mono">'+(pnlPct>0?'+':'')+pnlPct.toFixed(2)+'%</td>'+
+    '<td style="font-size:11px;color:var(--text-dim)">'+(c.exit_reason||'—')+'</td>'+
+    '<td><div class="module-dots">'+votePills.join('')+'</div></td>';
+  tbody.appendChild(tr)
+ })
 }
 
-async function controlAction(action) {
-    try { await getJSON(API + '/api/control/' + action); } catch(e) {}
+function renderSignals(signals){
+ allSignals=signals;const tbody=document.getElementById('signals-body'),empty=document.getElementById('signals-empty');tbody.innerHTML='';
+ if(!signals||signals.length===0){empty.style.display='block';return}
+ empty.style.display='none';
+ let display=signals;
+ display.sort((a,b)=>(b.score||0)-(a.score||0));
+ display.forEach(s=>{
+  const comp=s.components||{},compStrs=[];
+  const modKeys=['ml_pro','adv_score','mtf_score','rvb_score','liq_score','vv_score','vsa_score','cvd_score'];
+  for(const mk of modKeys){if(comp[mk]!==undefined&&comp[mk]!==null){const lb=mk.replace('_score','').replace(/^./,c=>c.toUpperCase()).substring(0,2).toUpperCase();{const fullName={'ml_pro':'ML-Pro','adv_score':'Advisor','mtf_score':'MTF','rvb_score':'RVB','liq_score':'Liq','vv_score':'VV','vsa_score':'VSA','cvd_score':'CVD'}[mk]||mk;compStrs.push(modulePill(Number(comp[mk]),lb,fullName))}}}
+  if(comp.bonus){const b=comp.bonus;if(typeof b==='object'&&b.btc!==undefined){const bv=Number(b.btc);if(bv<=-10)compStrs.push('<span class="module-dot module-dot-low" title="BTC veto: '+bv+'">₿</span>');else if(bv>0)compStrs.push('<span class="module-dot module-dot-high" title="BTC bonus: '+bv+'">₿</span>');else compStrs.push('<span class="module-dot module-dot-null" title="BTC: '+bv+'">₿</span>')}}
+  if(comp.volume_vwap!==null&&comp.volume_vwap!==undefined)compStrs.push(modulePill(Number(comp.volume_vwap),'VL','Volume VWAP'));
+  if(comp.rsi_vol_btc!==null&&comp.rsi_vol_btc!==undefined)compStrs.push(modulePill(Number(comp.rsi_vol_btc),'RS','RSI Vol BTC'));
+  const dec=(s.decision||'hold').toLowerCase();
+  const dotCls=dec==='buy'||dec==='enter'?'green':(dec==='sell'?'red':'gray');
+  const badgeCls=dec==='buy'?'badge-buy':dec==='sell'?'badge-sell':dec==='enter'?'badge-enter':'badge-hold';
+  const tr=document.createElement('tr');
+  tr.innerHTML='<td><strong>'+(s.symbol||'').replace('/USDT','')+'</strong></td><td><span class="signal-dot '+dotCls+'"></span><span class="badge '+badgeCls+'">'+dec.toUpperCase()+'</span></td><td style="font-weight:600;font-family:JetBrains Mono,monospace">'+fmtNum(s.score,1)+' <span style="color:var(--text-dim);font-weight:400">/'+fmtNum(s.threshold,1)+'</span></td><td><div class="module-dots">'+compStrs.join('')+'</div></td><td style="font-size:10px;color:var(--text-dim);white-space:nowrap">'+fmtTimeShort(s.time)+'</td>';
+  tbody.appendChild(tr)
+ })
 }
 
-async function exitAll() {
-    if (!confirm('Закрыть все открытые позиции?')) return;
-    try { await getJSON(API + '/api/control/exit_all'); } catch(e) {}
+async function renderVeto(){
+ const tbody=document.getElementById('veto-body'),empty=document.getElementById('veto-empty');tbody.innerHTML='';
+ let data;try{data=await getJSON(API+'/api/veto')}catch(e){empty.style.display='block';return}
+ const items=data.veto||[];
+ if(items.length===0){empty.style.display='block';return}
+ empty.style.display='none';
+ items.forEach(v=>{
+  const pct=Math.min((v.score||0)/(v.threshold||60)*100,100);
+  const barCl=pct>=85?'hot':pct>=60?'warm':'cold';
+  const tr=document.createElement('tr');
+  tr.innerHTML='<td><strong>'+(v.symbol||'').replace('/USDT','')+'</strong></td><td style="font-weight:600;font-family:JetBrains Mono,monospace">'+fmtNum(v.score,1)+'</td><td style="font-family:JetBrains Mono,monospace;color:var(--text-dim)">'+fmtNum(v.threshold,1)+'</td><td style="font-family:JetBrains Mono,monospace;color:var(--red)">-'+fmtNum(v.gap,1)+'</td><td><div class="progress-bar"><div class="progress-fill '+barCl+'" style="width:'+pct+'%"></div></div><span style="font-size:10px;color:var(--text-dim)">'+fmtNum(pct,0)+'%</span></td>';
+  tbody.appendChild(tr)
+ })
 }
 
-// ── BTC ──────────────────────────────────────────────────────────────
-
-async function renderBTC() {
-    try {
-        const data = await getJSON(API + '/api/btc');
-        const el = document.getElementById('btc-content');
-        if (!data || !data.regime) {
-            el.innerHTML = '<div style="padding:16px;color:var(--text-dim);text-align:center">Ожидание BTC сигнала</div>';
-            return;
-        }
-        function rc(r) {
-            if (r.indexOf('distribution')>=0||r.indexOf('dump')>=0) return 'var(--red)';
-            if (r.indexOf('accumulation')>=0) return 'var(--green)';
-            if (r.indexOf('bearish')>=0) return 'var(--yellow)';
-            return 'var(--text-dim)';
-        }
-        function rb(r) {
-            if (r.indexOf('buy')>=0) return 'badge-buy';
-            if (r.indexOf('caution')>=0) return 'badge-sell';
-            return 'badge-sell';
-        }
-        let h = '<div class="btc-section"><div class="btc-grid">';
-        h += '<span class="btc-label">Режим</span><span class="btc-value" style="color:'+rc(data.regime)+'"><strong>'+data.regime.toUpperCase()+'</strong></span>';
-        h += '<span class="btc-label">Рекомендация</span><span class="btc-value"><span class="badge '+rb(data.recommendation)+'">'+data.recommendation+'</span></span>';
-        if (data.rsi) h += '<span class="btc-label">RSI</span><span class="btc-value">'+data.rsi+'</span>';
-        if (data.ema_trend) h += '<span class="btc-label">EMA тренд</span><span class="btc-value">'+data.ema_trend+'</span>';
-        if (data.score !== undefined) h += '<span class="btc-label">Score</span><span class="btc-value">'+fmtNum(data.score,1)+'/'+fmtNum(data.threshold,1)+'</span>';
-        h += '<span class="btc-label">Структура</span><span class="btc-value">'+data.structure+'</span>';
-        if (data.signal_age_min !== undefined) {
-            let ageCl = data.signal_age_min > 60 ? 'color:var(--red)' : 'color:var(--text-dim)';
-            h += '<span class="btc-label">Сигнал</span><span class="btc-value" style="'+ageCl+'">'+data.signal_age_min+' мин</span>';
-        }
-        h += '</div></div>';
-        const comp = data.components || {};
-        const ck = Object.keys(comp);
-        if (ck.length > 0) {
-            h += '<div class="btc-section" style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)"><div class="btc-section-title">Компоненты</div><div class="btc-grid">';
-            for (const k of ck) {
-                const v = comp[k]; if (v==null) continue;
-                let cl = ''; if (typeof v==='number') { if (v>=70) cl='pnl-pos'; else if (v<=30) cl='pnl-neg'; }
-                const lb = k.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
-                h += '<span class="btc-label">'+lb+'</span><span class="btc-value '+cl+'">'+(isNaN(v)?v:fmtNum(v,1))+'</span>';
-            }
-            h += '</div></div>';
-        }
-        el.innerHTML = h;
-    } catch(e) {
-        document.getElementById('btc-content').innerHTML = '<div style="padding:12px;color:var(--red);text-align:center">Ошибка BTC</div>';
-    }
+function drawEquity(){
+ const canvas=document.getElementById('equity-canvas');if(!canvas)return;
+ const rect=canvas.parentElement.getBoundingClientRect();canvas.width=rect.width||canvas.parentElement.clientWidth||400;canvas.height=160;
+ const ctx=canvas.getContext('2d'),w=canvas.width,h=canvas.height;
+ if(!equityData||equityData.length<2){ctx.fillStyle='#8b8b9a';ctx.font='12px Inter,sans-serif';ctx.textAlign='center';ctx.fillText('Недостаточно данных',w/2,h/2);return}
+ const values=equityData.map(p=>p.equity||p.balance);const min=Math.min(...values),max=Math.max(...values),range=Math.max(max-min,.01),pad=30,gw=w-pad*2,gh=h-pad*2;
+ ctx.fillStyle='rgba(10,10,15,0.5)';ctx.fillRect(0,0,w,h);
+ ctx.strokeStyle='rgba(42,42,58,0.4)';ctx.lineWidth=.5;
+ for(let i=0;i<=4;i++){const y=pad+gh*(1-i/4);ctx.beginPath();ctx.moveTo(pad,y);ctx.lineTo(w-pad,y);ctx.stroke();ctx.fillStyle='#8b8b9a';ctx.font='9px JetBrains Mono,monospace';ctx.textAlign='right';ctx.fillText('$'+fmtNum(min+range*i/4,2),pad-4,y+3)}
+ const grad=ctx.createLinearGradient(0,0,0,h);const startVal=values[0],endVal=values[values.length-1],isUp=endVal>=startVal;
+ if(isUp){grad.addColorStop(0,'rgba(0,255,136,0.15)');grad.addColorStop(1,'rgba(0,255,136,0)')}else{grad.addColorStop(0,'rgba(255,71,87,0.15)');grad.addColorStop(1,'rgba(255,71,87,0)')}
+ ctx.beginPath();const stepX=gw/(values.length-1);
+ for(let i=0;i<values.length;i++){const x=pad+stepX*i,y=pad+gh*(1-(values[i]-min)/range);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)}
+ ctx.lineTo(pad+gw,pad+gh);ctx.lineTo(pad,pad+gh);ctx.closePath();ctx.fillStyle=grad;ctx.fill();
+ ctx.beginPath();ctx.strokeStyle=isUp?"#00ff88":"#ff4757";ctx.shadowColor=isUp?"rgba(0,255,136,0.3)":"rgba(255,71,87,0.3)";ctx.shadowBlur=6;ctx.lineWidth=2;
+ for(let i=0;i<values.length;i++){const x=pad+stepX*i,y=pad+gh*(1-(values[i]-min)/range);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y)};ctx.stroke();
+ const lastX=pad+stepX*(values.length-1),lastY=pad+gh*(1-(values[values.length-1]-min)/range);
+ ctx.beginPath();ctx.arc(lastX,lastY,4,0,Math.PI*2);ctx.fillStyle=isUp?"#00ff88":"#ff4757";ctx.shadowColor=isUp?"rgba(0,255,136,0.5)":"rgba(255,71,87,0.5)";ctx.shadowBlur=10;ctx.fill();
 }
 
-
-// ── Позиции ──────────────────────────────────────────────────────────
-
-function renderPositions(positions) {
-    const tbody = document.getElementById('positions-body');
-    const empty = document.getElementById('positions-empty');
-    tbody.innerHTML = '';
-    if (!positions || positions.length === 0) {
-        empty.style.display = 'block';
-        return;
-    }
-    empty.style.display = 'none';
-
-    positions.forEach(p => {
-        const s = p.scores || {};
-        const meta = p.pos_meta || {};
-        const sl = meta.stopLoss;
-        const tp = meta.takeProfit;
-        const liq = meta.liquidation;
-        const sum = p.entry_price * p.qty;
-        const currentPrice = meta.last_price || p.entry_price;
-        const pnl = (currentPrice - p.entry_price) * p.qty * (p.side === 'long' ? 1 : -1);
-        const pnlPct = ((currentPrice / p.entry_price) - 1) * 100 * (p.side === 'long' ? 1 : -1);
-
-        const tr = document.createElement('tr');
-        tr.className = 'position-active';
-        tr.innerHTML = `
-            <td><strong>${p.symbol}</strong></td>
-            <td><span class="badge ${p.side==='long'?'badge-long':'badge-short'}">${p.side.toUpperCase()}</span></td>
-            <td style="font-family:monospace">$${fmtNumAuto(p.entry_price)}</td>
-            <td style="font-family:monospace">${fmtNumAuto(p.qty)}</td>
-            <td style="font-family:monospace">$${fmtNum(sum,2)}</td>
-            <td class="${pnlClass(pnl)}" style="font-family:monospace;font-weight:600">
-                ${pnl>0?'+':''}${fmtNum(pnl,2)}$ (${pnlPct>0?'+':''}${fmtNum(pnlPct,2)}%)
-            </td>
-            <td>
-                <div class="meta-row">
-                    <span class="meta-item">SL: ${sl ? '<strong style="color:var(--orange)">$'+fmtNumAuto(sl)+'</strong>' : '<span style="color:var(--text-dim)">—</span>'}</span>
-                    <span class="meta-item">TP: ${tp ? '<strong style="color:var(--green)">$'+fmtNumAuto(tp)+'</strong>' : '<span style="color:var(--text-dim)">—</span>'}</span>
-                    ${liq ? `<span class="meta-item" style="color:var(--red)">Liq: <strong>$${fmtNumAuto(liq)}</strong></span>` : ''}
-                </div>
-            </td>
-            <td>
-                <div class="scores">
-                    ${s.ml_pro != null ? `<span class="score ${scoreClass(s.ml_pro)}">ML:${fmtNum(s.ml_pro,0)}</span>` : ''}
-                    ${s.adv != null ? `<span class="score ${scoreClass(s.adv)}">ADV:${fmtNum(s.adv,0)}</span>` : ''}
-                    ${s.mtf != null ? `<span class="score ${scoreClass(s.mtf)}">MTF:${fmtNum(s.mtf,0)}</span>` : ''}
-                    ${s.rvb != null ? `<span class="score ${scoreClass(s.rvb)}">RVB:${fmtNum(s.rvb,0)}</span>` : ''}
-                    ${s.vsa != null ? `<span class="score ${scoreClass(s.vsa)}">VSA:${fmtNum(s.vsa,0)}</span>` : ''}
-                    ${s.vv != null ? `<span class="score ${scoreClass(s.vv)}">VV:${fmtNum(s.vv,0)}</span>` : ''}
-                    ${s.liq != null ? `<span class="score ${scoreClass(s.liq)}">LIQ:${fmtNum(s.liq,0)}</span>` : ''}
-                </div>
-            </td>
-        `;
-        tbody.appendChild(tr);
-    });
+function renderStats(d){
+ const b=d.balance||{};document.getElementById('stat-balance').textContent='$'+fmtNum(b.total,2);
+ document.getElementById('stat-free').textContent='free: $'+fmtNum(b.free,2);
+ const pos=d.positions||[];document.getElementById('stat-in-pos').textContent=pos.reduce((s,p)=>s+p.qty*p.entry_price,0).toFixed(2);
+ document.getElementById('stat-pos-count').textContent=pos.length+' позиций';
+ const s=d.stats||{};const pnl=s.total_pnl||0;document.getElementById('stat-total-pnl').textContent=(pnl>0?'+':'')+pnl.toFixed(2);
+ document.getElementById('stat-total-pnl').className='card-value '+pnlClass(pnl);
+ document.getElementById('stat-winrate').textContent=(s.win_rate||0)+'% побед';
+ document.getElementById('stat-uptime').textContent='✅ Активен';
+ try{const upd=new Date(b.updated);document.getElementById('stat-last-upd').textContent=upd.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}catch(e){}
 }
 
-// ── Закрытые ─────────────────────────────────────────────────────────
-
-function renderClosed(closed) {
-    const tbody = document.getElementById('closed-body');
-    const empty = document.getElementById('closed-empty');
-    tbody.innerHTML = '';
-    if (!closed || closed.length === 0) {
-        empty.style.display = 'block';
-        return;
-    }
-    empty.style.display = 'none';
-
-    closed.forEach(c => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td style="font-size:11px;color:var(--text-dim)">${fmtTimeShort(c.exit_time)}</td>
-            <td><strong>${c.symbol}</strong> <span class="badge ${c.side==='long'?'badge-long':'badge-short'}">${c.side.toUpperCase()}</span></td>
-            <td style="font-family:monospace;font-size:11px">$${fmtNumAuto(c.entry_price)}</td>
-            <td style="font-family:monospace;font-size:11px">$${fmtNumAuto(c.exit_price)}</td>
-            <td class="closed-pnl ${pnlClass(c.pnl)}"><strong>${c.pnl>0?'+':''}${fmtNum(c.pnl,2)}$</strong></td>
-            <td class="${pnlClass(c.pnl_percent)}">${c.pnl_percent>0?'+':''}${fmtNum(c.pnl_percent,2)}%</td>
-            <td style="font-size:11px;color:var(--text-dim)">${c.exit_reason}</td>
-        `;
-        tbody.appendChild(tr);
-    });
+async function loadAnalytics(){
+ try{
+  const el=document.getElementById('analytics-content');
+  const a=await getJSON(API+'/api/analytics');
+  
+  // Статистика
+  let h='<div class="grid grid-4" style="margin-bottom:10px">';
+  
+  // Сегодня
+  const td=a.today||{};
+  h+='<div class="card" style="text-align:center"><div class="card-title">📅 Сегодня</div>';
+  h+='<div class="card-value">'+(td.total_closed||0)+'</div>';
+  h+='<div class="card-value sub">'+'🏆 '+(td.wins||0)+' / 💀 '+(td.losses||0)+'</div></div>';
+  
+  // PnL сегодня
+  const tpnl=Number(td.total_pnl||0);
+  h+='<div class="card" style="text-align:center"><div class="card-title">💰 PnL сегодня</div>';
+  h+='<div class="card-value '+pnlClass(tpnl)+'">'+(tpnl>0?'+':'')+tpnl.toFixed(2)+'$</div>';
+  h+='<div class="card-value sub">сред. '+(Number(td.avg_pnl_pct||0)).toFixed(2)+'%</div></div>';
+  
+  // За всё время
+  const at=a.all_time||{};
+  const atpnl=Number(at.total_pnl||0);
+  h+='<div class="card" style="text-align:center"><div class="card-title">📊 За всё время</div>';
+  h+='<div class="card-value">'+(at.total_closed||0)+' сделок</div>';
+  h+='<div class="card-value sub">'+'🏆 '+(at.wins||0)+' / 💀 '+(at.losses||0)+'</div></div>';
+  
+  // Total PnL
+  h+='<div class="card" style="text-align:center"><div class="card-title">💵 Итоговый PnL</div>';
+  h+='<div class="card-value '+pnlClass(atpnl)+'">'+(atpnl>0?'+':'')+atpnl.toFixed(2)+'$</div>';
+  const wr=at.total_closed?(at.wins/(at.wins+at.losses)*100).toFixed(1):0;
+  h+='<div class="card-value sub">WinRate: '+wr+'%</div></div>';
+  h+='</div>';
+  
+  // PnL по дням
+  const daily=a.daily||[];
+  if(daily.length>0){
+   h+='<div class="card" style="margin-bottom:10px"><div class="card-title">📆 PnL по дням (14 дней)</div><table><thead><tr><th>Дата</th><th>Сделок</th><th>Прибыльных</th><th>PnL</th></tr></thead><tbody>';
+   daily.forEach(d=>{
+    const dp=Number(d.day_pnl||0);
+    h+='<tr><td>'+d.day+'</td><td>'+d.trades+'</td><td>'+d.wins+'</td><td class="'+pnlClass(dp)+'">'+(dp>0?'+':'')+dp.toFixed(2)+'$</td></tr>';
+   });
+   h+='</tbody></table></div>';
+  }
+  
+  // Закрытые сделки с голосованием
+  const closed=a.closed||[];
+  h+='<div class="card"><div class="card-title">📋 Последние сделки (с голосованием)</div>';
+  h+='<div class="signal-table-wrap" style="max-height:400px"><table style="font-size:11px"><thead><tr>';
+  h+='<th>Время</th><th>Монета</th><th>Сторона</th><th>Вход</th><th>Выход</th><th>PnL</th><th>%</th><th>Причина</th><th style="min-width:200px">Голоса</th></tr></thead><tbody>';
+  if(closed.length===0){
+   h+='<tr><td colspan="9" style="text-align:center;color:var(--text-dim);padding:20px">Нет закрытых сделок</td></tr>';
+  }else{
+   closed.forEach(c=>{
+    const s=c.scores||{};
+    const pnlVal=Number(c.pnl||0);
+    const pnlPct=Number(c.pnl_percent||0);
+    const votePills=[
+     modulePill(s.entry_score||0,'SC','Entry'),
+     modulePill(s.ml_pro||0,'ML','ML-Pro'),
+     modulePill(s.adv_score||0,'AD','Adv'),
+     modulePill(s.mtf_score||0,'TF','MTF'),
+     modulePill(s.liq_score||0,'LQ','Liq'),
+     modulePill(s.vv_score||0,'VV','VV'),
+     modulePill(s.vsa_score||0,'VS','VSA'),
+    ];
+    h+='<tr><td style="white-space:nowrap;color:var(--text-dim)">'+fmtTimeShort(c.exit_time||c.entry_time)+'</td>';
+    h+='<td><strong>'+(c.symbol||'').replace('/USDT','')+'</strong></td>';
+    h+='<td><span class="badge '+(c.side==='long'?'badge-long':'badge-short')+'">'+(c.side||'').toUpperCase()+'</span></td>';
+    h+='<td class="mono">$'+fmtNum(c.entry_price,4)+'</td>';
+    h+='<td class="mono">$'+fmtNum(c.exit_price,4)+'</td>';
+    h+='<td class="'+pnlClass(pnlVal)+' mono" style="font-weight:600">'+(pnlVal>0?'+':'')+pnlVal.toFixed(2)+'$</td>';
+    h+='<td class="'+pnlClass(pnlPct)+' mono">'+(pnlPct>0?'+':'')+pnlPct.toFixed(2)+'%</td>';
+    h+='<td style="color:var(--text-dim)">'+(c.exit_reason||'—')+'</td>';
+    h+='<td><div class="module-dots">'+votePills.join('')+'</div></td></tr>';
+   });
+  }
+  h+='</tbody></table></div></div>';
+  
+  el.innerHTML=h;
+ }catch(e){document.getElementById('analytics-content').innerHTML='<div style="text-align:center;padding:20px;color:var(--red)">Ошибка загрузки аналитики</div>'}
 }
 
-// ── Сигналы ──────────────────────────────────────────────────────────
-
-function renderSignals(signals) {
-    const tbody = document.getElementById('signals-body');
-    const empty = document.getElementById('signals-empty');
-    tbody.innerHTML = '';
-    if (!signals || signals.length === 0) {
-        empty.style.display = 'block';
-        return;
-    }
-    empty.style.display = 'none';
-
-    signals.forEach(s => {
-        const comp = s.components || {};
-        // Форматируем компоненты в строку
-        const compStrs = [];
-        if (typeof comp === 'object') {
-            for (const [k,v] of Object.entries(comp)) {
-                if (v == null) continue;
-                compStrs.push(`<span class="score ${scoreClass(isNaN(v) ? null : Number(v))}">${k.toUpperCase()}:${isNaN(v) ? v : fmtNum(v, 0)}</span>`);
-            }
-        }
-        const compHtml = compStrs.join(' ');
-
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td style="font-size:10px;color:var(--text-dim);white-space:nowrap">${fmtTime(s.time)}</td>
-            <td><strong>${s.symbol}</strong></td>
-            <td><span class="badge ${s.decision==='buy'?'badge-buy':s.decision==='sell'?'badge-sell':'badge-hold'}">${s.decision.toUpperCase()}</span></td>
-            <td style="font-weight:600;font-family:monospace">${fmtNum(s.score,1)} <span style="color:var(--text-dim);font-weight:400">/ ${fmtNum(s.threshold,1)}</span></td>
-            <td><div class="scores">${compHtml}</div></td>
-        `;
-        tbody.appendChild(tr);
-    });
+async function loadSignalsLatest(){
+ try{const sigs=await getJSON(API+"/api/signals/latest");allSignals=sigs.signals||[];renderSignals(allSignals)}catch(e){}
 }
-
-// ── Stats ────────────────────────────────────────────────────────────
-
-function updateStats(data) {
-    const b = data.balance || {};
-    const st = data.stats || {};
-    const pos = data.positions || [];
-
-    document.getElementById('stat-balance').textContent = '$' + fmtNum(b.total, 2);
-    document.getElementById('stat-free').textContent = 'Free: $' + fmtNum(b.free, 2);
-
-    const inPos = pos.reduce((s,p) => s + p.entry_price * p.qty, 0);
-    document.getElementById('stat-in-pos').textContent = '$' + fmtNum(inPos, 2);
-    document.getElementById('stat-pos-count').textContent = st.open_positions + ' поз.';
-
-    const tp = st.total_pnl;
-    const el = document.getElementById('stat-total-pnl');
-    el.textContent = (tp > 0 ? '+' : '') + fmtNum(tp, 2) + '$';
-    el.className = 'card-value ' + pnlClass(tp);
-    document.getElementById('stat-winrate').textContent = 'WR: ' + st.win_rate + '% (' + st.win_count + '/' + (st.win_count + st.loss_count) + ')';
-
-    document.getElementById('stat-uptime').textContent = '✅ Работает';
-    document.getElementById('stat-last-upd').textContent = new Date().toLocaleTimeString('ru-RU');
+async function loadSignalsAll(){
+ try{const sigs=await getJSON(API+"/api/signals");allSignals=sigs.signals||[];renderSignals(allSignals)}catch(e){}
 }
-
-// ── Main refresh ─────────────────────────────────────────────────────
-
-async function refreshAll() {
-    try {
-        const data = await getJSON(API + '/api/status');
-        lastData = data;
-        updateStats(data);
-        renderPositions(data.positions);
-        renderClosed(data.closed);
-        renderSignals(data.signals);
-    } catch(e) {
-        console.error('Refresh error:', e);
-        document.getElementById('stat-uptime').textContent = '❌ Ошибка';
-    }
-    try {
-        await renderBTC();
-    } catch(e) {}
+async function loadData(){
+ try{const d=await getJSON(API+"/api/status");lastData=d;renderStats(d);renderPositions(d.positions||[]);equityData=d.equity||[];if(currentTab==="equity")drawEquity();if(d.closed)renderClosed(d.closed.slice(0,50))}catch(e){}
+ try{await renderBTC()}catch(e){}
+ try{if(currentTab==="trend"){await loadSignalsLatest()}else if(currentTab==="all"){await loadSignalsAll()}else if(currentTab==="veto"){renderVeto()}}catch(e){}
 }
-
-function startAutoRefresh() {
-    refreshAll();
-    if (refreshTimer) clearInterval(refreshTimer);
-    refreshTimer = setInterval(refreshAll, 5000);
-}
-
-startAutoRefresh();
-</script>
-</body>
-</html>
+function refreshAll(){loadData()}
+function autoRefresh(){loadData();if(refreshTimer)clearTimeout(refreshTimer);refreshTimer=setTimeout(autoRefresh,5000)}
+window.addEventListener("load",function(){autoRefresh()});
+</script></body></html>

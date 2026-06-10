@@ -291,14 +291,16 @@ class TraderManager:
 
                 cmd = self.config['cmd'] + ['--heartbeat-fd', str(w_fd),
                                             os.path.join(BASE_DIR, "config", "api_config_final.json")]
+                stderr_file = open(os.path.join(BASE_DIR, 'data', 'trader_stderr.log'), 'a')
                 self.process = subprocess.Popen(
                     cmd,
                     cwd=BASE_DIR,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=stderr_file,
                     pass_fds=(w_fd,),
                     preexec_fn=os.setsid if hasattr(os, 'setsid') else None,
                 )
+                stderr_file.close()
 
                 # Закрываем write-конец в родителе (он у дочки)
                 os.close(w_fd)

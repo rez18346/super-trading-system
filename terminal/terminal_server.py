@@ -299,7 +299,239 @@ def api_signals(limit: int = Query(30, ge=1, le=200)):
         conn.close()
 
 
+@app.get("/api/signals/latest")
+def api_signals_latest():
+    """Последний сигнал по каждой монете, сортировка по score (убывание)."""
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        cur.execute("""
+            SELECT DISTINCT ON (symbol) symbol, decision, score, threshold, components, created_at
+            FROM signal_log
+            ORDER BY symbol, created_at DESC
+        """)
+        signals = [_fmt_signal(s) for s in cur.fetchall()]
+        signals.sort(key=lambda x: -x['score'])
+        return {"signals": signals}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/api/veto")
+def api_veto():
+    """Монеты в VETO — score близкий к threshold, но заблокированные."""
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        # Берём последний сигнал по каждой монете
+        cur.execute("""
+            SELECT DISTINCT ON (symbol) symbol, decision, score, threshold, components, created_at
+            FROM signal_log
+            ORDER BY symbol, created_at DESC
+        """)
+        all_signals = cur.fetchall()
+        
+        veto_list = []
+        for s in all_signals:
+            score = float(s['score'] or 0)
+            threshold = float(s['threshold'] or 60)
+            decision = s['decision'].lower() if s['decision'] else 'hold'
+            
+            # Кандидаты — hold, держатся рядом с threshold
+            if decision == 'hold' and threshold > 0 and score >= threshold * 0.7:
+                veto_list.append({
+                    'symbol': s['symbol'],
+                    'score': round(score, 1),
+                    'threshold': round(threshold, 1),
+                    'gap': round(threshold - score, 1),
+                    'gap_pct': round((threshold - score) / threshold * 100, 1),
+                    'time': str(s['created_at']),
+                })
+        
+        # Сортируем — кто ближе всего к порогу
+        veto_list.sort(key=lambda x: x['gap'])
+        
+        # Следом идём: монеты с decision=enter или buy — уже почти прошли
+        enter_list = []
+        for s in all_signals:
+            decision = s['decision'].lower() if s['decision'] else 'hold'
+            score = float(s['score'] or 0)
+            threshold = float(s['threshold'] or 60)
+            if decision == 'enter' or decision == 'buy':
+                enter_list.append({
+                    'symbol': s['symbol'],
+                    'score': round(score, 1),
+                    'threshold': round(threshold, 1),
+                    'decision': decision,
+                    'time': str(s['created_at']),
+                })
+        
+        return {
+            'veto': veto_list,
+            'candidates': enter_list,
+            'total_watch': len(veto_list),
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/api/liquidation_levels")
+def api_liquidation_levels():
+    """Уровни ликвидности по открытым позициям — расстояние до liq."""
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        cur.execute("""
+            SELECT id, symbol, side, entry_price, entry_qty, pos_meta,
+                   ml_pro, adv_score, mtf_score, rvb_score, liq_score,
+                   vv_score, vsa_score
+            FROM trades
+            WHERE status = 'open'
+            ORDER BY entry_time DESC
+        """)
+        positions = cur.fetchall()
+        
+        result = []
+        for p in positions:
+            meta = p['pos_meta']
+            if isinstance(meta, str):
+                try:
+                    meta = json.loads(meta)
+                except:
+                    meta = {}
+            
+            liq_price = meta.get('liquidation')
+            last_price = meta.get('last_price') or p['entry_price']
+            entry_price = float(p['entry_price'])
+            side = p['side'].lower()
+            
+            liq_dist = None
+            liq_dist_pct = None
+            if liq_price and float(liq_price) > 0:
+                liq_price = float(liq_price)
+                if side == 'long':
+                    liq_dist = last_price - liq_price
+                    liq_dist_pct = (last_price - liq_price) / liq_price * 100 if liq_price > 0 else None
+                else:
+                    liq_dist = liq_price - last_price
+                    liq_dist_pct = (liq_price - last_price) / liq_price * 100 if liq_price > 0 else None
+            
+            sl_price = meta.get('stopLoss')
+            tp_price = meta.get('takeProfit')
+            
+            # Сумма в позиции
+            position_value = entry_price * float(p['entry_qty'])
+            
+            result.append({
+                'id': p['id'],
+                'symbol': p['symbol'],
+                'side': p['side'],
+                'entry_price': round(entry_price, 8),
+                'position_value': round(position_value, 2),
+                'last_price': round(float(last_price), 8),
+                'liquidation': round(liq_price, 8) if liq_price else None,
+                'liq_distance': round(liq_dist, 8) if liq_dist is not None else None,
+                'liq_distance_pct': round(liq_dist_pct, 2) if liq_dist_pct is not None else None,
+                'stop_loss': round(float(sl_price), 8) if sl_price else None,
+                'take_profit': round(float(tp_price), 8) if tp_price else None,
+                'liq_score': round(float(p['liq_score'] or 0), 1),
+            })
+        
+        return {'levels': result}
+    finally:
+        cur.close()
+        conn.close()
+
+
 @app.get("/api/control/{action}")
+@app.get("/api/analytics")
+def api_analytics():
+    """Аналитика работы системы: PnL по дням, сделки с голосованием."""
+    conn = get_db()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        # Статистика за сегодня
+        cur.execute("""
+            SELECT 
+                COUNT(*) FILTER (WHERE status = 'closed') as total_closed,
+                COUNT(*) FILTER (WHERE status = 'closed' AND pnl > 0) as wins,
+                COUNT(*) FILTER (WHERE status = 'closed' AND pnl < 0) as losses,
+                COALESCE(SUM(pnl) FILTER (WHERE status = 'closed'), 0) as total_pnl,
+                COALESCE(AVG(pnl_percent) FILTER (WHERE status = 'closed'), 0) as avg_pnl_pct
+            FROM trades
+            WHERE entry_time >= CURRENT_DATE
+        """)
+        today_stats = dict(cur.fetchone())
+        
+        # Статистика за всё время
+        cur.execute("""
+            SELECT 
+                COUNT(*) FILTER (WHERE status = 'closed') as total_closed,
+                COUNT(*) FILTER (WHERE status = 'closed' AND pnl > 0) as wins,
+                COUNT(*) FILTER (WHERE status = 'closed' AND pnl < 0) as losses,
+                COALESCE(SUM(pnl) FILTER (WHERE status = 'closed'), 0) as total_pnl
+            FROM trades
+        """)
+        all_stats = dict(cur.fetchone())
+        
+        # PnL по дням (последние 14 дней)
+        cur.execute("""
+            SELECT 
+                DATE(entry_time) as day,
+                COUNT(*) as trades,
+                SUM(pnl) FILTER (WHERE status = 'closed') as day_pnl,
+                COUNT(*) FILTER (WHERE status = 'closed' AND pnl > 0) as wins
+            FROM trades
+            WHERE entry_time >= CURRENT_DATE - INTERVAL '14 days'
+            GROUP BY DATE(entry_time)
+            ORDER BY day DESC
+        """)
+        daily = []
+        for r in cur.fetchall():
+            d = dict(r)
+            d['day'] = str(d['day'])
+            d['day_pnl'] = round(float(d['day_pnl'] or 0), 2)
+            daily.append(d)
+        
+        # Закрытые сделки (последние 50) с голосованием модулей
+        cur.execute("""
+            SELECT id, symbol, side, entry_price, entry_qty, entry_time,
+                   exit_price, exit_time, pnl, pnl_percent, exit_reason,
+                   entry_score, ml_pro, adv_score, mtf_score, rvb_score,
+                   liq_score, vv_score, vsa_score, pos_meta
+            FROM trades
+            WHERE status = 'closed'
+            ORDER BY exit_time DESC NULLS LAST
+            LIMIT 50
+        """)
+        closed = []
+        for r in cur.fetchall():
+            c = _fmt_closed(r)
+            c['scores'] = {
+                'ml_pro': float(r['ml_pro'] or 0),
+                'adv_score': float(r['adv_score'] or 0),
+                'mtf_score': float(r['mtf_score'] or 0),
+                'rvb_score': float(r['rvb_score'] or 0),
+                'liq_score': float(r['liq_score'] or 0),
+                'vv_score': float(r['vv_score'] or 0),
+                'vsa_score': float(r['vsa_score'] or 0),
+                'entry_score': float(r['entry_score'] or 0),
+            }
+            closed.append(c)
+        
+        return {
+            'today': today_stats,
+            'all_time': all_stats,
+            'daily': daily,
+            'closed': closed,
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
 def api_control(action: str):
     """Управление: pause / resume / exit_all."""
     # Пока заглушка — управление трейдером через файл состояния

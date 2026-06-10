@@ -139,6 +139,22 @@ class BTCRegimeTracker:
             return False
         return True
 
+    def is_short_allowed(self) -> bool:
+        """Можно ли сейчас шортить? Разрешён на медвежьем рынке."""
+        if time.time() < self._cooldown_until:
+            return False
+        # Шорт разрешён на падающих фазах
+        if self._regime in ("bearish_side", "distribution", "dump"):
+            return True
+        # HTF down → шорт разрешён
+        if self._htf_trend == "down":
+            return True
+        # Медвежья структура → шорт разрешён
+        if self._structure_trend == "bearish":
+            return True
+        # В остальных случаях (accumulation, recovery, pump) — шорт опасен
+        return False
+
     def get_regime(self) -> str:
         """Возвращает текущую фазу."""
         return self._regime

@@ -143,11 +143,31 @@ class LiquidityCluster:
         )
 
         # 4. Итоговая оценка (score 0-100) — ТЕПЕРЬ с учётом OF/OB
+        # ── Контекст: цена ниже VWAP 4H — медвежий сигнал ───────────────
+        bearish_context = False
+        if vwap_4h and current_price < vwap_4h * 0.995:
+            bearish_context = True
+            # Проверяем тренд 4H (цена ниже открытия последней 4H свечи)
+            if candles_4h and len(candles_4h) >= 2:
+                last_4h = candles_4h[-1]
+                if isinstance(last_4h, dict):
+                    open_4h = last_4h.get('o', last_4h.get('open', last_4h.get('c', current_price)))
+                    close_4h = last_4h.get('c', last_4h.get('close', current_price))
+                elif isinstance(last_4h, list) and len(last_4h) >= 5:
+                    open_4h = last_4h[1]
+                    close_4h = last_4h[4]
+                else:
+                    open_4h = None
+                    close_4h = None
+                if open_4h and close_4h and open_4h > close_4h:
+                    bearish_context = True  # 4H свеча медвежья
+
         score = self._calc_score(closes, highs, lows, volumes,
                                   current_price, vah, val, poc,
                                   cluster_quality, fvg_above, fvg_below,
                                   vwap_1h, order_flows, order_blocks,
-                                  poi_idm, poi_idm_ob, poi_ext_ob)
+                                  poi_idm, poi_idm_ob, poi_ext_ob,
+                                  bearish_context=bearish_context)
 
         signal = 'bullish' if score > 60 else ('bearish' if score < 40 else 'neutral')
 
@@ -179,11 +199,12 @@ class LiquidityCluster:
                 if abs(poc_change) > 0.001:
                     poc_trend_str = 'POC↑' if poc_change > 0 else 'POC↓'
 
+        ctx_tag = '⚠️ctx↓' if bearish_context else ''
         detail = (
             f"POC={poc:.4f} VAH={vah:.4f} VAL={val:.4f} "
             f"q={cluster_quality:.2f} fvg↑={len(fvg_above)} fvg↓={len(fvg_below)} "
             f"{' '.join(ob_details)} "
-            f"{poc_trend_str} {trap or ''}"
+            f"{poc_trend_str} {trap or ''} {ctx_tag}"
         )
 
         # Кэшируем для следующих вызовов
@@ -531,7 +552,8 @@ class LiquidityCluster:
                      current_price, vah, val, poc,
                      cluster_quality, fvg_above, fvg_below,
                      vwap_1h, order_flows, order_blocks,
-                     poi_idm, poi_idm_ob, poi_ext_ob) -> int:
+                     poi_idm, poi_idm_ob, poi_ext_ob,
+                     bearish_context: bool = False) -> int:
         """Расчёт итогового score с учётом новых метрик."""
         score = 50
 
@@ -553,6 +575,11 @@ class LiquidityCluster:
             else:
                 score = 40 if fvg_below else (70 if cluster_quality > 0.5 else 60)
 
+        # ── 2. Контекстный штраф ───────────────────────────────────────
+        # Если цена ниже VWAP 4H или тренд падающий — ослабляем все
+        # буллиш сигналы от OB/POI/POC в 2 раза
+        ctx_mult = 0.5 if bearish_context else 1.0
+
         # ── 2. VWAP бонус ────────────────────────────────────────────────
         if vwap_1h and abs(current_price - vwap_1h) / (vwap_1h + 1e-8) < 0.003:
             score = min(90, score + 20)
@@ -568,11 +595,11 @@ class LiquidityCluster:
                                            volumes[-20:] if len(volumes) >= 20 else [],
                                            vah, val)
         if trap == 'bullish':
-            score = min(90, score + 20)
+            score = min(90, score + int(20 * ctx_mult))
         elif trap == 'bearish':
-            score = min(90, score + 20)
+            score = min(90, score + int(20 * ctx_mult))
         elif trap == 'fake_breakout':
-            score = min(85, score + 15)
+            score = min(85, score + int(15 * ctx_mult))
 
         # ── НОВОЕ: Order Flow бонус ──────────────────────────────────────
         for of in order_flows:
@@ -581,19 +608,19 @@ class LiquidityCluster:
             if dist_to_of_start < 0.005:  # 0.5%
                 if of.sweep:
                     # OF со sweep → EXT OB (очень сильный сигнал)
-                    score = min(95, score + 25)
+                    score = min(95, score + int(25 * ctx_mult))
                 elif of.volume_ratio > 2.0:
-                    score = min(90, score + 20)
+                    score = min(90, score + int(20 * ctx_mult))
                 else:
-                    score = min(80, score + 15)
+                    score = min(80, score + int(15 * ctx_mult))
 
             # Цена внутри OF (импульс в нашу сторону) — продолжение
             if of.direction == 'bullish' and current_price > of.price_start:
                 if of.price_start <= current_price <= of.price_end:
-                    score = min(85, score + 10)
+                    score = min(85, score + int(10 * ctx_mult))
             elif of.direction == 'bearish' and current_price < of.price_start:
                 if of.price_end <= current_price <= of.price_start:
-                    score = min(85, score + 10)
+                    score = min(85, score + int(10 * ctx_mult))
 
         # ── НОВОЕ: Order Block бонус ──────────────────────────────────────
         for ob in order_blocks:
@@ -606,26 +633,26 @@ class LiquidityCluster:
 
             if in_ob:
                 if ob.kind == 'ext_ob':
-                    score = min(95, score + 25)
+                    score = min(95, score + int(25 * ctx_mult))
                 elif ob.kind == 'idm_ob':
-                    score = min(85, score + 15)
+                    score = min(85, score + int(15 * ctx_mult))
                 else:
-                    score = min(75, score + 10)
+                    score = min(75, score + int(10 * ctx_mult))
             elif near_ob:
                 if ob.kind == 'ext_ob':
-                    score = min(90, score + 20)
+                    score = min(90, score + int(20 * ctx_mult))
                 elif ob.kind == 'idm_ob':
-                    score = min(80, score + 12)
+                    score = min(80, score + int(12 * ctx_mult))
 
         # ── НОВОЕ: POI зоны ──────────────────────────────────────────────
         if poi_idm_ob:
             lo, hi = poi_idm_ob
             if lo <= current_price <= hi:
-                score = min(85, score + 15)
+                score = min(85, score + int(15 * ctx_mult))
         if poi_ext_ob:
             lo, hi = poi_ext_ob
             if lo <= current_price <= hi:
-                score = min(95, score + 20)
+                score = min(95, score + int(20 * ctx_mult))
 
         return int(score)
 

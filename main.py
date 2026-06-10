@@ -51,20 +51,48 @@ def _is_orchestrator_running() -> bool:
 
 
 if __name__ == "__main__":
+    # ⚡ Флаг-файл: systemd рестартит нас каждые 10с, блокируем дубли
+    _lock = os.path.join(BASE_DIR, '.main_running')
+    if os.path.exists(_lock):
+        # Старше 5 минут? Тогда можно перезапустить
+        try:
+            age = time.time() - os.path.getmtime(_lock)
+            if age < 300:
+                sys.exit(0)
+        except:
+            pass
+    # Создаём/обновляем флаг
+    try:
+        open(_lock, 'w').write(str(os.getpid()))
+    except:
+        pass
+
     if _is_orchestrator_running():
         sys.exit(0)
 
     orch = os.path.join(BASE_DIR, "orchestrator.py")
-    proc = subprocess.Popen(
-        [sys.executable, '-B', '-u', orch] + sys.argv[1:],
-        cwd=BASE_DIR,
-        stdin=sys.stdin,
-        stdout=sys.stdout,
-        stderr=sys.stderr,
-    )
-    try:
+
+    # ⚡ Fork + detach: запускаем orchestrator в фоне, а main.py завершается
+    # Это нужно чтобы systemd не убивал трейдер через 10с
+    pid = os.fork()
+    if pid == 0:
+        # Дочерний процесс — запускаем оркестратор
+        os.setsid()
+        proc = subprocess.Popen(
+            [sys.executable, '-B', '-u', orch] + sys.argv[1:],
+            cwd=BASE_DIR,
+            stdin=subprocess.DEVNULL,
+            stdout=open('/dev/null', 'w'),
+            stderr=open('/dev/null', 'w'),
+            close_fds=True,
+        )
         proc.wait()
-    except KeyboardInterrupt:
-        proc.send_signal(signal.SIGTERM)
-        proc.wait()
-    sys.exit(proc.returncode or 0)
+        # Удаляем флаг при завершении
+        try:
+            os.remove(_lock)
+        except:
+            pass
+        sys.exit(proc.returncode or 0)
+    else:
+        # Родительский процесс — выходим сразу (systemd видит success)
+        sys.exit(0)

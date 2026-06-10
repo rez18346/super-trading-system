@@ -116,11 +116,14 @@ class IndustrialTrader:
 
         # ⚡ Автовключение шорта из конфига
         try:
-            _short_cfg = self.config.get('trading', {}).get('short_enabled', False)
+            _short_cfg = self.config.get('trading', {}).get('short_enabled', False) or self.config.get('short_enabled', False)
+            logger.info(f"[INIT] _short_cfg={_short_cfg}, has_pm={hasattr(self, '_pm')}, has_om={hasattr(self, '_om')}")
             if _short_cfg:
-                _short_mode = self.config.get('trading', {}).get('trade_mode', 'margin')
+                _short_mode = self.config.get('trading', {}).get('trade_mode', 'margin') or self.config.get('trade_mode', 'margin')
                 _short_lev = self.config.get('trading', {}).get('short_leverage', 1.0)
-                if self.enable_short_trading(mode=_short_mode, leverage=_short_lev):
+                _result = self.enable_short_trading(mode=_short_mode, leverage=_short_lev)
+                logger.info(f"[INIT] enable_short_trading → {_result}")
+                if _result:
                     logger.info(f"⚡ Шорт автоматически активирован из конфига: mode={_short_mode}, leverage={_short_lev}x")
         except Exception as _e_sc:
             logger.debug(f"[INIT] short config: {_e_sc}")
@@ -1496,19 +1499,14 @@ class IndustrialTrader:
                                                        high_24h=_high_24h,
                                                        low_24h=_low_24h)
 
-                            # 🛡️ BTC Regime Check: блокируем вход, НО логируем голосование для дашборда
-                            if hasattr(self, '_btc_regime') and not self._btc_regime.is_buy_allowed():
+                            # 🛡️ BTC Regime Check: блокируем LONG, НО разрешаем SHORT ниже
+                            _btc_blocks_long = hasattr(self, '_btc_regime') and not self._btc_regime.is_buy_allowed()
+                            if _btc_blocks_long:
                                 regime_name = self._btc_regime.get_regime()
                                 reason = decision.reason or ''
                                 logger.info(f"⏳ [DE→HOLD] {symbol}: BTC Regime {regime_name} - BUY заблокирован | {reason}")
-                                continue
 
-                            if decision.action == 'enter':
-                                # ⚡ ШОРТ-ПРИОРИТЕТ: если включён шорт - не покупаем (только шортим)
-                                if getattr(self, '_short_trading_enabled', False):
-                                    logger.info(f"⏭️ [SHORT_MODE] {symbol}: LONG отключён (активен шорт)")
-                                    continue
-
+                            if decision.action == 'enter' and not _btc_blocks_long:
                                 # 🛑 PORTFOLIO GUARD: если сработал - входы заблокированы
                                 if self._portfolio_guard_triggered:
                                     logger.warning(f"🔒 [GUARD] {symbol}: вход заблокирован (Guard активен)")
@@ -1608,92 +1606,109 @@ class IndustrialTrader:
                     # ════════════════════════════════════════════════════════════
                     # ⚡ ШОРТ: параллельное решение для short entry
                     # ════════════════════════════════════════════════════════════
-                    if getattr(self, '_short_trading_enabled', False) and hasattr(de, 'decide_short'):
-                        try:
-                            # ⚡ Проверка уровня цены: не слишком близко к 24h хаю
-                            _high_24h = None
+                    _short_enabled = getattr(self, '_short_trading_enabled', False)
+                    _has_decide_short = hasattr(de, 'decide_short')
+                    logger.info(f"⚡ [SHORT→GATE] {symbol}: _short_enabled={_short_enabled}, _has_decide_short={_has_decide_short}")
+                    if _short_enabled and _has_decide_short:
+                        # 🛡️ BTC Regime Gate для шортов
+                        _short_regime_ok = True
+                        if hasattr(self, '_btc_regime') and hasattr(self._btc_regime, 'is_short_allowed'):
+                            _short_regime_ok = self._btc_regime.is_short_allowed()
+                        if not _short_regime_ok:
+                            logger.debug(f"🚫 [SHORT→BLOCKED] {symbol}: BTC regime не разрешает шорты")
+                        else:
+                            logger.info(f"[SHORT→CHECK] {symbol}: проходим шорт-секцию")
+                        if _short_regime_ok:
                             try:
-                                _ticker = self.exchange.fetch_ticker(symbol)
-                                _high_24h = _ticker.get('high')
-                            except Exception:
-                                pass
-
-                            # ⚡ BTC state для фильтрации
-                            _btc_short_state = {
-                                'price': btc_price,
-                                'trend': getattr(self, '_current_market_mode', 'neutral'),
-                            }
-
-                            # ⚡ Считаем текущие шорт-позиции в PM
-                            _short_count = 0
-                            if hasattr(self, '_pm'):
-                                _short_count = self._pm.short_count
-                            _max_short = self.config.get('risk_management', {}).get('max_short_positions', 10)
-
-                            # 🩹 de_confidence может быть не определён (символ уже в LONG, анализ не запускался)
-                            _short_conf = locals().get('de_confidence', 50) or 50
-                            _short_trend = locals().get('de_trend', 'neutral') or 'neutral'
-                            _short_rsi = locals().get('de_rsi', 50) or 50
-
-                            # 🩹 ВСЕГДА берём свежую цену с биржи - модули могут дать неверный POC
-                            _short_price = current_price  # real market price from OHLCV
-                            if _short_price <= 0:
+                                # ⚡ Проверка уровня цены: не слишком близко к 24h хаю/лою
+                                _high_24h = None
+                                _low_24h = None
                                 try:
-                                    _tck = self.exchange.fetch_ticker(symbol)
-                                    _short_price = _tck.get('last', 0) or 0
+                                    _ticker = self.exchange.fetch_ticker(symbol)
+                                    _high_24h = _ticker.get('high')
+                                    _low_24h = _ticker.get('low')
                                 except Exception:
-                                    _short_price = 0
-
-                            # 🩹 candles и last_exit могут быть не определены
-                            _short_c5m = locals().get('c5m', None)
-                            _short_c1h = locals().get('c1h', None)
-                            _short_c4h = locals().get('c4h', None)
-                            _short_last_exit_price = locals().get('last_exit_price', None)
-                            _short_last_exit_time = locals().get('last_exit_time', None)
-
-                            short_decision = de.decide_short(
-                                symbol, _short_conf, _short_trend, _short_rsi,
-                                _short_price, _short_count, _max_short,
-                                candles_5m=_short_c5m, candles_1h=_short_c1h, candles_4h=_short_c4h,
-                                last_exit_price=_short_last_exit_price,
-                                last_exit_time=_short_last_exit_time,
-                                cvd_data=_get_symbol_cvd(symbol),
-                                high_24h=_high_24h,
-                                btc_state=_btc_short_state,
-                            )
-
-                            if short_decision.action == 'enter':
-                                if self._portfolio_guard_triggered:
-                                    logger.warning(f"🔒 [GUARD] {symbol}: шорт заблокирован (Guard активен)")
-                                    continue
-
-                                score = short_decision.score or 50
-                                if score < 65:
-                                    logger.info(f"⏳ [SHORT→LOW] {symbol}: score={score:.0f} < 65")
-                                    continue
-
-                                logger.info(f"⚡ [DE→SHORT] {symbol}: score={score:.0f}/100 | ${_short_price:.4f} | {short_decision.reason}")
-
-                                # 🆕 НОВАЯ АРХИТЕКТУРА: через PM + OM + RM
-                                _short_integrated = False
-                                if hasattr(self, '_pm') and hasattr(self, '_om') and hasattr(self, '_rm'):
+                                    pass
+    
+                                # ⚡ BTC state для фильтрации
+                                _btc_short_state = {
+                                    'price': btc_price,
+                                    'trend': getattr(self, '_current_market_mode', 'neutral'),
+                                }
+    
+                                # ⚡ Считаем текущие шорт-позиции в PM
+                                _short_count = 0
+                                if hasattr(self, '_pm'):
+                                    _short_count = self._pm.short_count
+                                _max_short = self.config.get('risk_management', {}).get('max_short_positions', 10)
+    
+                                # 🩹 de_confidence может быть не определён (символ уже в LONG, анализ не запускался)
+                                _short_conf = locals().get('de_confidence', 50) or 50
+                                _short_trend = locals().get('de_trend', 'neutral') or 'neutral'
+                                _short_rsi = locals().get('de_rsi', 50) or 50
+    
+                                # 🩹 ВСЕГДА берём свежую цену с биржи - модули могут дать неверный POC
+                                _short_price = current_price  # real market price from OHLCV
+                                if _short_price <= 0:
                                     try:
-                                        from integration import process_entry_decision
-                                        _result = process_entry_decision(
-                                            self, symbol, short_decision, _short_price, _btc_short_state
-                                        )
-                                        if _result is not None:
-                                            _short_integrated = True
-                                            logger.info(f"   ✅ [PM→SHORT] {symbol}: вход через новую архитектуру")
-                                    except Exception as _sie:
-                                        logger.warning(f"[SHORT→INTEGRATION] {symbol}: {_sie}")
+                                        _tck = self.exchange.fetch_ticker(symbol)
+                                        _short_price = _tck.get('last', 0) or 0
+                                    except Exception:
+                                        _short_price = 0
+    
+                                # 🩹 candles и last_exit могут быть не определены
+                                _short_c5m = locals().get('c5m', None)
+                                _short_c1h = locals().get('c1h', None)
+                                _short_c4h = locals().get('c4h', None)
+                                _short_last_exit_price = locals().get('last_exit_price', None)
+                                _short_last_exit_time = locals().get('last_exit_time', None)
+    
+                                short_decision = de.decide_short(
+                                    symbol, _short_conf, _short_trend, _short_rsi,
+                                    _short_price, _short_count, _max_short,
+                                    candles_5m=_short_c5m, candles_1h=_short_c1h, candles_4h=_short_c4h,
+                                    last_exit_price=_short_last_exit_price,
+                                    last_exit_time=_short_last_exit_time,
+                                    cvd_data=_get_symbol_cvd(symbol),
+                                    high_24h=_high_24h,
+                                    low_24h=_low_24h,
+                                    btc_state=_btc_short_state,
+                                )
+    
+                                if short_decision.action == 'enter':
+                                    if self._portfolio_guard_triggered:
+                                        logger.warning(f"🔒 [GUARD] {symbol}: шорт заблокирован (Guard активен)")
+                                        continue
+    
+                                    score = short_decision.score or 50
+                                    if score < 65:
+                                        logger.info(f"⏳ [SHORT→LOW] {symbol}: score={score:.0f} < 65")
+                                        continue
+    
+                                    logger.info(f"⚡ [DE→SHORT] {symbol}: score={score:.0f}/100 | ${_short_price:.4f} | {short_decision.reason}")
 
-                                # ⬇️ Fallback: старый код
-                                if not _short_integrated:
-                                    logger.warning(f"⏭️ [SHORT] {symbol}: нет новой архитектуры, пропускаю")
-
-                        except Exception as e_short:
-                            logger.warning(f"[SHORT→DE] {symbol}: ошибка: {e_short}")
+                                    # 🆕 ИСПОЛНЕНИЕ ШОРТА: через PM + OM + RM
+                                    _short_integrated = False
+                                    if hasattr(self, '_pm') and hasattr(self, '_om') and hasattr(self, '_rm'):
+                                        try:
+                                            from integration import process_entry_decision
+                                            _result = process_entry_decision(
+                                                self, symbol, short_decision, _short_price, _btc_short_state
+                                            )
+                                            if _result is not None:
+                                                _short_integrated = True
+                                                logger.info(f"   ✅ [PM→SHORT] {symbol}: вход через новую архитектуру")
+                                        except Exception as _sie:
+                                            logger.warning(f"[SHORT→INTEGRATION] {symbol}: {_sie}")
+    
+                                    # ⬇️ Fallback: старый код
+                                    if not _short_integrated:
+                                        logger.warning(f"⏭️ [SHORT] {symbol}: нет новой архитектуры, пропускаю")
+                                else:
+                                    logger.info(f"⏳ [SHORT→HOLD] {symbol}: {short_decision.reason or 'score too low'}")
+    
+                            except Exception as e_short:
+                                logger.warning(f"[SHORT→DE] {symbol}: ошибка: {e_short}")
 
                     # ════════════════════════════════════════════════════════════
                     # ⚡ ЕСТЬ ПОЗИЦИЯ: Управление открытой позицией

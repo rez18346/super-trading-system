@@ -2140,6 +2140,7 @@ class DecisionEngine:
                       last_exit_time: Optional[float] = None,
                       cvd_data: Optional[Dict] = None,
                       high_24h: Optional[float] = None,
+                      low_24h: Optional[float] = None,
                       btc_state: Optional[Dict] = None) -> Decision:
         """
         Принять решение о входе в короткую позицию.
