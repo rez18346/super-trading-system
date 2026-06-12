@@ -115,7 +115,7 @@ MIN_TRAINING_SAMPLES = 50        # Минимум для обучения
 CONFIDENCE_HIGH = 0.65           # XGBoost калиброван лучше, порог можно ниже
 CONFIDENCE_LOW = 0.35            # Ниже этого — SKIP
 RETRAIN_INTERVAL = 3600          # Переобучение раз в час (в секундах)
-SUPPORTED_FEATURES = 31         # 17 базовых + 8 портфельных + 6 рыночных фич
+SUPPORTED_FEATURES = 13         # 13 работающих фич (18 нулевых удалены после аудита 2025-06-12)
 
 
 class MLAdvisor:
@@ -130,26 +130,8 @@ class MLAdvisor:
         self._vol_ratio_buffer = {}   # symbol → deque(maxlen=3)
         self._vol_momentum_buffer = {} # symbol → deque(maxlen=3)
         
-        # Память о поведении ММ на символе
-        self._consecutive_losses: Dict[str, int] = {}  # symbol → сколько убытков подряд
-        self._symbol_trade_count: Dict[str, int] = {}  # symbol → всего сделок
-        self._symbol_win_count: Dict[str, int] = {}    # symbol → прибыльных сделок
-        self._recent_trades: Dict[str, deque] = {}     # symbol → deque(pnl_pct, maxlen=10)
-
-        # Рыночная память — history для расчёта дивергенций и затухания
-        self._rsi_history: Dict[str, deque] = {}       # symbol → deque(rsi, maxlen=5)
+        # Рыночная память для расчёта shrinking_candles
         self._candle_range_history: Dict[str, deque] = {}  # symbol → deque(range, maxlen=10)
-
-        # 📊 Портфельные метрики (обновляются трейдером каждый цикл)
-        self._pf_daily_pnl = 0.0              # PnL за сегодня
-        self._pf_daily_profit_count = 0       # Прибыльных сделок сегодня
-        self._pf_daily_loss_count = 0         # Убыточных сделок сегодня
-        self._pf_daily_trade_count = 0        # Всего сделок сегодня
-        self._pf_consecutive_profits = 0      # Прибыльных подряд
-        self._pf_consecutive_losses_global = 0 # Убыточных подряд (глобальный)
-        self._pf_open_positions = 0           # Открытых позиций
-        self._pf_exposure_pct = 0.0           # % капитала в позициях
-        self._pf_avg_position_value = 0.0     # Средний размер позиции
 
         # Пытаемся загрузить обученную модель
         self._load_model()
@@ -233,9 +215,7 @@ class MLAdvisor:
 
     def seed_from_db(self):
         """
-        Загрузить исторические сделки из БД и сформировать 31-фичевые сэмплы.
-        Решает проблему: новые 6 рыночных признаков не участвуют в модели,
-        т.к. training_data содержит только старые 14-фичевые записи.
+        Загрузить исторические сделки из БД и сформировать 13-фичевые сэмплы.
         """
         try:
             import db_pg
@@ -343,9 +323,9 @@ class MLAdvisor:
             added += 1
 
         if added > 0:
-            # Удаляем старые 9-14 фичевые записи (они все замещены историей)
-            old_count = len([d for d in self.training_data if len(d.get('features', [])) != SUPPORTED_FEATURES])
-            if old_count > 0:
+            # Удаляем записи с устаревшим количеством фич
+            nonconforming = [d for d in self.training_data if len(d.get('features', [])) != SUPPORTED_FEATURES]
+            if nonconforming:
                 self.training_data = [d for d in self.training_data if len(d.get('features', [])) == SUPPORTED_FEATURES]
 
             self._save_training_data()
@@ -355,34 +335,12 @@ class MLAdvisor:
                 self.train(force=True)
 
             logger.info(f"[seed_from_db] ✅ Добавлено {added}, пропущено дубликатов {skipped_dup}, "
-                        f"удалено старых {old_count}, всего {len(self.training_data)} сэмплов ({SUPPORTED_FEATURES} фич)")
+                        f"удалено неконформных {len(nonconforming)}, всего {len(self.training_data)} сэмплов ({SUPPORTED_FEATURES} фич)")
         else:
             logger.info(f"[seed_from_db] Новых сделок нет (пропущено {skipped_dup} дубликатов)")
 
         return added
 
-    def update_symbol_memory(self, symbol: str, consecutive_losses: int = 0,
-                               trade_result: Optional[float] = None,
-                               total_trades: int = 0, wins: int = 0) -> None:
-        """
-        Обновить память о поведении ММ на символе.
-        
-        Args:
-            symbol: символ (e.g. 'NEAR/USDT')
-            consecutive_losses: сколько убытков подряд на этом символе
-            trade_result: PnL% последней сделки (если есть)
-            total_trades: всего сделок на символе
-            wins: прибыльных сделок
-        """
-        safe_sym = symbol.split('/')[0] if '/' in symbol else symbol
-        self._consecutive_losses[safe_sym] = consecutive_losses
-        self._symbol_trade_count[safe_sym] = total_trades
-        self._symbol_win_count[safe_sym] = wins
-        
-        if trade_result is not None:
-            if safe_sym not in self._recent_trades:
-                self._recent_trades[safe_sym] = deque(maxlen=10)
-            self._recent_trades[safe_sym].append(trade_result)
     
     def _load_model(self):
         """Загрузка сохранённой модели"""
@@ -409,165 +367,82 @@ class MLAdvisor:
         except Exception as e:
             logger.warning(f"Не удалось сохранить ML-модель: {e}")
 
-    def _calc_candle_patterns(self, df):
-        """Определение свечных паттернов на последней свече"""
-        if df is None or len(df) < 2:
-            return {}
-        
-        o, h, l, c = df['open'].values, df['high'].values, df['low'].values, df['close'].values
-        last = -1
-        
-        body = abs(c[last] - o[last])
-        upper_wick = h[last] - max(c[last], o[last])
-        lower_wick = min(c[last], o[last]) - l[last]
-        total_range = h[last] - l[last]
-        
-        patterns = {
-            'doji': body < total_range * 0.1,
-            'hammer': lower_wick > body * 2 and upper_wick < body * 0.5,
-            'shooting_star': upper_wick > body * 2 and lower_wick < body * 0.5,
-            'bullish_candle': c[last] > o[last],
-            'bearish_candle': c[last] < o[last],
-            'long_body': body > total_range * 0.7,
-            'engulfing_bull': last >= 1 and c[last] > o[last] and o[last] < c[last-1] and c[last] > o[last-1],
-            'engulfing_bear': last >= 1 and c[last] < o[last] and o[last] > c[last-1] and c[last] < o[last-1],
-        }
-        return patterns
-
-    def _calc_liquidity_zones(self, df_1h):
-        """Определение зон ликвидности"""
-        if df_1h is None or len(df_1h) < 10:
-            return {}
-        
-        current_price = df_1h['close'].values[-1]
-        volumes = df_1h['volume'].values
-        highs = df_1h['high'].values
-        lows = df_1h['low'].values
-        
-        vwap = np.average((highs + lows) / 2, weights=volumes)
-        
-        max_vol_idx = np.argmax(volumes[-24:]) if len(volumes) >= 24 else np.argmax(volumes)
-        liq_high = highs[-(24 - max_vol_idx)] if len(volumes) >= 24 else highs[max_vol_idx]
-        liq_low = lows[-(24 - max_vol_idx)] if len(volumes) >= 24 else lows[max_vol_idx]
-        
-        if current_price < liq_low:
-            dist_to_liq = (liq_low - current_price) / current_price * 100
-        elif current_price > liq_high:
-            dist_to_liq = (current_price - liq_high) / current_price * 100
-        else:
-            dist_to_liq = 0.0
-        
-        return {
-            'vwap_distance': (current_price - vwap) / vwap * 100,
-            'dist_to_big_volume': dist_to_liq,
-            'near_big_volume': 1.0 if dist_to_liq < 1.0 else 0.0,
-            'price_above_vwap': 1.0 if current_price > vwap else 0.0,
-        }
-
     def _extract_features(self, symbol, current_price, rsi, trend, confidence, df=None):
         """
-        17 признаков для XGBoost.
-        25 признаков: 17 базовых + 8 портфельных.
-        Портфельные метрики обновляются трейдером через update_portfolio_stats().
+        13 признаков для XGBoost (v3 — очищены от нулевых весов).
+        Удалены: rsi, trend, candle_*, price_above_sma20, memory, pf-*, rsi_divergence.
         """
-        safe_sym = symbol.split('/')[0] if '/' in symbol else symbol
         
         features = {
-            'rsi': rsi,
-            'trend': 0.5,
-            'volatility': 0.01,
-            'volume_ratio': 1.0,
-            'multi_tf': 0.0,
             'vwap_dist': 0.0,
-            'candle_doji': 0.0,
-            'candle_hammer': 0.0,
-            'candle_engulfing': 0.0,
-            'btc_change_1h': 0.0,               # Изменение BTC за последний час
-            'hour_of_day': 0.0,                 # Час дня (0-23, /23.0)
-            'volume_momentum': 0.0,              # Импульс объёма
+            'from_24h_high': 0.0,               # близость к 24h хаю (0-1)
+            'hour_of_day': 0.0,                 # час дня (0-23, /23.0)
+            'volume_momentum': 0.0,              # импульс объёма
+            'consecutive_green_5m': 0.0,          # сколько 5m свеч подряд зелёные (0-1)
+            'volatility': 0.01,
+            'shrinking_candles': 0.0,             # сужение диапазона свечей (0-1)
+            'btc_change_1h': 0.0,               # изменение BTC за 1H
             'hl_range': 0.0,                     # High-Low диапазон
-            'price_above_sma20': 1.0,            # Цена выше SMA20 на 1H
-            # Фичи памяти — чтобы XGBoost учился распознавать ММ
-            'consecutive_losses': 0.0,            # Убытков подряд (0, 1, 2, 3...)
-            'loss_streak_active': 0.0,            # 1 если consecutive_losses >= 2
-            'recent_win_rate_10': 0.5,            # % прибыльных из последних 10
-            # 📊 Портфельные метрики (одинаковы для всех символов в цикле)
-            'pf_daily_pnl': 0.0,                  # $ PnL сегодня
-            'pf_daily_profit_ratio': 0.5,          # доля профитных сегодня
-            'pf_daily_trade_count': 0.0,           # всего сделок сегодня
-            'pf_consecutive_profits': 0.0,         # профитных подряд (глобально)
-            'pf_consecutive_losses_global': 0.0,   # убыточных подряд (глобально)
-            'pf_open_positions_pct': 0.0,          # кол-во позиций / max (0-1)
-            'pf_exposure_pct_norm': 0.0,           # % капитала в позициях / 100
-            'pf_avg_position_value_norm': 0.0,     # средний размер позиции / 90
-            # 🔬 Рыночные фичи контекста — чтобы отличать «ранний вход» от «погони за хаем»
-            'consecutive_green_5m': 0.0,            # сколько 5m свеч подряд зелёные (0-1, /10)
-            'from_24h_high': 0.0,                   # насколько близко к 24h хаю (0-1)
-            'body_strength': 0.5,                   # отношение тела к теням (0=шипы, 1=сильное тело)
-            'volume_divergence': 0.0,               # расхождение цена↑ объём↓ (0=норма, 1=сильное расхождение)
-            'rsi_divergence_bear': 0.0,             # цена↑ RSI↓ (0=нет, 1=медвежья дивергенция)
-            'shrinking_candles': 0.0,               # сколько свеч подряд диапазон сужается (0-1, /5)
+            'multi_tf': 0.0,                     # multi-TF D1 против SMA50
+            'body_strength': 0.5,                # тело / полный диапазон
+            'volume_divergence': 0.0,             # расхождение цена↑ объём↓
+            'volume_ratio': 1.0,                 # текущий объём / средний за 5
         }
 
-        features['trend'] = (1.0 if trend == 'bullish' else (0.0 if trend == 'bearish' else 0.5))
-        features['hour_of_day'] = datetime.now().hour / 23.0  # 0..23 → 0..1
+        features['hour_of_day'] = datetime.now().hour / 23.0
 
-        # 5M DataFrame
+        # 5M DataFrame — основной источник фич
         if df is not None and len(df) > 10:
             closes = df['close'].values
             volumes = df['volume'].values
             highs = df['high'].values
             lows = df['low'].values
+            opens_arr = df['open'].values if 'open' in df else np.roll(closes, 1)
             
-            # Волатильность и объём
+            # volatility
             features['volatility'] = np.std(closes[-10:] / (np.mean(closes[-10:]) + 0.0001))
-            # Сглаженный volume_ratio — скользящее среднее за 3 скана
+            
+            # volume_ratio (сглаженный)
             raw_vol_ratio = volumes[-1] / (np.mean(volumes[-5:]) + 0.0001)
             if symbol not in self._vol_ratio_buffer:
                 self._vol_ratio_buffer[symbol] = deque(maxlen=3)
             self._vol_ratio_buffer[symbol].append(raw_vol_ratio)
             features['volume_ratio'] = np.mean(self._vol_ratio_buffer[symbol])
 
-            # Сглаженный volume_momentum — скользящее среднее за 3 скана
+            # volume_momentum (сглаженный)
             raw_vol_momentum = np.mean(volumes[-3:]) / (np.mean(volumes[-10:-3]) + 0.0001)
             if symbol not in self._vol_momentum_buffer:
                 self._vol_momentum_buffer[symbol] = deque(maxlen=3)
             self._vol_momentum_buffer[symbol].append(raw_vol_momentum)
             features['volume_momentum'] = np.mean(self._vol_momentum_buffer[symbol])
+            
+            # hl_range
             features['hl_range'] = (highs[-1] - lows[-1]) / (closes[-1] + 0.0001)
 
-            # Паттерны свечей
-            patterns = self._calc_candle_patterns(df)
-            features['candle_doji'] = 1.0 if patterns.get('doji') else 0.0
-            features['candle_hammer'] = 1.0 if patterns.get('hammer') else 0.0
-            features['candle_engulfing'] = 1.0 if (patterns.get('engulfing_bull') or patterns.get('engulfing_bear')) else 0.0
-
-            # 🔬 РЫНОЧНЫЙ КОНТЕКСТ — 6 признаков
-            # --- consecutive_green_5m: сколько свеч подряд зелёные
+            # consecutive_green_5m
             _green_streak = 0
             for i in range(len(closes) - 1, -1, -1):
-                if closes[i] > (df['open'].values[i] if 'open' in df else closes[i]):
+                if closes[i] > (opens_arr[i] if i < len(opens_arr) else closes[i]):
                     _green_streak += 1
                 else:
                     break
             features['consecutive_green_5m'] = min(_green_streak / 10.0, 1.0)
 
-            # --- body_strength: отношение тела свечи к полному диапазону
-            opens_arr = df['open'].values if 'open' in df else np.roll(closes, 1)
+            # body_strength
             _body = abs(closes[-1] - opens_arr[-1])
             _total_range = highs[-1] - lows[-1]
-            features['body_strength'] = _body / (_total_range + 0.0001)  # 0=шипы, 1=сильная свеча
+            features['body_strength'] = _body / (_total_range + 0.0001)
 
-            # --- volume_divergence: расхождение цена↑ объём↓ за 5 свеч
+            # volume_divergence
             if len(closes) >= 6:
                 _price_dir = 1 if closes[-1] > closes[-5] else (-1 if closes[-1] < closes[-5] else 0)
-                _vol_trend = np.mean(volumes[-3:]) / (np.mean(volumes[-6:-3]) + 0.0001)  # >1 = объём растёт
+                _vol_trend = np.mean(volumes[-3:]) / (np.mean(volumes[-6:-3]) + 0.0001)
                 if _price_dir > 0 and _vol_trend < 0.85:
-                    features['volume_divergence'] = min(1.0, (1.0 - _vol_trend) / 0.3)  # 0.85→0.5, 0.7→1.0
+                    features['volume_divergence'] = min(1.0, (1.0 - _vol_trend) / 0.3)
                 elif _price_dir < 0 and _vol_trend > 1.15:
-                    features['volume_divergence'] = min(1.0, (_vol_trend - 1.0) / 0.3)  # падение с объёмом
+                    features['volume_divergence'] = min(1.0, (_vol_trend - 1.0) / 0.3)
             
-            # --- shrinking_candles: сколько свеч подряд диапазон уменьшается
+            # shrinking_candles
             if symbol not in self._candle_range_history:
                 self._candle_range_history[symbol] = deque(maxlen=10)
             self._candle_range_history[symbol].append(_total_range)
@@ -580,25 +455,7 @@ class MLAdvisor:
                     break
             features['shrinking_candles'] = min(_shrink_streak / 5.0, 1.0)
 
-        # --- RSI дивергенция: цена делает новый хай, RSI — нет
-        if symbol not in self._rsi_history:
-            self._rsi_history[symbol] = deque(maxlen=5)
-        self._rsi_history[symbol].append(rsi)
-        _rsi_list = list(self._rsi_history[symbol])
-        if df is not None and len(df) >= 3 and len(_rsi_list) >= 3:
-            closes_arr = df['close'].values
-            _price_higher = closes_arr[-1] > closes_arr[-3]
-            _rsi_lower = _rsi_list[-1] < _rsi_list[-3] - 2
-            if _price_higher and _rsi_lower:
-                features['rsi_divergence_bear'] = 1.0
-            else:
-                # Цена ниже, RSI выше = бычья дивергенция (потенциал роста)
-                _price_lower = closes_arr[-1] < closes_arr[-3]
-                _rsi_higher = _rsi_list[-1] > _rsi_list[-3] + 2
-                if _price_lower and _rsi_higher:
-                    features['rsi_divergence_bear'] = -0.5  # бычья дивергенция = небольшой бонус
-
-        # BTC-корреляция
+        # BTC 1H change
         try:
             df_btc = _fetch_btc_data()
             if df_btc is not None and len(df_btc) > 3:
@@ -606,23 +463,18 @@ class MLAdvisor:
                 features['btc_change_1h'] = (btc_closes[-1] - btc_closes[-2]) / btc_closes[-2]
         except Exception as _e:
             logger.debug("bare except in ml_advisor: %s", _e)
-            pass
 
-        # MultiTF из D1 и SMA20
+        # multi_tf (D1 SMA50)
         try:
             df_d1 = _fetch_tf_data(symbol, '1d', 60)
             if df_d1 is not None and len(df_d1) > 50:
                 closes_d1 = df_d1['close'].values
                 sma50 = np.mean(closes_d1[-50:])
                 features['multi_tf'] = (current_price - sma50) / (sma50 + 0.0001)
-                
-                sma20 = np.mean(closes_d1[-20:])
-                features['price_above_sma20'] = 1.0 if current_price > sma20 else 0.0
         except Exception as _e:
             logger.debug("bare except in ml_advisor: %s", _e)
-            pass
 
-        # VWAP из 1H
+        # vwap_dist (1H)
         try:
             df_1h = _fetch_tf_data(symbol, '1h', 24)
             if df_1h is not None and len(df_1h) > 12:
@@ -632,9 +484,8 @@ class MLAdvisor:
                 features['vwap_dist'] = (current_price - vwap) / vwap
         except Exception as _e:
             logger.debug("bare except in ml_advisor: %s", _e)
-            pass
 
-        # 📏 from_24h_high: близость цены к 24h максимуму
+        # from_24h_high
         try:
             ex = _get_exchange()
             _ticker = ex.fetch_ticker(symbol)
@@ -645,77 +496,28 @@ class MLAdvisor:
                 features['from_24h_high'] = max(0.0, min(1.0, features['from_24h_high']))
         except Exception as _e:
             logger.debug("bare except in ml_advisor: %s", _e)
-            pass
-
-        # 🧠 Память — поведение ММ на символе
-        cl = self._consecutive_losses.get(safe_sym, 0)
-        features['consecutive_losses'] = min(float(cl), 5.0)  # кап на 5
-        features['loss_streak_active'] = 1.0 if cl >= 2 else 0.0
-        recent = self._recent_trades.get(safe_sym, deque(maxlen=10))
-        if len(recent) > 0:
-            wins = sum(1 for r in recent if r > 0)
-            features['recent_win_rate_10'] = wins / len(recent)
         
-        # 📊 Портфельные метрики (обновляются трейдером)
-        features['pf_daily_pnl'] = self._pf_daily_pnl
-        tc = max(self._pf_daily_trade_count, 1)
-        features['pf_daily_profit_ratio'] = self._pf_daily_profit_count / tc
-        features['pf_daily_trade_count'] = min(self._pf_daily_trade_count / 50.0, 1.0)  # норм на 50
-        features['pf_consecutive_profits'] = min(self._pf_consecutive_profits / 10.0, 1.0)  # норм на 10
-        features['pf_consecutive_losses_global'] = min(self._pf_consecutive_losses_global / 5.0, 1.0)
-        features['pf_open_positions_pct'] = self._pf_open_positions / 25.0  # 25 = max позиций
-        features['pf_exposure_pct_norm'] = self._pf_exposure_pct / 100.0
-        features['pf_avg_position_value_norm'] = min(self._pf_avg_position_value / 90.0, 1.0)
-        
-        return [features['rsi'], features['trend'], features['volatility'],
-                features['volume_ratio'], features['multi_tf'], features['vwap_dist'],
-                features['candle_doji'], features['candle_hammer'], features['candle_engulfing'],
-                features['btc_change_1h'], features['hour_of_day'],
-                features['volume_momentum'], features['hl_range'], features['price_above_sma20'],
-                features['consecutive_losses'], features['loss_streak_active'],
-                features['recent_win_rate_10'],
-                features['pf_daily_pnl'], features['pf_daily_profit_ratio'],
-                features['pf_daily_trade_count'], features['pf_consecutive_profits'],
-                features['pf_consecutive_losses_global'], features['pf_open_positions_pct'],
-                features['pf_exposure_pct_norm'], features['pf_avg_position_value_norm'],
-                features['consecutive_green_5m'], features['from_24h_high'],
-                features['body_strength'], features['volume_divergence'],
-                features['rsi_divergence_bear'], features['shrinking_candles']]
+        return [
+            features['vwap_dist'], features['from_24h_high'], features['hour_of_day'],
+            features['volume_momentum'], features['consecutive_green_5m'], features['volatility'],
+            features['shrinking_candles'], features['btc_change_1h'], features['hl_range'],
+            features['multi_tf'], features['body_strength'], features['volume_divergence'],
+            features['volume_ratio']
+        ]
 
-    def update_portfolio_stats(self, daily_pnl=0.0, profit_count=0, loss_count=0,
-                                trade_count=0, consecutive_profits=0,
-                                consecutive_losses_global=0, open_positions=0,
-                                exposure_pct=0.0, avg_position_value=0.0):
-        """
-        Обновить портфельные метрики (вызывается трейдером раз в цикл).
-        Эти фичи будут использованы при следующем evaluate().
-        """
-        self._pf_daily_pnl = daily_pnl
-        self._pf_daily_profit_count = profit_count
-        self._pf_daily_loss_count = loss_count
-        self._pf_daily_trade_count = trade_count
-        self._pf_consecutive_profits = consecutive_profits
-        self._pf_consecutive_losses_global = consecutive_losses_global
-        self._pf_open_positions = open_positions
-        self._pf_exposure_pct = exposure_pct
-        self._pf_avg_position_value = avg_position_value
+
 
     def _feature_names(self):
-        return ['rsi', 'trend', 'volatility', 'volume_ratio', 'multi_tf',
-                'vwap_dist', 'candle_doji', 'candle_hammer', 'candle_engulfing',
-                'btc_change_1h', 'hour_of_day', 'volume_momentum', 'hl_range', 'price_above_sma20',
-                'consecutive_losses', 'loss_streak_active', 'recent_win_rate_10',
-                'pf_daily_pnl', 'pf_daily_profit_ratio', 'pf_daily_trade_count',
-                'pf_consecutive_profits', 'pf_consecutive_losses_global',
-                'pf_open_positions_pct', 'pf_exposure_pct_norm', 'pf_avg_position_value_norm',
-                'consecutive_green_5m', 'from_24h_high', 'body_strength',
-                'volume_divergence', 'rsi_divergence_bear', 'shrinking_candles']
+        return ['vwap_dist', 'from_24h_high', 'hour_of_day', 'volume_momentum',
+                'consecutive_green_5m', 'volatility', 'shrinking_candles',
+                'btc_change_1h', 'hl_range', 'multi_tf', 'body_strength',
+                'volume_divergence', 'volume_ratio']
 
     def add_trade_result(self, symbol, entry_price, exit_price, rsi, trend, confidence,
                          hold_hours, reason, volume_ratio=None):
         """
         Добавляет результат сделки в обучающую выборку.
-        Использует _extract_features для полного вектора признаков (31 фича).
+        Использует _extract_features для полного вектора признаков (13 фич).
         label = 1 если сделка прибыльная > 0.5% (хороший сигнал)
         label = 0 если убыточная или нулевая (плохой сигнал)
         """
@@ -750,7 +552,7 @@ class MLAdvisor:
 
     def train(self, force=False):
         """
-        Обучение/переобучение XGBoost модели на накопленных данных.
+        Обучение/переобучение XGBoost модели на накопленных данных (v3: 13 фич + scale_pos_weight + калибровка).
         """
         now = time.time()
 
@@ -761,29 +563,31 @@ class MLAdvisor:
             logger.info(f"⏳ ML: ждём данные ({len(self.training_data)}/{MIN_TRAINING_SAMPLES})")
             return
 
-        # ═══ НОРМАЛИЗАЦИЯ ПРИЗНАКОВ ═══════════════════════════════════
-        # Обратная совместимость: старые выборки с 9 признаками → дополняем нулями
-        max_features = max(len(d['features']) for d in self.training_data)
+        # Нормализация: обрезаем/дополняем до SUPPORTED_FEATURES
         normalized_data = []
         for d in self.training_data:
             f = d['features']
-            if len(f) < max_features:
-                f = f + [0.0] * (max_features - len(f))
+            if len(f) > SUPPORTED_FEATURES:
+                f = f[:SUPPORTED_FEATURES]  # старые 31-фичевые → первые 13
+            elif len(f) < SUPPORTED_FEATURES:
+                f = f + [0.0] * (SUPPORTED_FEATURES - len(f))
             normalized_data.append({'features': f, 'label': d['label']})
 
         X = np.array([d['features'] for d in normalized_data])
         y = np.array([d['label'] for d in normalized_data])
 
-        # Проверка: если все метки одного класса — не обучаем
         if len(np.unique(y)) < 2:
             logger.warning(f"⚠️ ML: все данные одного класса ({int(y[0])}), ждём разнообразия")
             return
 
-        # Масштабируем
+        # Количество сэмплов каждого класса для scale_pos_weight
+        n_bad = int((y == 0).sum())
+        n_good = int((y == 1).sum())
+        scale_weight = n_bad / max(n_good, 1)
+
         self.scaler = StandardScaler()
         X_scaled = self.scaler.fit_transform(X)
 
-        # XGBoost — лучше для табличных данных, чем RandomForest
         self.model = xgb.XGBClassifier(
             n_estimators=150,
             max_depth=6,
@@ -793,6 +597,7 @@ class MLAdvisor:
             min_child_weight=3,
             reg_lambda=1.0,
             reg_alpha=0.5,
+            scale_pos_weight=scale_weight,  # 🆕 компенсация дисбаланса классов
             random_state=42,
             eval_metric='logloss',
             use_label_encoder=False,
@@ -800,25 +605,31 @@ class MLAdvisor:
         )
         self.model.fit(X_scaled, y, verbose=False)
 
-        # Оценка точности
+        # 🆕 Калибровка вероятностей (XGBoost без неё даёт смещённые probs)
+        try:
+            from sklearn.calibration import CalibratedClassifierCV
+            self.model = CalibratedClassifierCV(
+                self.model, method='isotonic', cv=min(3, len(y) // 50 + 2)
+            )
+            self.model.fit(X_scaled, y)
+            logger.info(f"   Калибровка: isotonic, cv={min(3, len(y) // 50 + 2)}")
+        except Exception as e:
+            logger.warning(f"   Калибровка не удалась: {e} (использую без калибровки)")
+
         train_score = self.model.score(X_scaled, y)
         self.is_trained = True
         self.last_retrain = now
-
-        # Сохраняем
         self._save_model()
 
-        n_good = int(y.sum())
-        n_bad = len(y) - n_good
-        logger.info(f"🎯 ML (XGBoost): обучен! Точность: {train_score:.1%}")
-        logger.info(f"   Данных: {len(y)} (good={n_good}, bad={n_bad})")
-        
-        # Feature importance (топ-5)
+        logger.info(f"🎯 ML (XGBoost v3): обучен! Точность: {train_score:.1%} | "
+                    f"Данных: {len(y)} (good={n_good}, bad={n_bad}, weight={scale_weight:.2f})")
+
         if hasattr(self.model, 'feature_importances_'):
             names = self._feature_names()
             importances = self.model.feature_importances_
-            top5 = sorted(zip(names, importances), key=lambda x: -x[1])[:5]
-            logger.info(f"   Топ-5 фич: {', '.join(f'{n}={v:.2f}' for n,v in top5)}")
+            if len(importances) == len(names):
+                top5 = sorted(zip(names, importances), key=lambda x: -x[1])[:5]
+                logger.info(f"   Топ-5 фич: {', '.join(f'{n}={v:.2f}' for n,v in top5)}")
 
     def evaluate(self, symbol, current_price, rsi, trend, confidence, df=None):
         """
@@ -831,8 +642,8 @@ class MLAdvisor:
 
         features = self._extract_features(symbol, current_price, rsi, trend, confidence, df)
         
-        # Обратная совместимость: старая модель (14 фич) vs новая (17 фич)
-        expected_features = getattr(self.model, 'n_features_in_', 14)
+        # Совместимость: модель может ожидать SUPPORTED_FEATURES (13)
+        expected_features = getattr(self.model, 'n_features_in_', SUPPORTED_FEATURES)
         if len(features) > expected_features:
             features = features[:expected_features]
         elif len(features) < expected_features:

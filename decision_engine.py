@@ -292,10 +292,8 @@ class DecisionEngine:
         """
         if self._ml_advisor is None:
             return
-        from ml_advisor import get_advisor
-        advisor = get_advisor()
-        for sym, losses in self._consecutive_losses.items():
-            advisor.update_symbol_memory(sym, consecutive_losses=losses)
+        # Память о символах: ML больше не использует эти фичи
+        pass
 
     def set_multi_tf_data(self, candles_1h: Optional[list] = None,
                           candles_4h: Optional[list] = None,

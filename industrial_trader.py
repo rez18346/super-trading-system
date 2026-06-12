@@ -1380,51 +1380,8 @@ class IndustrialTrader:
                         except Exception as e:
                             logger.warning(f"⚠️ BTC Direction Predictor predict: {e}")
 
-                # 📊 Обновляем портфельные метрики для MLAdvisor
-                try:
-                    _day_start = datetime.now(timezone.utc).strftime('%Y-%m-%d') + 'T00:00'
-                    _daily_pnl, _daily_trades, _daily_wins, _daily_losses = db.get_daily_stats(_day_start)
-                    _total_pos = db.get_total_position_value()
-                    _pos_vals = db.get_all_active_position_values()
-                    _avg_pos = sum(_pos_vals)/max(len(_pos_vals), 1)
-                    _capital = getattr(self, 'capital', 300)
-                    _exposure = _total_pos / max(_capital, 1) * 100
-
-                    # Считаем consecutive_profits из последних сделок
-                    _recent_pnls = db.get_recent_pnls(20)
-                    _cons_profits = 0
-                    for _p in _recent_pnls:
-                        if _p > 0:
-                            _cons_profits += 1
-                        else:
-                            break
-                    _cons_losses = 0
-                    for _p in _recent_pnls:
-                        if _p < 0:
-                            _cons_losses += 1
-                        else:
-                            break
-                    _c2.close()
-
-                    from ml_advisor import get_advisor
-                    _adv = get_advisor()
-                    _adv.update_portfolio_stats(
-                        daily_pnl=_daily_pnl,
-                        profit_count=_daily_wins,
-                        loss_count=_daily_losses,
-                        trade_count=_daily_trades,
-                        consecutive_profits=_cons_profits,
-                        consecutive_losses_global=_cons_losses,
-                        open_positions=_open_pos,
-                        exposure_pct=_exposure,
-                        avg_position_value=_avg_pos
-                    )
-                    if _daily_trades % 5 == 0 or _daily_trades < 3:
-                        logger.debug(f"📊 Портфель: PnL=\${_daily_pnl:.2f}, сделок={_daily_trades}, "
-                                     f"профитных={_daily_wins}, открыто={_open_pos}, "
-                                     f"экспозиция={_exposure:.0f}%")
-                except Exception as _e:
-                    logger.debug(f"[portfolio_stats] {_e}")
+                # 📊 PF-фичи удалены из MLAdvisor (вес 0.0000 по всем 8 метрикам)
+                # Вычисление портфельных метрик больше не требуется
 
                 # Portfolio Guard: блокируем входы если сработал
                 if self._portfolio_guard_triggered:
