@@ -1,0 +1,45 @@
+# 🔐 API keys & secrets — НЕ КОММИТИТЬ!
+.env
+config.json
+config/api_config_final.json
+bybit_api.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Virtual env
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Trained ML models (large binaries)
+models/*.pkl
+models/*.pickle
+models/*.joblib
+
+# Data caches & logs
+data/
+backups/
+logs/
+votes/
+terminal/
+
+# Runtime
+*.pid
+nohup.out
+/tmp/

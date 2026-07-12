@@ -1,0 +1,39 @@
+{
+  "bybit": {
+    "api_key": "ВАШ_API_KEY",
+    "secret": "ВАШ_API_SECRET",
+    "password": "",
+    "enableRateLimit": true,
+    "default_type": "spot",
+    "paper_trading": false
+  },
+  "risk_management": {
+    "default_sl_pct": 2.5,
+    "max_positions": 10,
+    "max_order_usd": 90,
+    "max_daily_loss_pct": 10.0,
+    "min_confidence_score": 70
+  },
+  "trading": {
+    "symbols": [
+      "BTC/USDT", "ETH/USDT", "SOL/USDT", "ARB/USDT", "OP/USDT",
+      "NEAR/USDT", "AVAX/USDT", "DOT/USDT", "FIL/USDT", "LINK/USDT",
+      "MATIC/USDT", "ADA/USDT", "ALGO/USDT", "APT/USDT", "ROSE/USDT",
+      "EGLD/USDT", "FTM/USDT", "ATOM/USDT", "INJ/USDT"
+    ],
+    "default_size_usd": 60,
+    "max_spread_pct": 0.5,
+    "min_volume_btc": 50
+  },
+  "system": {
+    "test_mode": false,
+    "bybit_testnet": false,
+    "log_level": "INFO",
+    "cycle_interval_sec": 30
+  },
+  "ml": {
+    "advisor_retrain_interval_hours": 1,
+    "min_trades_for_training": 50,
+    "feature_count": 27
+  }
+}
