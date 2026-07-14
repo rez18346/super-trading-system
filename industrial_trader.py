@@ -2979,5 +2979,5 @@ class TradingUtils:
 
 if __name__ == "__main__":
     # Тестовый запуск
-    trader = IndustrialTrader("config.json")
+    trader = IndustrialTrader("config/api_config_final.json")
     print(trader.generate_report())

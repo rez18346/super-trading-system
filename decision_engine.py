@@ -1313,6 +1313,37 @@ class DecisionEngine:
             side=side, cvd_data=cvd_data, high_24h=high_24h, low_24h=low_24h
         )
 
+        # ═══ ЖЁСТКАЯ БЛОКИРОВКА ПО 1H ТРЕНДУ ═══════════════════════════
+        # Если 1H сильно медвежий (<20) — LONG запрещён
+        # Если 1H сильно бычий (>80) — SHORT запрещён
+        # Базовая логика: на падающем рынке не покупаем, на растущем — не шортим
+        try:
+            mtf_detail = entry_checks.get('votes', {}).get('mtf', {}).get('detail', '')
+            mtf_1h_score = None
+            if '1h=' in str(mtf_detail):
+                mtf_1h_score = int(str(mtf_detail).split('1h=')[1].split()[0])
+
+            if mtf_1h_score is not None:
+                if mtf_1h_score < 20 and not is_short and entry_checks.get('approved', False):
+                    reason = f"🚫 1H блокировка: 1H={mtf_1h_score} (<20), LONG запрещён на падающем рынке"
+                    entry_checks['approved'] = False
+                    entry_checks['reason'] = reason
+                    entry_checks['veto_reason'] = reason
+                    self.stats['veto_mtf_conflict'] = self.stats.get('veto_mtf_conflict', 0) + 1
+                    self._save_veto_vote(symbol, current_price, reason, side)
+                    logger.info(f"[DE→1H_BLOCK] {symbol}: {reason}")
+
+                if mtf_1h_score > 80 and is_short and entry_checks.get('approved', False):
+                    reason = f"🚫 1H блокировка: 1H={mtf_1h_score} (>80), SHORT запрещён на растущем рынке"
+                    entry_checks['approved'] = False
+                    entry_checks['reason'] = reason
+                    entry_checks['veto_reason'] = reason
+                    self.stats['veto_mtf_conflict'] = self.stats.get('veto_mtf_conflict', 0) + 1
+                    self._save_veto_vote(symbol, current_price, reason, side)
+                    logger.info(f"[DE→1H_BLOCK] {symbol}: {reason}")
+        except Exception as e:
+            logger.debug(f"[DE] 1H блокировка: {e}")
+
         # ═══ ПРИМЕНЕНИЕ VETO-ШТРАФА ═══════════════════════════════════════
         if veto_penalty > 0:
             # Override: Liq≥75 + VV≥70 + Adv≥80 → сигнал сильнее VETO

@@ -49,6 +49,8 @@ class BTCRegimeTracker:
         # 🆕 Range-блок: BTC в боковике без пробоя — альты не торгуем
         self._range_block: bool = False
         self._btc_current_price: float = 0.0
+        # 🆕 Трекер последовательных падений: буфер последних 5 значений change_30m
+        self._change_30m_buffer: list = []
 
     # ── публичный API ────────────────────────
 
@@ -92,6 +94,23 @@ class BTCRegimeTracker:
         self._range_block = self._is_in_sideways_range()
         if self._range_block:
             logger.info(f"🔇 Range block: BTC=${self._btc_current_price:.0f} в боковике $58,450-$60,918 — альты не трогаем")
+
+        # 2.7. Трекер последовательных падений
+        # Если 3 проверки подряд показывают падение за 30 минут — bearish_side
+        self._change_30m_buffer.append(change_30m)
+        if len(self._change_30m_buffer) > 5:
+            self._change_30m_buffer.pop(0)
+        
+        consecutive_negative = sum(1 for v in self._change_30m_buffer if v < 0)
+        if len(self._change_30m_buffer) >= 3 and consecutive_negative >= 3:
+            # Если все последние 3 проверки отрицательные — это устойчивое падение
+            avg_drop = sum(self._change_30m_buffer[-3:]) / 3
+            logger.debug(f"Consecutive drops: {len(self._change_30m_buffer)} checks, "
+                         f"{consecutive_negative} negative, avg={avg_drop:.2f}%")
+            if avg_drop <= -0.3:  # среднее падение > 0.3% за 30 мин — реальный слив
+                logger.warning(f"🛡️ {consecutive_negative} последовательных падений подряд (avg={avg_drop:.2f}%) → bearish_side")
+                regime = "bearish_side"
+                self._regime = regime
 
         # 3. Определяем фазу
         regime = self._classify_regime(
@@ -441,6 +460,14 @@ class BTCRegimeTracker:
             3. Distribution (консолидация после pump)
             4. Accumulation (боковик, низкая волатильность)
         """
+                # ── Slow bleed: прямое падение за 1ч (проверяем ПЕРЕД recovery)
+        # Если BTC падает за 1 час — это не аккумуляция, а медленный слив.
+        # Важно: если 30m растёт, а 1h падает — это может быть recovery,
+        # поэтому slow bleed проверяем после recovery, но до pump/dump.
+        if change_1h <= -0.75:
+            logger.debug(f"Slow bleed 1h: 1h={change_1h:.2f}% 30m={change_30m:.2f}% — bearish_side")
+            return "bearish_side"
+
         # ── Recovery — отскок после dump (проверяем ПЕРЕД pump/dump,
         #     чтобы поймать умеренное восстановление) ──
         # Условия: 30м умеренно положительный (0.2–1.2%), 1ч и 4ч всё ещё
@@ -472,15 +499,15 @@ class BTCRegimeTracker:
 
         # ── Accumulation — боковик ──
         if abs(change_30m) < PUMP_THRESHOLD * 0.5:
-            # 🩹 Slow bleed: 4h падение > 1.5% — это не аккумуляция
+            # 🩹 Slow bleed (4h): 4h падение > 1.5% — это не аккумуляция
             if change_4h <= -1.5:
-                logger.debug(f"Slow bleed: 30m={change_30m:.2f}% but 4h={change_4h:.2f}% — bearish_side")
+                logger.debug(f"Slow bleed 4h: 30m={change_30m:.2f}% but 4h={change_4h:.2f}% — bearish_side")
                 return "bearish_side"
             return "accumulation"
 
-        # 🩹 Slow bleed (fallback): 1h/4h sustained drop
+        # 🩹 Slow bleed (4h fallback): sustained drop
         if change_4h <= -1.5:
-            logger.debug(f"Slow bleed (fallback): 4h={change_4h:.2f}%")
+            logger.debug(f"Slow bleed 4h (fallback): 4h={change_4h:.2f}%")
             return "bearish_side"
 
         # fallback

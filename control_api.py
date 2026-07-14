@@ -311,7 +311,7 @@ def get_status_snapshot() -> dict:
     try:
         log_lines = read_log_tail(1000)
         for line in reversed(log_lines):
-            am = re.search(r'BTC/USDT: Цена=\, Тренд=(\w+), Уверенность=([\d.]+)%, RSI=([\d.]+)', line)
+            am = re.search(r'BTC/USDT: Цена=\$?([\d.]+?), Тренд=(\w+), Уверенность=([\d.]+)%, RSI=([\d.]+)', line)
             if am:
                 btc_analysis = {
                     'price': float(am.group(1)), 'trend': am.group(2),
