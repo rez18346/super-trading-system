@@ -1323,6 +1323,7 @@ class IndustrialTrader:
                         if _sustained_drop:
                             self._current_market_mode = 'down_trend'
                             impulse_cfg = {
+                                'enabled': False,
                                 'exit_score_threshold': 65,
                                 'min_confirmations': 1,
                                 'consecutive_confirmations': 1,
@@ -1334,10 +1335,11 @@ class IndustrialTrader:
                                 'strong_volume_drop': 0.5,
                                 'body_shrink_threshold': 0.4
                             }
-                            logger.info(f"📉 РЕЖИМ DOWN-TREND (sustained drop: 1h={_chg_1h:+.2f}% 4h={_chg_4h:+.2f}%), импульс активен")
+                            logger.info(f"📉 РЕЖИМ DOWN-TREND (sustained drop: 1h={_chg_1h:+.2f}% 4h={_chg_4h:+.2f}%), импульс отключён")
                         elif _sustained_rise:
                             self._current_market_mode = 'up_trend'
                             impulse_cfg = {
+                                'enabled': False,
                                 'exit_score_threshold': 95,
                                 'min_confirmations': 2,
                                 'consecutive_confirmations': 3,
@@ -1349,11 +1351,12 @@ class IndustrialTrader:
                                 'strong_volume_drop': 0.5,
                                 'body_shrink_threshold': 0.4
                             }
-                            logger.info(f"📈 РЕЖИМ UP-TREND (sustained rise: 1h={_chg_1h:+.2f}% 4h={_chg_4h:+.2f}%), трейлинг +50% лота, импульс подавлен")
+                            logger.info(f"📈 РЕЖИМ UP-TREND (sustained rise: 1h={_chg_1h:+.2f}% 4h={_chg_4h:+.2f}%), трейлинг +50% лота, импульс отключён")
                         elif regime in up_regimes:
                             self._current_market_mode = 'up_trend'
-                            # Импульс: только при очень сильных сигналах (почти отключён)
+                            # Импульс отключён
                             impulse_cfg = {
+                                'enabled': False,
                                 'exit_score_threshold': 95,
                                 'min_confirmations': 2,
                                 'consecutive_confirmations': 3,
@@ -1365,11 +1368,12 @@ class IndustrialTrader:
                                 'strong_volume_drop': 0.5,
                                 'body_shrink_threshold': 0.4
                             }
-                            logger.info(f"📈 РЕЖИМ UP-TREND: трейлинг +50% лота, импульс подавлен")
+                            logger.info(f"📈 РЕЖИМ UP-TREND: трейлинг +50% лота, импульс отключён")
                         elif regime in down_regimes:
                             self._current_market_mode = 'down_trend'
-                            # Импульс: активен, как сейчас
+                            # Импульс отключён
                             impulse_cfg = {
+                                'enabled': False,
                                 'exit_score_threshold': 65,
                                 'min_confirmations': 1,
                                 'consecutive_confirmations': 1,
@@ -1381,10 +1385,11 @@ class IndustrialTrader:
                                 'strong_volume_drop': 0.5,
                                 'body_shrink_threshold': 0.4
                             }
-                            logger.info(f"📉 РЕЖИМ DOWN-TREND: импульс активен, лот стандартный")
+                            logger.info(f"📉 РЕЖИМ DOWN-TREND: импульс отключён, лот стандартный")
                         else:
                             self._current_market_mode = 'neutral'
                             impulse_cfg = {
+                                'enabled': False,
                                 'exit_score_threshold': 75,
                                 'min_confirmations': 2,
                                 'consecutive_confirmations': 2,
@@ -1396,7 +1401,7 @@ class IndustrialTrader:
                                 'strong_volume_drop': 0.5,
                                 'body_shrink_threshold': 0.4
                             }
-                            logger.info(f"➡️ РЕЖИМ NEUTRAL: стандартные настройки")
+                            logger.info(f"➡️ РЕЖИМ NEUTRAL: импульс отключён")
 
                         # Записываем конфиг (импульс читает его на лету)
                         try:
